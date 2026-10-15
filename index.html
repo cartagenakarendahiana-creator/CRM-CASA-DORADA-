@@ -138,12 +138,22 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
   <div class="db" style="display:grid;gap:10px">
     <button id="btnBackup">Descargar copia de seguridad (.json)</button>
     <label class="btn" id="lblRestore" style="margin:0;color:var(--ink);font-size:15px;text-align:center">Restaurar copia de seguridad<input id="restore" type="file" accept=".json" hidden></label>
+    <button id="btnLogout" hidden>Cambiar de usuario</button>
     <button class="danger" id="btnWipe">Borrar todos los datos</button>
     <p class="hint" id="modeHint"></p>
   </div></dialog>
 
 <dialog id="dlgAsk" style="width:min(460px,calc(100vw - 24px))"><div class="db"><p id="askMsg"></p></div>
   <div class="df"><button type="button" id="askNo">Cancelar</button><button type="button" class="primary" id="askYes">Aceptar</button></div></dialog>
+<dialog id="dlgLogin" style="width:min(420px,calc(100vw - 24px))"><form id="loginForm">
+  <div class="dh"><h2>Entrar al CRM</h2></div>
+  <div class="db" style="display:grid;gap:12px">
+    <div><label for="lgName">Tu nombre</label><input id="lgName" required autocomplete="name" placeholder="Ej: Julián"></div>
+    <div><label for="lgPin">PIN del equipo</label><input id="lgPin" type="password" inputmode="numeric" required autocomplete="current-password"></div>
+    <p class="hint" id="lgErr" style="margin:0;color:var(--danger)"></p>
+    <p class="hint" style="margin:0">Tu nombre queda registrado en cada cambio que guardes.</p>
+  </div>
+  <div class="df"><button class="primary" type="submit">Entrar</button></div></form></dialog>
 <div class="toast" id="toast" role="status"></div>
 
 <script>
@@ -243,7 +253,7 @@ const info=msg=>ask(msg,'Entendido',null);
 // ================= Almacenamiento: compartido (db) o en este navegador =================
 const KEY='crm-casa-dorada-v2';
 let data={};MODS.forEach(m=>data[m.id]=[]);
-let store=null,userCap=null,myId=null,canWrite=true,ready=false,editStamp=null;
+let store=null,userCap=null,myId=null,canWrite=true,ready=false,editStamp=null,editOrig={};
 let cur='agenda',sortCol=null,sortDir=1,filters={},editing=null,editMod=null;
 const recs=m=>data[m.id];
 const coll=m=>store.collection('m_'+m.id);
@@ -266,11 +276,90 @@ async function replaceModule(m,rows,label){
   await pool(old,r=>withRetry(()=>coll(m).doc(r._id).delete()).then(tick));
   await pool(rows,r=>withRetry(()=>coll(m).doc(r._id).set(toDoc(m,r))).then(tick));
 }
-function applyWriteMode(){['#btnNew','#lblImport','#btnWipe','#lblRestore'].forEach(s=>$(s).hidden=!canWrite);
+// ================= Google Sheets (Apps Script) =================
+const GS=(typeof google!=='undefined'&&google.script&&google.script.run)?google.script.run:null;
+let sheetMeta={},gsRev=null,gsUrl='',gsLoadedAt=0,gsBusy=false;
+const gsPin=()=>lsGet('crm-cd-pin')||'',myName=()=>lsGet('crm-cd-name')||'';
+const nowStr=()=>new Date().toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'});
+function gas(fn,...a){return new Promise((res,rej)=>GS.withSuccessHandler(res).withFailureHandler(rej)[fn](...a))}
+function parseNotes(s){return String(s||'').split('\n').filter(x=>x.trim()).map(l=>{const m=l.match(/^\[(.*?)\] ?(.*)$/);return m?{d:m[1],t:m[2]}:{d:'',t:l}})}
+const fmtNotes=n=>(n||[]).map(x=>`[${x.d}] ${String(x.t).replace(/\s*\n\s*/g,' ')}`).join('\n');
+const modWho=s=>{const i=String(s||'').indexOf(' · ');return i>=0?String(s).slice(i+3):''};
+function sheetVal(f,v){if(v==null||v==='')return '';
+  if(f.t==='money'||f.t==='num'||f.k==='Nivel'){const n=money(v);if(n!=null)return n}
+  if(f.k==='Comisión'){const mm=String(v).match(/^(\d+(?:[.,]\d+)?)\s*%$/);if(mm)return parseFloat(mm[1].replace(',','.'))/100}
+  if((f.t==='date'||f.k==='Próx. seguimiento')&&isoRe.test(v))return v;
+  return /^[=+\-\d]/.test(String(v))?"'"+v:String(v)}
+async function gsLoad(depth=0){
+  const d=await gas('getAll',gsPin());gsRev=d.rev;gsUrl=d.url;gsLoadedAt=Date.now();const prep=[];
+  for(const m of MODS){const sh=d.sheets.find(x=>norm(x.name)===norm(m.sheet));
+    if(!sh){data[m.id]=[];delete sheetMeta[m.id];continue}
+    const rows=sh.values;let hi=-1,map={},best=0;
+    for(let i=0;i<Math.min(8,rows.length);i++){const mp=mapHeaders(m,rows[i]),c=Object.keys(mp).length;if(c>best){best=c;hi=i;map=mp}}
+    if(best<2){data[m.id]=[];delete sheetMeta[m.id];continue}
+    const hdr=rows[hi].map(h=>String(h).trim()),idc=hdr.indexOf('ID CRM'),mc=hdr.indexOf('Modificado CRM'),hc=hdr.indexOf('Historial CRM');
+    const mapped=new Set(Object.values(map).map(f=>f.k));
+    const extra=m.fields.filter(f=>!mapped.has(f.k)).map(f=>f.k);
+    const fxCount={},out=[],missing=[],total=Math.max(1,rows.length-hi-1);
+    rows.slice(hi+1).forEach((row,k)=>{const rn=hi+2+k,fx=sh.fx[rn-1]||[];fx.forEach(j=>{if(map[j])fxCount[map[j].k]=(fxCount[map[j].k]||0)+1});
+      const o={_row:rn,_o:rn,_fx:[]};let any=false;
+      for(const i in map){const f=map[i],isF=fx.includes(+i);if(isF)o._fx.push(f.k);
+        const v=convVal(f,row[i]);if(v!==''){o[f.k]=v;if(!isF&&f.k!=='Nivel'&&f.k!=='Comisión')any=true}}
+      if(!any)return;
+      o._id=idc>=0?String(row[idc]||''):'';o._mod=mc>=0?String(row[mc]||''):'';o._t=o._mod||null;o._notes=hc>=0?parseNotes(row[hc]):[];
+      if(!o._id)missing.push(rn);out.push(o)});
+    // Columnas de fórmula para registros nuevos: las que tienen fórmula en la mayoría de filas
+    sheetMeta[m.id]={name:sh.name,headerRow:hi+1,map,fxKeys:Object.keys(fxCount).filter(k=>fxCount[k]/total>=0.5)};
+    data[m.id]=out;
+    if(missing.length||extra.length||idc<0)prep.push([m,missing,extra]);
+  }
+  if(prep.length&&depth<2){for(const [m,rs,ex] of prep)await gas('prepareSheet',gsPin(),sheetMeta[m.id].name,sheetMeta[m.id].headerRow,rs,ex);return gsLoad(depth+1)}
+}
+function gsRefresh(){if(gsBusy)return;gsBusy=true;gsLoad().then(()=>{render();if($('#dlg').open&&editing)drawNotes()}).catch(()=>{}).finally(()=>gsBusy=false)}
+async function gsSave(m,r,opt){const sm=sheetMeta[m.id];if(!sm)throw new Error('No encontré la pestaña "'+m.sheet+'" en la hoja.');
+  const values={},dates=[],fx=r._fx||sm.fxKeys;
+  for(const i in sm.map){const f=sm.map[i],col=+i+1;if(fx.includes(f.k))continue;
+    values[col]=sheetVal(f,r[f.k]);if(f.t==='date'||f.k==='Próx. seguimiento')dates.push(col)}
+  const res=await gas('saveRecord',gsPin(),{sheet:sm.name,headerRow:sm.headerRow,id:r._id||null,values,dates,
+    expectedMod:opt.expected||'',notes:fmtNotes(r._notes),who:myName(),force:!!opt.force});
+  if(res.conflict)return {conflict:true};
+  r._id=res.id;r._mod=res.mod;r._t=res.mod;r._row=res.row;return {ok:true}}
+function gsPoll(){
+  setInterval(async()=>{if(document.hidden||gsBusy)return;
+    try{const rv=await gas('getRev',gsPin());if(rv!==gsRev||Date.now()-gsLoadedAt>120000)gsRefresh()}catch(e){}},15000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)gsRefresh()});
+}
+function login(err){return new Promise(res=>{const d=$('#dlgLogin');$('#lgErr').textContent=err||'';$('#lgName').value=myName();$('#lgPin').value='';
+  d.oncancel=e=>e.preventDefault();
+  $('#loginForm').onsubmit=e=>{e.preventDefault();lsSet('crm-cd-name',$('#lgName').value.trim());lsSet('crm-cd-pin',$('#lgPin').value.trim());d.close();res()};
+  d.showModal();setTimeout(()=>($('#lgName').value?$('#lgPin'):$('#lgName')).focus(),30)})}
+
+// Guardado común: devuelve {ok}, {conflict} o false
+async function saveRec(m,r,opt={}){
+  if(GS){try{return await gsSave(m,r,opt)}catch(e){toast('No se pudo guardar en la hoja: '+(e&&e.message||e));return false}}
+  if(store&&!opt.force&&r._id){const latest=recs(m).find(x=>x._id===r._id);if(latest&&(latest._t||null)!==(opt.expected||null))return {conflict:true}}
+  return (await putRec(m,r))?{ok:true}:false}
+async function whoOf(r){
+  if(GS)return modWho(r&&r._mod)||'Otra persona';
+  if(r&&r._u&&userCap){if(r._u===myId)return 'Tú (en otro dispositivo)';try{const ps=await userCap.profiles([r._u]);return ps[r._u]?.name||'Otra persona'}catch(e){}}
+  return 'Otra persona'}
+
+function applyWriteMode(){['#btnNew','#lblImport','#btnWipe','#lblRestore'].forEach(s=>$(s).hidden=!canWrite||!!GS);$('#btnNew').hidden=!canWrite;
   $('#btnSave').hidden=!canWrite;$('#btnDel').hidden=!canWrite||!editing;}
 let renderQueued=false;function scheduleRender(){if(renderQueued)return;renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;if(!$('#dlg').open||true)render()})}
 
 async function init(){
+  if(GS){
+    $('#mode').textContent='● Conectado a Google Sheets';$('#mode').className='shared';
+    $('#modeHint').textContent='Los datos se guardan directamente en la hoja de Google CasaDorada_CRM. Todo el equipo ve los mismos registros; los cambios aparecen en unos segundos.';
+    $('#btnExport').textContent='Abrir hoja de Google';$('#btnBackup').hidden=true;$('#btnLogout').hidden=false;
+    if(!gsPin()||!myName())await login();
+    for(;;){try{await gsLoad();break}catch(e){const msg=String(e&&e.message||e);
+      if(/PIN_INCORRECTO/.test(msg)){await login('PIN incorrecto. Pídelo a la administradora del CRM.');continue}
+      if(/SIN_PIN/.test(msg)){applyWriteMode();ready=true;render();return info('Falta crear el PIN: en Apps Script ejecuta la función configurarPin.')}
+      ready=true;render();return info('No se pudo conectar con la hoja de Google: '+msg)}}
+    ready=true;applyWriteMode();render();gsPoll();return;
+  }
   let db=null,user=null;
   if(window.claude&&typeof window.claude.use==='function'){try{[db,user]=await Promise.all([claude.use('db'),claude.use('user')])}catch(e){}}
   if(db){
@@ -346,6 +435,7 @@ async function offerFile(filename,blob){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;document.body.appendChild(a);a.click();a.remove();
 }
 $('#btnExport').onclick=()=>{
+  if(GS){if(gsUrl)window.open(gsUrl,'_blank');return}
   if(typeof XLSX==='undefined')return info('No se pudo cargar el generador de Excel. Revisa tu conexión y recarga la página.');
   const wb=XLSX.utils.book_new();
   MODS.forEach(m=>{
@@ -467,6 +557,7 @@ function fieldHtml(m,f,r){
   if(f.t==='chips'){const all=[...new Set([...f.o,...(v&&!f.o.includes(v)?[v]:[])])];
     return `<div class="${all.length>5?'full':''}"><label>${esc(f.k)}</label><div class="chips">${all.map(o=>`<button type="button" class="chip ${o===v?'on':''}" data-v="${esc(o)}"${ro}>${esc(o)}</button>`).join('')}</div><input type="hidden" data-k="${k}" value="${esc(v)}"></div>`}
   if(f.t==='long')return `<div class="full"><label for="${id}">${esc(f.k)}</label><textarea id="${id}" data-k="${k}" rows="2"${ro?' readonly':''}>${esc(v)}</textarea></div>`;
+  if((r._fx||[]).includes(f.k))return `<div><label>${esc(f.k)}</label><input readonly value="${esc(isoRe.test(v)?fmtDate(v):v)}" aria-label="${k}"><div class="hint">Lo calcula una fórmula de la hoja</div></div>`;
   if(f.t==='auto')return `<div><label>${esc(f.k)} ⚡</label><input readonly value="${esc(isoRe.test(v)?fmtDate(v):v)}" title="Se calcula solo" aria-label="${k}"><div class="hint">${f.k==='Nivel'?'Según último servicio $ (≥5M = 3, ≥2M = 2)':'Fecha última + frecuencia (90 días si no hay)'}</div></div>`;
   let list='',type='text',extra=ro?' readonly':'';
   const opts=[...new Set([...(f.o||[]),...existing])];
@@ -483,13 +574,14 @@ function fieldHtml(m,f,r){
 function openRec(m,id){
   editMod=m;editing=id?recs(m).find(r=>r._id===id):null;editStamp=editing?editing._t:null;showMeta(editing);
   if(id&&!editing)return toast('Ese registro ya no existe.');
-  const r=editing?{...editing}:{};
+  const r=editing?{...editing}:{_fx:GS&&sheetMeta[m.id]?sheetMeta[m.id].fxKeys:[]};
   const lr=lsGet('crm-cd-lastResp');if(!editing&&m.byKey.Responsable&&lr)r.Responsable=lr;
   $('#dlgTitle').textContent=(editing?(r[m.main]||r[m.org]||'Registro'):'Nuevo')+' · '+m.name;
   const groups=[];m.fields.forEach(f=>{let g=groups.find(x=>x.g===f.g);if(!g)groups.push(g={g:f.g,fs:[]});g.fs.push(f)});
   $('#fields').innerHTML=groups.map(g=>`<fieldset><legend>${esc(g.g)}</legend><div class="grid">${g.fs.map(f=>fieldHtml(m,f,r)).join('')}</div></fieldset>`).join('');
   $('#hist').hidden=!editing;$('#btnDel').hidden=!editing||!canWrite;$('#btnContact').hidden=!editing||!m.last||!canWrite;
   $('#noteText').disabled=!canWrite;$('#btnNote').disabled=!canWrite;$('#btnSave').hidden=!canWrite;
+  editOrig={};$('#fields').querySelectorAll('[data-k]').forEach(el=>editOrig[el.dataset.k]=el.value.trim());
   drawNotes();$('#dlg').showModal();
   setTimeout(()=>{const first=$('#fields input:not([type=hidden]):not([readonly]),#fields textarea');first&&!editing&&first.focus()},30);
 }
@@ -506,41 +598,60 @@ $('#btnContact').onclick=()=>{const m=editMod;
   toast('Último contacto = hoy. Escribe una nota y elige la próxima fecha.');$('#noteText').focus()};
 function drawNotes(){const n=(editing&&editing._notes)||[];
   $('#notes').innerHTML=n.slice().reverse().map(x=>`<li><small>${esc(x.d)}</small><br>${esc(x.t)}</li>`).join('')||'<li class="hint">Sin notas aún.</li>'}
-// Última modificación: guarda solo el id de la persona y resuelve su nombre al mostrar
+// Última modificación (en la base compartida se guarda solo el id de la persona)
 async function showMeta(r){const el=$('#dlgMeta');el.textContent='';if(!r||!r._t)return;
-  const d=new Date(r._t);let txt='Última modificación: '+d.toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'});
-  el.textContent=txt;if(!r._u||!userCap)return;
-  try{const ps=await userCap.profiles([r._u]);const who=r._u===myId?'ti':(ps[r._u]?.name||'otra persona');if(editing===r)el.textContent=txt+' · por '+who}catch(e){}}
+  const iso=String(r._t).split(' · ')[0],d=new Date(iso);if(isNaN(d))return;
+  const txt='Última modificación: '+d.toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'});el.textContent=txt;
+  if(GS){const w=modWho(r._mod);if(w)el.textContent=txt+' · por '+w;return}
+  if(!r._u||!userCap)return;
+  try{const ps=await userCap.profiles([r._u]);const who=r._u===myId?'ti':(ps[r._u]?.name||'otra persona');if(editing&&editing._id===r._id)el.textContent=txt+' · por '+who}catch(e){}}
 $('#btnNote').onclick=async()=>{const t=$('#noteText').value.trim();if(!t||!editing||!canWrite)return;
+  const line={d:nowStr(),t};
+  if(GS){const sm=sheetMeta[editMod.id];$('#btnNote').disabled=true;
+    try{const res=await gas('appendNote',gsPin(),{sheet:sm.name,headerRow:sm.headerRow,id:editing._id,line:fmtNotes([line]),who:myName()});
+      if(res.missing)return toast('Ese registro ya no existe en la hoja.');
+      editing._notes=[...(editing._notes||[]),line];editing._mod=editing._t=res.mod;editStamp=res.mod;$('#noteText').value='';drawNotes();showMeta(editing);gsRefresh()}
+    catch(e){toast('No se pudo guardar la nota: '+(e&&e.message||e))}finally{$('#btnNote').disabled=false}return}
   if(store){const latest=recs(editMod).find(x=>x._id===editing._id);if(latest)editing={...latest}}
-  editing._notes=[...(editing._notes||[]),{d:new Date().toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),t}];
+  editing._notes=[...(editing._notes||[]),line];
   $('#noteText').value='';drawNotes();await putRec(editMod,editing);editStamp=editing._t};
 $('#noteText').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#btnNote').click()}};
-$('#form').onsubmit=async e=>{e.preventDefault();if(!canWrite)return;const m=editMod;
+let saving=false;
+$('#form').onsubmit=async e=>{e.preventDefault();if(!canWrite||saving)return;const m=editMod;
   const vals={};$('#fields').querySelectorAll('[data-k]').forEach(el=>vals[el.dataset.k]=el.value.trim());
   if(!vals[m.main]&&!(m.org&&vals[m.org]))return toast(`Escribe al menos ${m.main}${m.org?' o '+m.org:''}`);
   const pending=$('#noteText').value.trim();
   const pk=phoneKey(vals[m.phone]);
   if(!editing&&pk.length>=7){for(const x of MODS){const dup=recs(x).find(r=>phoneKey(r[x.phone])===pk);
     if(dup&&!await ask(`Ese WhatsApp ya está registrado:\n${dup[x.main]||''} · ${dup[x.org]||''} (${x.name}).\n\n¿Guardar de todas formas?`,'Guardar igual'))return}}
-  let base=editing;
-  if(store&&editing){const latest=recs(m).find(x=>x._id===editing._id);
-    if(latest&&latest._t!==editStamp){const ps=userCap&&latest._u?await userCap.profiles([latest._u]).catch(()=>({})):{};
-      const who=latest._u===myId?'Tú (en otro dispositivo)':((ps[latest._u]?.name)||'Otra persona');
-      if(!await ask(`${who} modificó este registro mientras lo tenías abierto.\n\n¿Guardar tus cambios encima? Las notas de ambos se conservan.`,'Guardar mis cambios','Cancelar'))return}
-    if(latest)base=latest}
-  const r=base?{...base}:{_id:uid(),_o:-Date.now(),_notes:[]};
-  if(pending)r._notes=[...(r._notes||[]),{d:new Date().toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),t:pending}];
-  m.fields.forEach(f=>{if(f.t==='auto')return;const v=vals[f.k];if(v)r[f.k]=v;else delete r[f.k]});
-  m.compute&&m.compute(r);
-  if(vals.Responsable)lsSet('crm-cd-lastResp',vals.Responsable);
-  if(!store){const i=recs(m).indexOf(editing);if(i>=0)recs(m)[i]=r;else recs(m).unshift(r)}
-  const ok=await putRec(m,r);if(!ok)return;
-  $('#noteText').value='';$('#dlg').close();render();toast(editing?'Cambios guardados':'Registro creado');
+  const build=base=>{const r=base?{...base}:{_id:uid(),_o:-Date.now(),_notes:[],_fx:GS&&sheetMeta[m.id]?sheetMeta[m.id].fxKeys:[]};
+    if(pending)r._notes=[...(r._notes||[]),{d:nowStr(),t:pending}];
+    // Solo se aplican los campos que esta persona cambió; así no se pisan cambios de otros
+    m.fields.forEach(f=>{if(f.t==='auto'||(r._fx||[]).includes(f.k))return;const v=vals[f.k];if(base&&v===editOrig[f.k])return;if(v)r[f.k]=v;else delete r[f.k]});
+    m.compute&&m.compute(r);return r};
+  const isNew=!editing;
+  let r=build(editing?(recs(m).find(x=>x._id===editing._id)||editing):null);
+  saving=true;$('#btnSave').disabled=true;if(GS)toast('Guardando…');
+  try{
+    if(!store&&!GS){const i=recs(m).indexOf(editing);if(i>=0)recs(m)[i]=r;else recs(m).unshift(r)}
+    let res=await saveRec(m,r,{expected:editStamp});
+    if(res&&res.conflict){if(GS)await gsLoad();const latest=recs(m).find(x=>x._id===r._id)||r;
+      if(!await ask(`${await whoOf(latest)} modificó este registro mientras lo tenías abierto.\n\n¿Guardar tus cambios? Solo se cambian los campos que tú editaste; lo demás y las notas de ambos se conservan.`,'Guardar mis cambios','Cancelar')){render();return}
+      r=build(latest);res=await saveRec(m,r,{force:true})}
+    if(!res)return;
+    if(vals.Responsable)lsSet('crm-cd-lastResp',vals.Responsable);
+    if(GS){const i=recs(m).findIndex(x=>x._id===r._id);if(i>=0)recs(m)[i]=r;else recs(m).unshift(r);gsRefresh()}
+    $('#noteText').value='';$('#dlg').close();render();toast(isNew?'Registro creado':'Cambios guardados');
+  }finally{saving=false;$('#btnSave').disabled=false}
 };
 $('#form').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();$('#form').requestSubmit()}};
 $('#btnDel').onclick=async()=>{if(!await ask('¿Eliminar este registro? No se puede deshacer.','Eliminar'))return;
-  const m=editMod,r=editing;if(!store)data[m.id]=recs(m).filter(x=>x!==r);await delRec(m,r);$('#dlg').close();render();toast('Registro eliminado')};
+  const m=editMod,r=editing;
+  if(GS){const sm=sheetMeta[m.id];try{await gas('deleteRecord',gsPin(),{sheet:sm.name,headerRow:sm.headerRow,id:r._id})}catch(e){return toast('No se pudo eliminar: '+(e&&e.message||e))}
+    data[m.id]=recs(m).filter(x=>x._id!==r._id);gsRefresh()}
+  else{if(!store)data[m.id]=recs(m).filter(x=>x!==r);await delRec(m,r)}
+  $('#dlg').close();render();toast('Registro eliminado')};
+$('#btnLogout').onclick=async()=>{$('#dlgMore').close();lsSet('crm-cd-pin','');await login();gsRefresh()};
 $('#btnClose').onclick=$('#btnCancel').onclick=()=>$('#dlg').close();
 $('#btnNew').onclick=()=>cur!=='agenda'&&canWrite&&openRec(MOD[cur],null);
 $('#btnMore').onclick=()=>$('#dlgMore').showModal();

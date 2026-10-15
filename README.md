@@ -17,7 +17,11 @@ CRM en un solo archivo (`index.html`) hecho a la medida del libro **CasaDorada_C
 
 Las listas desplegables del Excel (Etapa, Temperatura, Cargo, Responsable, Potencial, Estado, Frecuencia…) son botones de un toque en el formulario.
 
-## Cómo usarlo
+## Para trabajar en equipo sin cuenta de Claude
+
+Instálalo sobre la hoja de Google siguiendo [INSTALAR-GOOGLE-SHEETS.md](INSTALAR-GOOGLE-SHEETS.md). Los datos se guardan en la hoja y cada trabajador entra con un enlace y un PIN.
+
+## Cómo usarlo (solo en tu navegador)
 
 1. En Google Drive abre la hoja → **Archivo › Descargar › Microsoft Excel (.xlsx)**.
 2. Abre `index.html` en el navegador.
