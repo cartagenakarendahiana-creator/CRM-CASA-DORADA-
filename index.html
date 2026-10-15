@@ -123,7 +123,7 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
 </main>
 
 <dialog id="dlg"><form method="dialog" id="form">
-  <div class="dh"><h2 id="dlgTitle">Registro</h2>
+  <div class="dh"><div style="flex:1;min-width:0"><h2 id="dlgTitle">Registro</h2><div class="hint" id="dlgMeta"></div></div>
     <button type="button" id="btnContact" title="Pone Último contacto = hoy y suma 1 a N° contactos">✓ Registrar contacto de hoy</button>
     <button type="button" id="btnClose" aria-label="Cerrar">✕</button></div>
   <div class="db"><div id="fields"></div>
@@ -243,12 +243,12 @@ const info=msg=>ask(msg,'Entendido',null);
 // ================= Almacenamiento: compartido (db) o en este navegador =================
 const KEY='crm-casa-dorada-v2';
 let data={};MODS.forEach(m=>data[m.id]=[]);
-let store=null,canWrite=true,ready=false;
+let store=null,userCap=null,myId=null,canWrite=true,ready=false,editStamp=null;
 let cur='agenda',sortCol=null,sortDir=1,filters={},editing=null,editMod=null;
 const recs=m=>data[m.id];
 const coll=m=>store.collection('m_'+m.id);
-function toDoc(m,r){const o={o:r._o??0,n:r._notes||[]};m.fields.forEach(f=>{if(r[f.k]!=null&&r[f.k]!=='')o[hkey(f.k)]=String(r[f.k])});return o}
-function fromDoc(m,id,d){const r={_id:id,_o:d.o??0,_notes:Array.isArray(d.n)?d.n:[]};m.fields.forEach(f=>{const v=d[hkey(f.k)];if(v!=null&&v!=='')r[f.k]=v});return r}
+function toDoc(m,r){const o={o:r._o??0,n:r._notes||[]};if(r._u)o.u=r._u;if(r._t)o.t=r._t;m.fields.forEach(f=>{if(r[f.k]!=null&&r[f.k]!=='')o[hkey(f.k)]=String(r[f.k])});return o}
+function fromDoc(m,id,d){const r={_id:id,_o:d.o??0,_notes:Array.isArray(d.n)?d.n:[],_u:d.u||null,_t:d.t||null};m.fields.forEach(f=>{const v=d[hkey(f.k)];if(v!=null&&v!=='')r[f.k]=v});return r}
 const byOrder=(a,b)=>(a._o??0)-(b._o??0);
 function saveLocal(){if(!store&&!lsSet(KEY,JSON.stringify({data})))toast('⚠ No se pudo guardar en este navegador')}
 async function withRetry(fn){for(let i=0;;i++){try{return await fn()}catch(e){
@@ -256,7 +256,7 @@ async function withRetry(fn){for(let i=0;;i++){try{return await fn()}catch(e){
 function writeErr(e){if(e?.code==='invalid_argument'){canWrite=false;applyWriteMode();toast('No tienes permiso para editar este CRM.')}
   else if(e?.code==='quota_exceeded')info('El espacio del CRM está lleno. Borra registros que ya no necesites.');
   else toast('No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.')}
-async function putRec(m,r){if(!store){saveLocal();return true}
+async function putRec(m,r){r._t=new Date().toISOString();if(myId)r._u=myId;if(!store){saveLocal();return true}
   try{await withRetry(()=>coll(m).doc(r._id).set(toDoc(m,r)));return true}catch(e){writeErr(e);return false}}
 async function delRec(m,r){if(!store){saveLocal();return}try{await withRetry(()=>coll(m).doc(r._id).delete())}catch(e){writeErr(e)}}
 async function pool(items,fn,n=4,onTick){let i=0,done=0;await Promise.all(Array.from({length:n},async()=>{while(i<items.length){const it=items[i++];await fn(it);onTick&&onTick(++done)}}))}
@@ -276,6 +276,7 @@ async function init(){
   if(db){
     store=db;$('#mode').textContent='● Compartido con el equipo';$('#mode').className='shared';
     $('#modeHint').textContent='Los datos se guardan en línea y todas las personas con acceso a este CRM ven los mismos registros.';
+    userCap=user;try{myId=user&&await user.id()}catch(e){}
     try{const c=user&&await user.can('data.write');if(c===false)canWrite=false}catch(e){}
     let pending=MODS.length;
     MODS.forEach(m=>coll(m).onSnapshot(snap=>{
@@ -480,7 +481,7 @@ function fieldHtml(m,f,r){
   return `<div><label for="${id}">${esc(f.k)}</label><input id="${id}" data-k="${k}" type="${type}" value="${esc(v)}"${extra} autocomplete="off">${list}${quick}</div>`;
 }
 function openRec(m,id){
-  editMod=m;editing=id?recs(m).find(r=>r._id===id):null;
+  editMod=m;editing=id?recs(m).find(r=>r._id===id):null;editStamp=editing?editing._t:null;showMeta(editing);
   if(id&&!editing)return toast('Ese registro ya no existe.');
   const r=editing?{...editing}:{};
   const lr=lsGet('crm-cd-lastResp');if(!editing&&m.byKey.Responsable&&lr)r.Responsable=lr;
@@ -505,9 +506,15 @@ $('#btnContact').onclick=()=>{const m=editMod;
   toast('Último contacto = hoy. Escribe una nota y elige la próxima fecha.');$('#noteText').focus()};
 function drawNotes(){const n=(editing&&editing._notes)||[];
   $('#notes').innerHTML=n.slice().reverse().map(x=>`<li><small>${esc(x.d)}</small><br>${esc(x.t)}</li>`).join('')||'<li class="hint">Sin notas aún.</li>'}
+// Última modificación: guarda solo el id de la persona y resuelve su nombre al mostrar
+async function showMeta(r){const el=$('#dlgMeta');el.textContent='';if(!r||!r._t)return;
+  const d=new Date(r._t);let txt='Última modificación: '+d.toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'});
+  el.textContent=txt;if(!r._u||!userCap)return;
+  try{const ps=await userCap.profiles([r._u]);const who=r._u===myId?'ti':(ps[r._u]?.name||'otra persona');if(editing===r)el.textContent=txt+' · por '+who}catch(e){}}
 $('#btnNote').onclick=async()=>{const t=$('#noteText').value.trim();if(!t||!editing||!canWrite)return;
+  if(store){const latest=recs(editMod).find(x=>x._id===editing._id);if(latest)editing={...latest}}
   editing._notes=[...(editing._notes||[]),{d:new Date().toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),t}];
-  $('#noteText').value='';drawNotes();await putRec(editMod,editing)};
+  $('#noteText').value='';drawNotes();await putRec(editMod,editing);editStamp=editing._t};
 $('#noteText').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#btnNote').click()}};
 $('#form').onsubmit=async e=>{e.preventDefault();if(!canWrite)return;const m=editMod;
   const vals={};$('#fields').querySelectorAll('[data-k]').forEach(el=>vals[el.dataset.k]=el.value.trim());
@@ -516,7 +523,13 @@ $('#form').onsubmit=async e=>{e.preventDefault();if(!canWrite)return;const m=edi
   const pk=phoneKey(vals[m.phone]);
   if(!editing&&pk.length>=7){for(const x of MODS){const dup=recs(x).find(r=>phoneKey(r[x.phone])===pk);
     if(dup&&!await ask(`Ese WhatsApp ya está registrado:\n${dup[x.main]||''} · ${dup[x.org]||''} (${x.name}).\n\n¿Guardar de todas formas?`,'Guardar igual'))return}}
-  const r=editing?{...editing}:{_id:uid(),_o:-Date.now(),_notes:[]};
+  let base=editing;
+  if(store&&editing){const latest=recs(m).find(x=>x._id===editing._id);
+    if(latest&&latest._t!==editStamp){const ps=userCap&&latest._u?await userCap.profiles([latest._u]).catch(()=>({})):{};
+      const who=latest._u===myId?'Tú (en otro dispositivo)':((ps[latest._u]?.name)||'Otra persona');
+      if(!await ask(`${who} modificó este registro mientras lo tenías abierto.\n\n¿Guardar tus cambios encima? Las notas de ambos se conservan.`,'Guardar mis cambios','Cancelar'))return}
+    if(latest)base=latest}
+  const r=base?{...base}:{_id:uid(),_o:-Date.now(),_notes:[]};
   if(pending)r._notes=[...(r._notes||[]),{d:new Date().toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),t:pending}];
   m.fields.forEach(f=>{if(f.t==='auto')return;const v=vals[f.k];if(v)r[f.k]=v;else delete r[f.k]});
   m.compute&&m.compute(r);
