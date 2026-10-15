@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRM Casa Dorada</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#f7f5f0;--card:#fff;--ink:#1f1d1a;--muted:#6b665d;--line:#e4dfd4;
+  --gold:#b8892b;--gold-soft:#f5ead2;--danger:#b3261e;--ok:#2e7d32;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#16150f;--card:#211f19;--ink:#f1ece2;--muted:#a69f91;--line:#36332a;
+  --gold:#e0b04f;--gold-soft:#3a3120;--danger:#ef6f66;--ok:#6cc070;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+h1{font-size:18px;margin:0;color:var(--gold);white-space:nowrap}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover,.btn:hover{border-color:var(--gold)}
+.primary{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:600}
+.danger{color:var(--danger)}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--gold);border-color:var(--gold)}
+#search{flex:1;min-width:200px;font-size:16px;padding:10px 12px}
+main{padding:12px 16px 40px;max-width:1400px;margin:0 auto}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tab{border-radius:20px}
+.tab.on{background:var(--gold-soft);border-color:var(--gold);font-weight:600}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;color:var(--muted)}
+.bar select{width:auto;max-width:220px}
+.wrap{overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+th{position:sticky;top:0;background:var(--card);cursor:pointer;user-select:none;font-size:13px;color:var(--muted)}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--gold-soft)}
+mark{background:#ffe08a;color:#000;border-radius:2px}
+.empty{padding:40px 16px;text-align:center;color:var(--muted)}
+dialog{border:none;border-radius:12px;padding:0;width:min(720px,calc(100vw - 32px));background:var(--card);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dh{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.dh h2{margin:0;font-size:17px}
+.db{padding:16px;max-height:65vh;overflow:auto}
+.df{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+.hist{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.hist ul{list-style:none;padding:0;margin:8px 0 0}
+.hist li{padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:6px}
+.hist small{color:var(--muted)}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none}
+.toast.show{opacity:1}
+.hint{font-size:12px;color:var(--muted)}
+/* móvil: tarjetas */
+@media (max-width:700px){
+  thead{display:none}
+  table,tbody,tr,td{display:block;width:100%}
+  tr{border-bottom:1px solid var(--line);padding:8px 0}
+  td{border:none;padding:2px 12px;white-space:normal;max-width:none}
+  td::before{content:attr(data-h)": ";color:var(--muted);font-size:12px}
+  h1{width:100%}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>★ CRM Casa Dorada</h1>
+  <input id="search" type="search" placeholder="Buscar por nombre, teléfono, cédula, correo…  (tecla /)" autocomplete="off">
+  <button class="primary" id="btnNew">+ Nuevo (N)</button>
+  <label class="btn" style="margin:0;color:var(--ink);font-size:15px">Importar Excel<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+  <button id="btnExport">Exportar Excel</button>
+  <button id="btnMore">⋯</button>
+</header>
+<main>
+  <div class="tabs" id="tabs"></div>
+  <div class="bar" id="bar"></div>
+  <div class="wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+  <div class="empty" id="empty" hidden></div>
+</main>
+
+<dialog id="dlg"><form method="dialog" id="form">
+  <div class="dh"><h2 id="dlgTitle">Registro</h2><button value="cancel" type="button" id="btnClose">✕</button></div>
+  <div class="db"><div class="grid" id="fields"></div>
+    <div class="hist" id="hist"><strong>Seguimiento</strong>
+      <div style="display:flex;gap:8px;margin-top:8px"><input id="noteText" placeholder="Ej: Llamó, interesada en apto 302; volver a llamar el viernes"><button type="button" id="btnNote">Agregar</button></div>
+      <ul id="notes"></ul></div>
+  </div>
+  <div class="df"><button type="button" class="danger" id="btnDel">Eliminar</button><span style="flex:1"></span><button type="button" id="btnCancel">Cancelar</button><button class="primary" id="btnSave" type="submit">Guardar (Ctrl+Enter)</button></div>
+</form></dialog>
+
+<dialog id="dlgMore"><div class="dh"><h2>Opciones</h2><button type="button" onclick="dlgMore.close()">✕</button></div>
+  <div class="db" style="display:grid;gap:10px">
+    <button id="btnCols">Agregar columna a esta hoja</button>
+    <button id="btnNewSheet">Crear hoja nueva (ej. Clientes, Inmuebles)</button>
+    <button id="btnBackup">Descargar copia de seguridad (.json)</button>
+    <label class="btn" style="margin:0;color:var(--ink);font-size:15px;text-align:center">Restaurar copia de seguridad<input id="restore" type="file" accept=".json" hidden></label>
+    <button class="danger" id="btnDelSheet">Eliminar esta hoja</button>
+    <p class="hint">Los datos se guardan en este navegador. Descarga una copia de seguridad o exporta a Excel con frecuencia.</p>
+  </div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY='crm-casa-dorada-v1';
+let db={sheets:{},order:[],active:null};
+let sortCol=null,sortDir=1,editing=null,filters={};
+
+const $=s=>document.querySelector(s);
+const norm=v=>String(v??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();
+const esc=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200)}
+
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&d.sheets)db=d}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){toast('No se pudo guardar en el navegador')}}
+const sheet=()=>db.sheets[db.active];
+
+// ---------- Importar ----------
+$('#file').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;e.target.value='';
+  const wb=XLSX.read(await f.arrayBuffer(),{cellDates:true});
+  let n=0;
+  wb.SheetNames.forEach(name=>{
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
+    const hi=rows.findIndex(r=>r.filter(c=>String(c).trim()).length>=2); // primera fila con encabezados
+    if(hi<0)return;
+    const cols=dedupe(rows[hi].map((c,i)=>String(c).trim()||'Columna '+(i+1)));
+    const recs=rows.slice(hi+1).filter(r=>r.some(c=>String(c).trim())).map(r=>{
+      const o={_id:uid(),_notes:[]};cols.forEach((c,i)=>o[c]=String(r[i]??'').trim());return o});
+    let key=name;
+    if(db.sheets[key]&&!confirm(`La hoja "${name}" ya existe. ¿Reemplazarla con la del archivo?\n(Cancelar = agregarla como hoja nueva)`))key=name+' ('+new Date().toLocaleDateString()+')';
+    if(!db.order.includes(key))db.order.push(key);
+    db.sheets[key]={cols,rows:recs};n+=recs.length;db.active=db.active||key;
+  });
+  if(!db.sheets[db.active])db.active=db.order[0];
+  save();render();toast(`Importados ${n} registros`);
+};
+function dedupe(a){const seen={};return a.map(c=>{if(c.startsWith('_'))c=c.slice(1);if(seen[c]){seen[c]++;return c+' '+seen[c]}seen[c]=1;return c})}
+
+// ---------- Exportar ----------
+$('#btnExport').onclick=()=>{
+  if(!db.order.length)return toast('No hay datos');
+  const wb=XLSX.utils.book_new();
+  db.order.forEach(n=>{const s=db.sheets[n];
+    const data=s.rows.map(r=>{const o={};s.cols.forEach(c=>o[c]=r[c]);
+      o['Seguimiento']=(r._notes||[]).map(x=>`[${x.d}] ${x.t}`).join('\n');return o});
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data,{header:[...s.cols,'Seguimiento']}),n.slice(0,31))});
+  XLSX.writeFile(wb,'CRM-Casa-Dorada-'+new Date().toISOString().slice(0,10)+'.xlsx');
+};
+
+// ---------- Render ----------
+function render(){
+  const tabs=$('#tabs');
+  tabs.innerHTML=db.order.map(n=>`<button class="tab ${n===db.active?'on':''}" data-n="${esc(n)}">${esc(n)} <span class="hint">${db.sheets[n].rows.length}</span></button>`).join('');
+  tabs.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{db.active=b.dataset.n;filters={};sortCol=null;save();render()});
+  const s=sheet();
+  if(!s){$('#thead').innerHTML='';$('#tbody').innerHTML='';$('#bar').innerHTML='';
+    $('#empty').hidden=false;$('#empty').innerHTML=`<p style="font-size:17px">Bienvenido. Para empezar:</p>
+    <p>1. En Google Drive abre tu hoja → <b>Archivo › Descargar › Microsoft Excel (.xlsx)</b></p>
+    <p>2. Pulsa <b>Importar Excel</b> arriba y elige ese archivo.</p>
+    <p class="hint">O pulsa ⋯ › Crear hoja nueva para empezar desde cero.</p>`;return}
+  // filtros: columnas con pocos valores distintos (estado, asesor, ciudad…)
+  const fcols=s.cols.filter(c=>{if(/nombre|tel|cel|correo|mail|c[eé]dula|nit|documento|direcc|observ|nota|coment|fecha/i.test(c))return false;
+    const vals=s.rows.map(r=>r[c]).filter(Boolean),v=new Set(vals);return v.size>1&&v.size<=15&&v.size<vals.length});
+  $('#bar').innerHTML=fcols.map(c=>{const vals=[...new Set(s.rows.map(r=>r[c]).filter(Boolean))].sort();
+    return `<select data-c="${esc(c)}"><option value="">${esc(c)}: todos</option>${vals.map(v=>`<option ${filters[c]===v?'selected':''}>${esc(v)}</option>`).join('')}</select>`}).join('')+'<span id="count"></span>';
+  $('#bar').querySelectorAll('select').forEach(sel=>sel.onchange=()=>{filters[sel.dataset.c]=sel.value;drawRows()});
+  $('#thead').innerHTML='<tr>'+s.cols.map(c=>`<th data-c="${esc(c)}">${esc(c)}${sortCol===c?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'</tr>';
+  $('#thead').querySelectorAll('th').forEach(th=>th.onclick=()=>{const c=th.dataset.c;sortDir=sortCol===c?-sortDir:1;sortCol=c;render()});
+  drawRows();
+}
+function drawRows(){
+  const s=sheet(),q=norm($('#search').value),terms=q.split(/\s+/).filter(Boolean);
+  let rows=s.rows.filter(r=>{
+    for(const c in filters)if(filters[c]&&r[c]!==filters[c])return false;
+    if(!terms.length)return true;
+    const hay=norm(s.cols.map(c=>r[c]).join(' ')+' '+(r._notes||[]).map(n=>n.t).join(' '));
+    const digits=hay.replace(/[^\d ]/g,'');
+    return terms.every(t=>hay.includes(t)||(/^\d+$/.test(t)&&digits.replace(/ /g,'').includes(t)));
+  });
+  if(sortCol)rows=[...rows].sort((a,b)=>String(a[sortCol]).localeCompare(String(b[sortCol]),'es',{numeric:true})*sortDir);
+  const hl=v=>{let h=esc(v);terms.forEach(t=>{if(t.length<2)return;
+    const i=norm(v).indexOf(t);if(i>=0){const raw=String(v);h=esc(raw.slice(0,i))+'<mark>'+esc(raw.slice(i,i+t.length))+'</mark>'+esc(raw.slice(i+t.length))}});return h};
+  const shown=rows.slice(0,500);
+  $('#tbody').innerHTML=shown.map(r=>`<tr data-id="${r._id}">`+s.cols.map(c=>`<td data-h="${esc(c)}" title="${esc(r[c])}">${hl(r[c])}</td>`).join('')+'</tr>').join('');
+  $('#tbody').querySelectorAll('tr').forEach(tr=>tr.onclick=()=>openRec(tr.dataset.id));
+  $('#count').textContent=`${rows.length} de ${s.rows.length} registros`+(rows.length>500?' (mostrando 500, afina la búsqueda)':'');
+  $('#empty').hidden=rows.length>0;$('#empty').textContent=s.rows.length?'Sin resultados. Prueba con otra palabra o quita filtros.':'Hoja vacía. Pulsa “+ Nuevo”.';
+}
+$('#search').oninput=()=>sheet()&&drawRows();
+
+// ---------- Formulario ----------
+function openRec(id){
+  const s=sheet();if(!s)return toast('Primero importa o crea una hoja');
+  editing=id?s.rows.find(r=>r._id===id):null;
+  const r=editing||{};
+  $('#dlgTitle').textContent=editing?'Editar registro':'Nuevo registro en '+db.active;
+  $('#fields').innerHTML=s.cols.map((c,i)=>{
+    const vals=[...new Set(s.rows.map(x=>x[c]).filter(Boolean))];
+    const list=vals.length&&vals.length<=40?`<datalist id="dl${i}">${vals.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`:'';
+    const long=/observ|nota|coment|descrip|direcc/i.test(c);
+    const type=/fecha|date/i.test(c)&&(!r[c]||/^\d{4}-\d{2}-\d{2}$/.test(r[c]))?'date':/tel|cel|whats|móvil|movil/i.test(c)?'tel':/correo|e-?mail/i.test(c)?'email':'text';
+    return `<div style="${long?'grid-column:1/-1':''}"><label for="f${i}">${esc(c)}</label>`+
+      (long?`<textarea id="f${i}" data-c="${esc(c)}" rows="3">${esc(r[c])}</textarea>`
+           :`<input id="f${i}" data-c="${esc(c)}" type="${type}" value="${esc(r[c])}" ${list?`list="dl${i}"`:''}>${list}`)+'</div>'}).join('');
+  $('#hist').hidden=!editing;$('#btnDel').hidden=!editing;
+  drawNotes();$('#dlg').showModal();setTimeout(()=>$('#f0')?.focus(),30);
+}
+function drawNotes(){const n=(editing&&editing._notes)||[];
+  $('#notes').innerHTML=n.slice().reverse().map(x=>`<li><small>${esc(x.d)}</small><br>${esc(x.t)}</li>`).join('')||'<li class="hint">Sin notas aún.</li>'}
+$('#btnNote').onclick=()=>{const t=$('#noteText').value.trim();if(!t||!editing)return;
+  (editing._notes=editing._notes||[]).push({d:new Date().toLocaleString('es-CO'),t});$('#noteText').value='';save();drawNotes()};
+$('#noteText').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#btnNote').click()}};
+$('#form').onsubmit=e=>{e.preventDefault();const s=sheet();
+  const r=editing||{_id:uid(),_notes:[]};
+  $('#fields').querySelectorAll('[data-c]').forEach(el=>r[el.dataset.c]=el.value.trim());
+  if(!editing)s.rows.unshift(r);
+  save();$('#dlg').close();render();toast(editing?'Cambios guardados':'Registro creado')};
+$('#form').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))$('#form').requestSubmit()};
+$('#btnDel').onclick=()=>{if(!confirm('¿Eliminar este registro?'))return;const s=sheet();
+  s.rows=s.rows.filter(r=>r!==editing);save();$('#dlg').close();render();toast('Eliminado')};
+$('#btnClose').onclick=$('#btnCancel').onclick=()=>$('#dlg').close();
+$('#btnNew').onclick=()=>openRec(null);
+
+// ---------- Opciones ----------
+$('#btnMore').onclick=()=>$('#dlgMore').showModal();
+$('#btnCols').onclick=()=>{const s=sheet();if(!s)return toast('No hay hoja activa');
+  const c=prompt('Nombre de la nueva columna (ej. Estado, Asesor, Próxima llamada):');if(!c||!c.trim())return;
+  if(s.cols.includes(c.trim()))return toast('Esa columna ya existe');s.cols.push(c.trim());save();render();$('#dlgMore').close()};
+$('#btnNewSheet').onclick=()=>{const n=prompt('Nombre de la hoja:','Clientes');if(!n)return;
+  if(db.sheets[n])return toast('Ya existe');
+  const cols=(prompt('Columnas separadas por coma:','Nombre, Teléfono, Correo, Cédula, Estado, Asesor, Fecha de contacto, Observaciones')||'').split(',').map(x=>x.trim()).filter(Boolean);
+  if(!cols.length)return;db.sheets[n]={cols:dedupe(cols),rows:[]};db.order.push(n);db.active=n;save();render();$('#dlgMore').close()};
+$('#btnDelSheet').onclick=()=>{if(!sheet()||!confirm(`¿Eliminar la hoja "${db.active}" y todos sus registros?`))return;
+  delete db.sheets[db.active];db.order=db.order.filter(n=>n!==db.active);db.active=db.order[0]||null;save();render();$('#dlgMore').close()};
+$('#btnBackup').onclick=()=>{const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(db)],{type:'application/json'}));
+  a.download='crm-casa-dorada-respaldo-'+new Date().toISOString().slice(0,10)+'.json';a.click()};
+$('#restore').onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{const d=JSON.parse(await f.text());if(!d.sheets)throw 0;if(!confirm('Esto reemplaza los datos actuales. ¿Continuar?'))return;
+    db=d;save();render();$('#dlgMore').close();toast('Copia restaurada')}catch(_){toast('Archivo no válido')}};
+
+// ---------- Atajos ----------
+document.addEventListener('keydown',e=>{
+  if(document.querySelector('dialog[open]')||/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))return;
+  if(e.key==='/'){e.preventDefault();$('#search').focus()}
+  if(e.key==='n'||e.key==='N'){e.preventDefault();openRec(null)}
+});
+
+load();render();
+</script>
+</body>
+</html>
