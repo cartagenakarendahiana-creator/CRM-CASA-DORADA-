@@ -2,8 +2,10 @@
 // - whatsappWebhook: recibe los mensajes y estados de la API de WhatsApp (Meta)
 // - sendWhatsApp: envía texto (ventana de 24 h abierta) o plantillas aprobadas
 // - createTeamUser: la administradora crea cuentas para su equipo
+// - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 
@@ -16,6 +18,8 @@ const WA_TOKEN = defineSecret("WA_TOKEN");             // token permanente del u
 const WA_VERIFY_TOKEN = defineSecret("WA_VERIFY_TOKEN"); // texto que tú inventas para verificar el webhook
 const WA_APP_SECRET = defineSecret("WA_APP_SECRET");     // clave secreta de la app de Meta
 const WA_PHONE_ID = defineString("WA_PHONE_ID", { default: "" }); // identificador del número de teléfono
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");     // clave de la API de Claude (asesora virtual)
+const asesora = require("./asesora");
 
 const DAY = 24 * 3600 * 1000;
 
@@ -138,17 +142,42 @@ exports.sendWhatsApp = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req
     shown = preview || "[Plantilla " + template.name + "]";
   } else throw new HttpsError("invalid-argument", "Falta el mensaje.");
 
-  const r = await fetch(`${GRAPH}/${phoneNumberId}/messages`, {
+  // Cuando una persona escribe, la asesora virtual se pausa en ese chat por unas horas
+  const ai = await db.doc("settings/asesora").get();
+  const pauseH = ai.exists ? Number(ai.get("pauseHours")) || 12 : 12;
+  try {
+    const id = await waSend(cref, payload, { text: shown, type: text ? "text" : "template", by: req.auth.uid, byName: me.name || "" },
+      { unread: 0, aiPausedUntil: Date.now() + pauseH * 3600 * 1000 });
+    return { id };
+  } catch (e) { throw new HttpsError("internal", e.message); }
+});
+
+// Envía por la API de WhatsApp y registra el mensaje saliente en el contacto
+async function waSend(cref, payload, msg, extra = {}) {
+  const r = await fetch(`${GRAPH}/${WA_PHONE_ID.value()}/messages`, {
     method: "POST", headers: { Authorization: "Bearer " + WA_TOKEN.value(), "Content-Type": "application/json" }, body: JSON.stringify(payload),
   });
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) throw new HttpsError("internal", (out.error && (out.error.error_user_msg || out.error.message)) || "WhatsApp rechazó el mensaje.");
+  if (!r.ok) throw new Error((out.error && (out.error.error_user_msg || out.error.message)) || "WhatsApp rechazó el mensaje.");
   const id = out.messages && out.messages[0] && out.messages[0].id;
   const now = Date.now();
-  await cref.collection("messages").doc(id || db.collection("x").doc().id).set({ dir: "out", text: shown, ts: now, by: req.auth.uid, byName: me.name || "",
-    type: text ? "text" : "template" }, { merge: true }); // merge: el estado puede haber llegado antes
-  await cref.set({ lastOutboundAt: now, lastOutboundBy: me.name || "", lastMessage: shown.slice(0, 200), lastMessageDir: "out", unread: 0, updatedAt: now, updatedBy: me.name || "" }, { merge: true });
-  return { id };
+  await cref.collection("messages").doc(id || db.collection("x").doc().id).set({ dir: "out", ts: now, ...msg }, { merge: true }); // merge: el estado puede haber llegado antes
+  await cref.set({ lastOutboundAt: now, lastOutboundBy: msg.byName, lastMessage: msg.text.slice(0, 200), lastMessageDir: "out", updatedAt: now, updatedBy: msg.byName, ...extra }, { merge: true });
+  return id;
+}
+
+// Asesora virtual: se dispara con cada mensaje nuevo; solo actúa con los entrantes
+exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", region: REGION, secrets: [WA_TOKEN, ANTHROPIC_API_KEY],
+  timeoutSeconds: 300, memory: "512MiB" }, async event => {
+  const m = event.data && event.data.data();
+  if (!m || m.dir !== "in" || !WA_PHONE_ID.value()) return;
+  const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(),
+    send: async ({ cref, contact, text, byName }) => {
+      const to = phoneId(contact.phone);
+      if (!to) throw new Error("El contacto no tiene WhatsApp.");
+      await waSend(cref, { messaging_product: "whatsapp", to, type: "text", text: { body: text.slice(0, 4096) } }, { text, type: "text", by: "asesora", byName, ai: true });
+    } });
+  console.log("asesora", event.params.cid, result);
 });
 
 exports.createTeamUser = onCall({ region: REGION }, async req => {

@@ -121,6 +121,49 @@ Cuando un cliente lleva más de 24 horas sin escribirte, WhatsApp solo permite m
 
 ---
 
+## Fase 3 · Asesora virtual con IA (opcional)
+
+La asesora virtual responde los mensajes de WhatsApp las 24 horas con Claude, la IA de Anthropic. Necesita la fase 2 funcionando.
+
+**Qué hace sola**
+- Responde preguntas de productos, precios, medidas y disponibilidad. Los precios los toma del Catálogo de Productos.
+- Llena la ficha con nombre, ciudad, qué busca, temperatura y producto elegido.
+- Prepara cotizaciones en **Borrador**. En Hoy aparecen como "Revisa y envía la cotización".
+- Agenda seguimientos.
+
+**Qué pasa a una persona**
+- Cerrar pedidos y pagos, negociaciones, descuentos, quejas, y todo lo que no sepa.
+- Esos chats aparecen de primeros en **Hoy** con el motivo y un resumen. Ella deja de responder en ese chat hasta que pulses **Devolver a la asesora** o **Reactivar**.
+
+**Cuándo se pausa sola**
+- Cuando alguien del equipo escribe en un chat, ella se pausa en ese chat durante las horas que configures (12 por defecto).
+- También puedes pausarla a mano en cada conversación.
+
+### 12. Crear la clave de la API de Claude
+1. Entra a **platform.claude.com**, crea una cuenta para la empresa y agrega un método de pago con créditos. En **Límites**, pon un tope mensual de gasto, por ejemplo US$30.
+2. Ve a **API Keys › Create Key** y copia la clave. Empieza con `sk-ant-`.
+3. En Cloud Shell, dentro de `CRM-CASA-DORADA-/crm-firebase`:
+   ```bash
+   firebase functions:secrets:set ANTHROPIC_API_KEY   # pega la clave
+   firebase deploy --only functions,firestore,hosting
+   ```
+
+### 13. Encenderla en el CRM
+1. En **Configuración › Asesora virtual**, escribe en "Lo que debe saber del negocio":
+   - horarios;
+   - envíos y tiempos;
+   - formas de pago;
+   - medidas;
+   - políticas.
+2. Marca **Responder automáticamente** y pulsa **Guardar**.
+3. Prueba escribiendo desde otro celular al número de WhatsApp de la empresa.
+
+**Costo aproximado:** entre US$0,05 y US$0,15 por cada mensaje que responde. Depende de qué tan larga sea la conversación. 1.000 respuestas al mes cuestan más o menos entre US$50 y US$150.
+
+**Para apagarla:** desmarca **Responder automáticamente** en Configuración › Asesora virtual. Se apaga de inmediato.
+
+---
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash
@@ -132,5 +175,5 @@ firebase deploy
 
 ## Seguridad
 - Solo pueden entrar las personas que tienen usuario **y** están activas en `users`. Las reglas de Firestore (`firestore.rules`) bloquean todo lo demás.
-- La configuración de `firebase-config.js` no es secreta. Los tokens de WhatsApp sí lo son y viven solo en los secretos de Firebase, nunca en el código.
+- La configuración de `firebase-config.js` no es secreta. Los tokens de WhatsApp y la clave de Claude sí lo son y viven solo en los secretos de Firebase, nunca en el código.
 - Para quitarle el acceso a alguien: **Equipo** › su nombre › **Acceso: Sin acceso**.

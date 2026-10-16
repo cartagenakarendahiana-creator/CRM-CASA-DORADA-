@@ -324,3 +324,12 @@ details.mtable table{margin-top:8px}
 .stage-pick .btn{text-align:left;padding:12px 14px}
 .stage-pick .btn.on{background:var(--green-soft);border-color:var(--green);color:var(--green);font-weight:600}
 @media (max-width:860px){.col{min-width:78vw;width:78vw}}
+
+/* Asesora virtual */
+.aibar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);font-size:14px}
+.aibar svg{width:18px;height:18px;color:var(--muted)}
+.ai-form{padding:20px;display:grid;gap:16px;max-width:860px}
+.ai-form textarea{min-height:220px;font-family:inherit;line-height:1.5}
+.ai-form .soft{padding:14px 16px;background:var(--soft, rgba(127,127,127,.06));border-style:dashed}
+.switch{display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer}
+.switch input{width:20px;height:20px;accent-color:var(--ink)}

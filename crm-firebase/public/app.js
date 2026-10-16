@@ -69,6 +69,7 @@ const ICONS = {
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
+  asesora: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
@@ -179,6 +180,7 @@ function startData() {
   w("products", "products");
   w("templates", "templates");
   w("team", "users");
+  S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   window.addEventListener("hashchange", route);
   route();
   setInterval(() => { if (S.view === "hoy" && !document.hidden) scheduleRender(); }, 60000);
@@ -200,7 +202,7 @@ const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
   ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
-  ["Configuración", [["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Configuración", [["asesora", "Asesora virtual"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -231,10 +233,70 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
+}
+
+// ======================= Asesora virtual (IA) =======================
+const aiName = () => (S.ai && S.ai.name) || "Sofía";
+const isAiName = n => / · IA$/.test(n || "");
+function aiState(c) {
+  if (!S.ai || !S.ai.enabled) return { on: false, txt: "Asesora virtual apagada", cls: "" };
+  if (c.aiOff) return { on: false, txt: `${aiName()} en pausa en este chat`, cls: "amber" };
+  if (c.aiHandoff) return { on: false, txt: `${aiName()} pasó el chat a una persona · ${c.aiHandoff.reason || ""}`, cls: "red" };
+  if ((c.aiPausedUntil || 0) > Date.now()) return { on: false, txt: `${aiName()} en pausa hasta ${whenLabel(c.aiPausedUntil)} porque escribió una persona`, cls: "amber" };
+  return { on: true, txt: `${aiName()} responde este chat`, cls: "green" };
+}
+function aiBar(c) {
+  if (!WHATSAPP_ENABLED || !S.ai || !S.ai.enabled) return "";
+  const st = aiState(c);
+  return `<div class="aibar">${icon("asesora")}<span class="pill ${st.cls}">${esc(st.txt)}</span>
+    ${c.aiError && c.aiError.at > (c.lastOutboundAt || 0) ? `<span class="muted" title="${esc(c.aiError.message || "")}">⚠ no pudo responder el último mensaje</span>` : ""}
+    <span class="spacer"></span><button class="btn sm" id="aiToggle" data-on="${st.on ? "0" : "1"}">${st.on ? "Pausar en este chat" : "Reactivar " + esc(aiName())}</button></div>`;
+}
+async function setAi(c, on) {
+  const patch = on ? { aiOff: false, aiHandoff: null, aiPausedUntil: 0 } : { aiOff: true };
+  if (on && c.aiHandoff && c.aiHandoff.at) patch["done." + safeKey("humano:" + c.aiHandoff.at)] = Date.now();
+  await fb.update("contacts/" + c.id, { ...patch, ...stamp() });
+  toast(on ? `${aiName()} vuelve a responder este chat` : `${aiName()} no responderá este chat hasta que la reactives`);
+}
+function viewAsesora(el) {
+  const a = S.ai || {}, adm = isAdmin();
+  const waiting = S.contacts.filter(c => c.aiHandoff).sort((x, y) => y.aiHandoff.at - x.aiHandoff.at);
+  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const today = S.contacts.filter(c => isAiName(c.lastOutboundBy) && (c.lastOutboundAt || 0) >= t0.getTime()).length;
+  const drafts = S.quotes.filter(q => q.aiCreated && q.status === "Borrador").length;
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Asesora virtual</h1><span class="spacer"></span>
+      <span class="pill ${a.enabled ? "green" : ""}">${a.enabled ? "Activa" : "Apagada"}</span></div>
+    ${WHATSAPP_ENABLED ? "" : `<div class="card" style="margin-bottom:16px"><b>Necesita WhatsApp conectado.</b><p class="muted" style="margin:6px 0 0">La asesora responde los mensajes que llegan por la API de WhatsApp (fase 2 de la guía). Puedes dejarla configurada desde ya.</p></div>`}
+    <div class="kpis" style="margin-bottom:16px;width:fit-content"><div><b>${today}</b>chats respondidos hoy</div><div><b>${waiting.length}</b>esperando a una persona</div><div><b>${drafts}</b>cotizaciones por revisar</div></div>
+    <form id="aif" class="card ai-form">
+      <label class="switch"><input type="checkbox" id="aen" ${a.enabled ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Responder automáticamente los mensajes de WhatsApp, las 24 horas</span></label>
+      <div class="grid2">
+        <div><label class="lb" for="anm">Nombre de la asesora</label><input class="in" id="anm" value="${esc(a.name || "Sofía")}" ${adm ? "" : "disabled"}></div>
+        <div><label class="lb" for="aph">Se pausa en un chat cuando una persona escribe, durante (horas)</label><input class="in tabnum" id="aph" type="number" min="1" max="168" value="${a.pauseHours || 12}" ${adm ? "" : "disabled"}></div>
+      </div>
+      <div><label class="lb" for="ain">Lo que debe saber del negocio</label>
+        <textarea class="in" id="ain" rows="12" ${adm ? "" : "disabled"} placeholder="Ejemplo:&#10;- Horario de atención: lunes a sábado de 8 a.m. a 6 p.m.&#10;- Envíos a todo Colombia por Servientrega; en Medellín entrega en 1 a 2 días.&#10;- Pagos: transferencia Bancolombia o Nequi; pedidos por mayor con 50% de anticipo.&#10;- Medidas de sábanas: sencilla 1.00, semidoble 1.20, doble 1.40, queen 1.60, king 2.00.&#10;- Bordado de logo para hoteles desde 24 unidades.&#10;- No ofrecemos descuentos adicionales sin autorización.">${esc(a.instructions || "")}</textarea>
+        <small class="muted">Los precios los toma del Catálogo de Productos. Aquí escribe horarios, envíos, formas de pago, medidas, tiempos y políticas.</small></div>
+      <div class="card soft"><b>Qué hace sola</b><p class="muted" style="margin:4px 0 0">Responde preguntas de productos, precios, medidas y disponibilidad; llena la ficha (nombre, ciudad, qué busca, temperatura, producto elegido); prepara cotizaciones en Borrador para que el equipo las revise; agenda seguimientos.</p>
+        <b style="display:block;margin-top:10px">Qué pasa a una persona</b><p class="muted" style="margin:4px 0 0">Cerrar pedidos y pagos, negociaciones y descuentos, quejas o reclamos, y lo que no sepa. Esos chats aparecen de primeros en Hoy y ella deja de responder ahí hasta que la reactives.</p></div>
+      ${adm ? '<div><button class="btn primary" type="submit">Guardar</button></div>' : '<p class="muted">Solo la administradora puede cambiar esta configuración.</p>'}
+    </form>
+    <h2 style="margin-top:24px">Esperando a una persona</h2>
+    <div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th>Motivo</th><th>Resumen</th><th>Hace</th></tr></thead><tbody>
+      ${waiting.map(c => `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.aiHandoff.reason || "")}</td><td>${esc(c.aiHandoff.summary || "")}</td><td>${ago(c.aiHandoff.at)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">Ninguno.</td></tr>'}</tbody></table></div></div>`;
+  $$("[data-c]", el).forEach(tr => tr.onclick = () => go("conv", tr.dataset.c));
+  $("#aif").onsubmit = async e => {
+    e.preventDefault(); if (!adm) return;
+    try {
+      await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)),
+        instructions: $("#ain").value.trim(), empresa: EMPRESA, ...stamp() });
+      toast("Guardado");
+    } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+  };
 }
 
 // ======================= Plantillas de mensaje =======================
@@ -276,12 +338,19 @@ const safeKey = s => String(s).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120);
 function tasksFor(c) {
   const out = [], now = Date.now(), done = c.done || {}, t = todayIso();
   if (c.archived) return out;
+  if (c.aiHandoff && c.aiHandoff.at && !done[safeKey("humano:" + c.aiHandoff.at)])
+    out.push({ key: safeKey("humano:" + c.aiHandoff.at), kind: "humano", rank: -1, title: `${aiName()} te pasó este chat: ${c.aiHandoff.reason || "atiéndelo"}`,
+      sub: `pasado a una persona hace ${ago(c.aiHandoff.at)}`, hint: c.aiHandoff.summary || "Revisa la conversación y respóndele.", handoff: true });
   if (c.lastInboundAt && (!c.lastOutboundAt || c.lastInboundAt > c.lastOutboundAt) && !done[safeKey("responder:" + c.lastInboundAt)])
     out.push({ key: safeKey("responder:" + c.lastInboundAt), kind: "responder", rank: 0, title: "Respóndele", sub: `sin respuesta hace ${ago(c.lastInboundAt)}`,
       hint: c.lastMessage ? `Escribió: “${c.lastMessage}”` : "Te escribió y está esperando respuesta." });
   S.quotes.filter(q => q.contactId === c.id && q.status === "Aceptada").forEach(q => {
     if (!done[safeKey("pedido:" + q.id)]) out.push({ key: safeKey("pedido:" + q.id), kind: "pedido", rank: 1, q, title: `Convierte en pedido la cotización ${q.number} por ${money(q.total)}`,
       sub: `aceptó la cotización ${q.number} por ${money(q.total)}: conviértela en pedido`, hint: "Ya la aceptó: crea el pedido y confírmale la entrega." });
+  });
+  S.quotes.filter(q => q.contactId === c.id && q.status === "Borrador" && q.aiCreated).forEach(q => {
+    if (!done[safeKey("revisar:" + q.id)]) out.push({ key: safeKey("revisar:" + q.id), kind: "cotizacion", rank: 1.5, q, title: `Revisa y envía la cotización ${q.number} por ${money(q.total)}`,
+      sub: `la preparó ${aiName()} hace ${ago(q.createdAt)}`, hint: "La armó la asesora virtual con precios del catálogo: revísala, márcala como enviada y confírmasela al cliente." });
   });
   if (c.chosenProduct && !["Ganado", "Perdido"].includes(c.stage) && !done[safeKey("cerrar:" + c.chosenProduct.name)])
     out.push({ key: safeKey("cerrar:" + c.chosenProduct.name), kind: "cerrar", rank: 2, title: "Ciérrale con lo que ya eligió: " + c.chosenProduct.name,
@@ -305,6 +374,7 @@ function allTasks() {
   for (const c of S.contacts) { const ts = tasksFor(c); if (ts.length) list.push({ c, task: ts[0], more: ts.length - 1, win: winInfo(c) }); }
   const lvl = c => Number(c.level) || 0;
   list.sort((a, b) => {
+    if ((a.task.rank < 0) !== (b.task.rank < 0)) return a.task.rank < 0 ? -1 : 1; // chats que la asesora virtual pasó a una persona
     if (a.win.open !== b.win.open) return a.win.open ? -1 : 1;
     if (a.win.open) return a.win.closesAt - b.win.closesAt;
     return a.task.rank - b.task.rank || lvl(b.c) - lvl(a.c) || (b.c.lastInboundAt || 0) - (a.c.lastInboundAt || 0);
@@ -382,6 +452,7 @@ function renderHoyDetail(el, it) {
           ${WHATSAPP_ENABLED && win.open ? `<button class="btn primary" id="sendMsg">Enviar por WhatsApp</button>` : ""}
           ${!WHATSAPP_ENABLED && waLink(c.phone) ? `<a class="btn" href="${waLink(c.phone, msg)}" target="_blank" rel="noopener" id="waOpen">Abrir en WhatsApp</a>` : ""}
           ${task.kind === "pedido" ? `<button class="btn primary" id="toOrder">Crear pedido</button>` : ""}
+          ${task.handoff ? `<button class="btn" id="aiBack">Devolver a ${esc(aiName())}</button>` : ""}
           ${task.q ? `<button class="btn" id="openQuote">Ver ${esc(task.q.number)}</button>` : ""}
         </div></div>
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="doneTask">Ya terminó</button>
@@ -395,6 +466,7 @@ function renderHoyDetail(el, it) {
   if ($("#waOpen")) $("#waOpen").onclick = () => logOutbound(c, msg, "Abierto en WhatsApp");
   if ($("#sendMsg")) $("#sendMsg").onclick = () => sendText(c, msg);
   if ($("#toOrder")) $("#toOrder").onclick = () => quoteToOrder(task.q);
+  if ($("#aiBack")) $("#aiBack").onclick = () => setAi(c, true);
   if ($("#openQuote")) $("#openQuote").onclick = () => openQuote(task.q.id);
   $("#chooseProd").onclick = () => chooseProduct(c);
   $("#looking").onclick = () => editLooking(c);
@@ -504,13 +576,14 @@ function viewConv(el) {
       <select class="in" id="convF"><option value="todas">Todas</option><option value="sin" ${S.convFilter === "sin" ? "selected" : ""}>Sin responder</option><option value="mias" ${S.convFilter === "mias" ? "selected" : ""}>Mías</option></select></div>
       ${list.map(x => { const last = Math.max(x.lastInboundAt || 0, x.lastOutboundAt || 0); return `<button class="conv ${c && x.id === c.id ? "on" : ""}" data-c="${x.id}">
         <div class="avatar">${esc((contactName(x) || "?")[0].toUpperCase())}</div><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="muted">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
-        <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? "Tú: " : ""}${esc(x.lastMessage || "")}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
+        <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? (isAiName(x.lastOutboundBy) ? "IA: " : "Tú: ") : ""}${esc(x.lastMessage || "")}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
         || `<div class="empty"><p>${WHATSAPP_ENABLED ? "Aún no hay conversaciones. Cuando un cliente escriba a tu WhatsApp aparecerá aquí." : "Aquí verás las conversaciones cuando conectes WhatsApp. Mientras tanto, los mensajes que registres desde Hoy o Contactos aparecen aquí."}</p></div>`}
     </div>
     <div class="chat-pane">${c ? `
       <div class="chat-top"><button class="btn sm back" id="cback">←</button><div class="avatar">${esc(contactName(c)[0].toUpperCase())}</div>
         <div style="flex:1;min-width:0"><b>${esc(contactName(c))}</b><div class="muted tabnum" style="font-size:13px">${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
         <span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span></div>
+      ${aiBar(c)}
       <div class="msgs" id="msgs">${S.msgs.map(bubble).join("") || '<div class="empty">Sin mensajes todavía.</div>'}</div>
       <div class="composer">
         ${WHATSAPP_ENABLED && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje"></textarea><button class="btn primary" id="csend">Enviar</button></div>` : ""}
@@ -531,6 +604,7 @@ function viewConv(el) {
   if ($("#ctext") && $("#csend")) $("#ctext").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#csend").click(); } };
   if ($("#ctplsend")) $("#ctplsend").onclick = () => sendTemplate(c, byId(S.templates, $("#ctpl").value));
   if ($("#cwa")) $("#cwa").onclick = async () => { const t = $("#ctext").value.trim(); window.open(waLink(c.phone, t), "_blank"); if (t) { await logOutbound(c, t, "Abierto en WhatsApp"); } };
+  if ($("#aiToggle")) $("#aiToggle").onclick = () => setAi(c, $("#aiToggle").dataset.on === "1");
   $("#cnotebtn").onclick = async () => { const t = $("#cnote").value.trim(); if (!t) return; await addNote(c, t); $("#cnote").value = ""; };
   bindSummary(c);
 }
