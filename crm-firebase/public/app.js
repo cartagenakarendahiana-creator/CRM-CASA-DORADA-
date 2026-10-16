@@ -12,7 +12,10 @@ const isoRe = /^\d{4}-\d{2}-\d{2}$/;
 const todayIso = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
 const fmtDate = iso => isoRe.test(iso || "") ? new Date(iso + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" }) : (iso || "");
-const fmtTime = ms => new Date(ms).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" });
+const fmtTime = ms => new Date(ms).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" }).replace(/\s*a\.\s*m\./i, " a.m.").replace(/\s*p\.\s*m\./i, " p.m.");
+const fmtDMY = ms => { const d = new Date(ms); return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`; };
+// Números de cotización y valores en letra de ancho fijo
+const monoNums = html => html.replace(/(COT-\d+|PED-\d+|\$[\d.]+)/g, '<span class="mono">$1</span>');
 const fmtDT = ms => ms ? new Date(ms).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
 const firstName = n => String(n || "").trim().split(/\s+/)[0] || "";
 const H = 36e5, DAY = 864e5;
@@ -60,6 +63,9 @@ const ICONS = {
   plantillas: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 8l9 6 9-6"/>',
   equipo: '<circle cx="9" cy="8" r="3.5"/><circle cx="17" cy="9" r="2.5"/><path d="M2 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5M16 14.5c3 0 6 1.5 6 4.5"/>',
   importar: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
+  agenda: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
@@ -160,7 +166,7 @@ function renderLogin(err) {
 }
 
 function startData() {
-  const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; scheduleRender(); }, opts,
+  const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
     e => toast("No se pudo leer " + name + ": " + errMsg(e))));
   w("contacts", "contacts");
   w("quotes", "quotes", { orderBy: ["createdAt", "desc"], limit: 500 });
@@ -184,9 +190,10 @@ function route() {
 const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 
 // ======================= Estructura =======================
+const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["cotizaciones", "Cotizaciones"], ["pedidos", "Pedidos"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"]]],
 ];
@@ -202,8 +209,8 @@ function renderShell() {
         <div class="brand"><div class="brand-mark">CD</div><div><b>${esc(EMPRESA)}</b><small>CRM</small></div></div>
         <label class="side-search">${icon("buscar")}<input id="gsearch" placeholder="Buscar contacto" value="${esc(S.search)}" autocomplete="off"></label>
       </div>
-      <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4>${h}</h4>` : "") + items.map(([k, t]) =>
-        `<button data-go="${k}" class="${S.view === k ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join("")).join("")}</nav>
+      <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => k === S.view) ? "" : items.map(([k, t]) =>
+        `<button data-go="${k}" class="${S.view === k ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
       <div class="side-user"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div>
         <button class="iconbtn" id="logout" title="Salir" aria-label="Salir">${icon("salir")}</button></div>
@@ -215,10 +222,11 @@ function renderShell() {
     </main></div>`;
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
   $("#logout").onclick = () => fb.logout();
+  $$("[data-grp]").forEach(b => b.onclick = () => { const k = "crm-nav-" + b.dataset.grp; try { localStorage.setItem(k, navClosed(b.dataset.grp) ? "0" : "1"); } catch { } renderShell(); });
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -276,7 +284,9 @@ const pendingCount = () => S.contacts.reduce((n, c) => n + (tasksFor(c).length ?
 function viewHoy(el) {
   const items = allTasks(), t0 = new Date(); t0.setHours(0, 0, 0, 0); const since = t0.getTime();
   const convToday = S.contacts.filter(c => (c.lastInboundAt || 0) >= since || (c.lastOutboundAt || 0) >= since).length;
-  const mine = S.contacts.filter(c => (c.lastOutboundAt || 0) >= since).length;
+  const answered = S.contacts.filter(c => (c.lastOutboundAt || 0) >= since);
+  const mine = answered.filter(c => c.lastOutboundBy === S.me.name).length, team = answered.length - mine;
+  const upd = S.syncedAt && Date.now() - S.syncedAt > 9e4 ? "hace " + ago(S.syncedAt) : "hace un momento";
   const ordersToday = S.orders.filter(o => (o.createdAt || 0) >= since && o.status !== "Cancelado");
   const closed = ordersToday.reduce((s, o) => s + (o.total || 0), 0);
   if (!S.sel || !items.some(i => i.c.id === S.sel)) S.sel = items[0] ? items[0].c.id : null;
@@ -285,11 +295,11 @@ function viewHoy(el) {
       <span class="dot ${i.win.open || i.task.rank <= 1 ? "hot" : ""}"></span>
       <div class="row1"><span class="nm">${esc(contactName(i.c))}</span>
         <span class="when">${i.win.open ? "cierra " + whenLabel(i.win.closesAt) : i.c.lastInboundAt ? icon("lock") + " cerró hace " + ago(i.win.closesAt) : esc(i.c.company || "")}</span></div>
-      <div class="what">${esc(i.task.title)}</div><div class="sub">${esc(i.task.sub)}${i.more ? ` · +${i.more} más` : ""}</div></button>`;
+      <div class="what">${monoNums(esc(i.task.title))}</div><div class="sub">${monoNums(esc(i.task.sub))}${i.more ? ` · +${i.more} más` : ""}</div></button>`;
   el.innerHTML = `<div class="page" style="max-width:none;padding-bottom:0">
-    <div class="page-head"><h1>Hoy</h1><span class="sub">${t0.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}</span><span class="spacer"></span>
-      <div class="kpis"><div><b>${convToday}</b>conversaciones hoy</div><div><b>${mine}</b>respondidas</div><div><b>${items.length}</b>por atender</div>
-        <div><span class="dot" style="color:var(--green);margin-right:6px"></span><b>${money(closed)}</b>cerrado hoy · ${ordersToday.length} ${ordersToday.length === 1 ? "venta" : "ventas"}</div></div></div></div>
+    <div class="page-head"><h1>Hoy</h1><span class="sub">${t0.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })} · <small>Actualizado ${upd}</small></span><span class="spacer"></span>
+      <div class="kpis"><div><b>${convToday}</b>conversaciones hoy</div><div><b>${mine}</b>tú</div><div><b>${team}</b>tu equipo</div>
+        <div><span class="dot" style="color:var(--green);margin-right:6px"></span><b class="mono">${money(closed)}</b>cerrado hoy · ${ordersToday.length} ${ordersToday.length === 1 ? "venta" : "ventas"}</div></div></div></div>
     <div class="today ${S.sel && innerWidth <= 860 && S.hoyOpen ? "has-sel" : ""}">
       <div class="today-list">
         <div class="list-head"><h2>Necesita tu intervención</h2><span class="badge">${items.length}</span></div>
@@ -324,14 +334,14 @@ function renderHoyDetail(el, it) {
     : `La ventana se cerró hace ${ago(win.closesAt)}: solo puedes escribirle con una plantilla aprobada`;
   el.innerHTML = `<button class="btn sm back" id="back">← Volver</button>
     <div class="detail-head"><div><h2>${esc(contactName(c))}</h2>
-      <div class="muted tabnum">${esc(c.phone || "sin teléfono")}${c.company && c.name ? " · " + esc(c.company) : ""} · ${c.type === "Cliente" ? "cliente" : "prospecto"}${c.segment ? " · " + esc(c.segment) : ""}</div></div>
+      <div class="muted tabnum">${esc(phoneId(c.phone) || c.phone || "sin teléfono")}${c.company && c.name ? " · " + esc(c.company) : ""} · ${c.sourceSheet ? (c.type === "Cliente" ? "cliente" : "prospecto") + " del Excel" : (c.type === "Cliente" ? "cliente" : "contacto") + " desde " + fmtDMY(c.createdAt || Date.now())}</div></div>
       <button class="btn primary" id="openConv">Abrir conversación</button></div>
     <section><p class="eyebrow">Qué busca</p><p class="big inline-edit" id="looking" title="Clic para editar">${esc(c.looking || "Sin registrar — clic para escribir qué busca")}</p></section>
     <section><p class="eyebrow">Producto elegido</p><p class="big">${c.chosenProduct ? `${esc(c.chosenProduct.name)} ${money(c.chosenProduct.price)}${c.chosenProduct.desc ? ` <span class="muted">(${esc(c.chosenProduct.desc)})</span>` : ""}` : '<span class="muted">Ninguno todavía</span>'}
       <button class="btn sm" id="chooseProd" style="margin-left:8px">${c.chosenProduct ? "Cambiar" : "Elegir producto"}</button></p></section>
     <div class="closebox"><p class="eyebrow">Para cerrar la venta</p>
       <span class="pill ${win.open ? "amber" : "red"}"><span class="dot"></span>${esc(winTxt)}</span>
-      <div class="step"><span class="n">1</span><div><b>${esc(task.title)}</b><div class="muted">${esc(task.hint)}</div></div></div>
+      <div class="step"><span class="n">1</span><div><b>${monoNums(esc(task.title))}</b><div class="muted">${esc(task.hint)}</div></div></div>
       <div class="suggest"><span class="muted" style="font-size:14px">Mensaje sugerido · ${esc(tpl.name)}</span><p id="sugg">${esc(msg)}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" id="copyMsg">Copiar mensaje</button>
@@ -343,7 +353,7 @@ function renderHoyDetail(el, it) {
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="doneTask">Ya terminó</button>
         <button class="btn" id="snooze">Recordar en…</button><button class="btn" id="openContact">Ver ficha</button></div>
     </div>
-    <section><p class="eyebrow">Lo último de la conversación</p><div class="lastmsgs">${S.hoyMsgsFor === c.id && S.hoyMsgs.length ? S.hoyMsgs.map(bubble).join("") : '<span class="muted">Sin mensajes registrados.</span>'}</div></section>`;
+    <section><p class="eyebrow" style="display:flex;justify-content:space-between">Lo último de la conversación <span class="muted">${icon("bell")}</span></p><div class="lastmsgs">${S.hoyMsgsFor === c.id && S.hoyMsgs.length ? S.hoyMsgs.map(bubble).join("") : '<span class="muted">Sin mensajes registrados.</span>'}</div></section>`;
   $("#back").onclick = () => { S.hoyOpen = false; renderShell(); };
   $("#openConv").onclick = () => go("conv", c.id);
   $("#openContact").onclick = () => openContact(c.id);
@@ -428,7 +438,7 @@ async function sendTemplate(c, tpl) {
 async function logOutbound(c, text, how) {
   // Sin la API: se registra lo que se envió desde el WhatsApp del teléfono
   await fb.add(`contacts/${c.id}/messages`, { dir: "out", text, ts: Date.now(), by: S.user.uid, byName: S.me.name, via: how || "manual" });
-  await fb.update("contacts/" + c.id, { lastOutboundAt: Date.now(), lastMessage: text, lastMessageDir: "out", ...stamp() });
+  await fb.update("contacts/" + c.id, { lastOutboundAt: Date.now(), lastOutboundBy: S.me.name, lastMessage: text, lastMessageDir: "out", ...stamp() });
 }
 async function addNote(c, text) {
   await fb.add(`contacts/${c.id}/messages`, { dir: "note", text, ts: Date.now(), by: S.user.uid, byName: S.me.name });
@@ -772,6 +782,23 @@ async function quoteToOrder(q) {
     if (c) await fb.update("contacts/" + c.id, { stage: "Ganado", stageAt: Date.now(), type: "Cliente", lastPurchaseAt: Date.now(), totalPurchased: fb.inc(q.total || 0), ...stamp() });
     toast("Pedido " + number + " creado");
   } catch (er) { toast("No se pudo crear el pedido: " + errMsg(er)); }
+}
+
+// ======================= Agenda =======================
+function viewAgenda(el) {
+  const t = todayIso(), mineOnly = S.agMine;
+  const list = S.contacts.filter(c => c.nextDate && isoRe.test(c.nextDate) && !c.archived && (!mineOnly || c.owner === S.me.name))
+    .sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+  const groups = [["Vencidos", c => c.nextDate < t], ["Hoy", c => c.nextDate === t], ["Mañana", c => c.nextDate === addDays(t, 1)],
+    ["Esta semana", c => c.nextDate > addDays(t, 1) && c.nextDate <= addDays(t, 7)], ["Más adelante", c => c.nextDate > addDays(t, 7)]];
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Agenda</h1><span class="sub">Seguimientos programados</span><span class="spacer"></span>
+      <label class="pill"><input type="checkbox" id="agm" ${mineOnly ? "checked" : ""}> Solo los míos</label></div>
+    ${list.length ? groups.map(([g, f]) => { const xs = list.filter(f); return xs.length ? `<h3 class="${g === "Vencidos" ? "late" : ""}" style="margin:22px 0 8px">${g} <span class="muted tabnum">${xs.length}</span></h3>
+      <div class="table-wrap"><table class="t"><tbody>${xs.slice(0, 200).map(c => `<tr data-id="${c.id}"><td class="tabnum" style="width:120px;${g === "Vencidos" ? "color:var(--red);font-weight:600" : ""}">${fmtDate(c.nextDate)}</td>
+        <td><b>${esc(contactName(c))}</b>${c.company && c.name ? ` <span class="muted">· ${esc(c.company)}</span>` : ""}</td><td>${esc(c.nextAction || "Seguimiento")}</td><td class="muted">${esc(c.owner || "")}</td></tr>`).join("")}</tbody></table></div>` : ""; }).join("")
+      : `<div class="empty"><p>No hay seguimientos programados.</p><p>Usa "Recordar en…" en Hoy o la fecha de próximo seguimiento en la ficha del contacto.</p></div>`}</div>`;
+  $("#agm").onchange = e => { S.agMine = e.target.checked; renderShell(); };
+  $$("tbody tr", el).forEach(tr => tr.onclick = () => openContact(tr.dataset.id));
 }
 
 // ======================= Pedidos =======================

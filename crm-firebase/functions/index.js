@@ -147,7 +147,7 @@ exports.sendWhatsApp = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req
   const now = Date.now();
   await cref.collection("messages").doc(id || db.collection("x").doc().id).set({ dir: "out", text: shown, ts: now, by: req.auth.uid, byName: me.name || "",
     type: text ? "text" : "template" }, { merge: true }); // merge: el estado puede haber llegado antes
-  await cref.set({ lastOutboundAt: now, lastMessage: shown.slice(0, 200), lastMessageDir: "out", unread: 0, updatedAt: now, updatedBy: me.name || "" }, { merge: true });
+  await cref.set({ lastOutboundAt: now, lastOutboundBy: me.name || "", lastMessage: shown.slice(0, 200), lastMessageDir: "out", unread: 0, updatedAt: now, updatedBy: me.name || "" }, { merge: true });
   return { id };
 });
 
