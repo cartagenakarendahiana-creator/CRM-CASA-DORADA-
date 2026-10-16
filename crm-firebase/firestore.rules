@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Una sola lectura del usuario por operación: Firebase limita a 20 lecturas por lote de escrituras.
+    // Si el documento no existe, get() falla y se niega el acceso.
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function member() { return request.auth != null && me().get('active', true) != false; }
+    function isAdmin() { return request.auth != null && me().get('active', true) != false && me().get('role', '') == 'admin'; }
+
+    // Equipo: todos ven la lista; solo la administradora la cambia (las cuentas nuevas las crea la función)
+    match /users/{uid} {
+      // Cada persona puede leer su propio documento (para saber si tiene acceso)
+      allow read: if request.auth != null && (request.auth.uid == uid || member());
+      allow write: if isAdmin();
+    }
+    match /contacts/{id} {
+      allow read, create, update: if member();
+      allow delete: if isAdmin();
+      // Los mensajes de WhatsApp los escriben las funciones; desde la app solo notas y registros manuales
+      match /messages/{mid} {
+        allow read: if member();
+        allow create: if member() && request.resource.data.dir in ['note', 'out']
+          && request.resource.data.by == request.auth.uid && !('waId' in request.resource.data);
+        allow update, delete: if false;
+      }
+    }
+    match /quotes/{id} { allow read, create, update: if member(); allow delete: if isAdmin(); }
+    match /orders/{id} { allow read, create, update: if member(); allow delete: if isAdmin(); }
+    match /counters/{id} { allow read, write: if member(); }
+    match /products/{id} { allow read: if member(); allow write: if isAdmin(); }
+    match /templates/{id} { allow read: if member(); allow write: if isAdmin(); }
+  }
+}
