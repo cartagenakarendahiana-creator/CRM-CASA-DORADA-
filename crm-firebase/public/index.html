@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casa Dorada CRM</title>
+<meta name="theme-color" content="#f2efe9">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+</head>
+<body>
+<div id="root"><div class="empty">Cargando…</div></div>
+<div class="toast" id="toast" role="status"></div>
+<dialog id="modal"></dialog>
+<dialog id="ask" style="width:min(460px,calc(100vw - 24px))">
+  <div class="mb"><p id="askMsg" style="margin:0;white-space:pre-line"></p></div>
+  <div class="mf"><button class="btn" id="askNo">Cancelar</button><button class="btn primary" id="askYes">Aceptar</button></div>
+</dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>
