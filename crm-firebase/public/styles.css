@@ -305,3 +305,22 @@ details.mtable table{margin-top:8px}
 .hv{font-size:14px;text-align:right;white-space:nowrap}.hv small{display:block;color:var(--muted);font-size:12px}
 .tip{position:fixed;z-index:50;background:var(--ink);color:var(--bg);padding:6px 10px;border-radius:8px;font-size:13px;pointer-events:none;max-width:280px}
 @media (max-width:860px){.tiles{grid-template-columns:1fr 1fr}.vbars{height:160px;gap:3px}.vv{display:none}.mgrid{grid-template-columns:1fr}}
+
+/* ===== Embudo ===== */
+.seg-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.seg-tabs button{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 14px;font-size:15px}
+.seg-tabs button.on{background:var(--green-soft);border-color:var(--green);color:var(--green);font-weight:600}
+.seg-tabs small{color:var(--muted);margin-left:4px}
+.board{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.col{scroll-snap-align:start;max-height:calc(100vh - 260px)}
+.deal{cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:pan-x pan-y}
+@media (pointer:fine){.deal{cursor:grab}}
+.deal:hover{border-color:var(--green)}
+.deal.dragging{opacity:.35}
+.deal .age{color:var(--muted);font-size:12px}
+.ghost{position:fixed;z-index:60;pointer-events:none;transform:rotate(2deg);box-shadow:0 10px 30px rgba(0,0,0,.18);opacity:.95}
+.col.over{outline:2px dashed var(--green);outline-offset:-2px;background:var(--green-soft)}
+.stage-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.stage-pick .btn{text-align:left;padding:12px 14px}
+.stage-pick .btn.on{background:var(--green-soft);border-color:var(--green);color:var(--green);font-weight:600}
+@media (max-width:860px){.col{min-width:78vw;width:78vw}}
