@@ -11,7 +11,8 @@ service cloud.firestore {
 
     // Equipo: todos ven la lista; solo la administradora la cambia (las cuentas nuevas las crea la función)
     match /users/{uid} {
-      allow read: if member();
+      // Cada persona puede leer su propio documento (para saber si tiene acceso)
+      allow read: if request.auth != null && (request.auth.uid == uid || member());
       allow write: if isAdmin();
     }
     match /contacts/{id} {

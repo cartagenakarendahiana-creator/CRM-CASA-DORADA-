@@ -122,13 +122,21 @@ if (!fb.configured) {
       if (!me || me.active === false) {
         root.innerHTML = `<div class="login"><div class="card"><h2 style="margin:0">Sin acceso</h2>
           <p class="muted" style="margin:0">Tu usuario (${esc(u.email)}) no está activo en el CRM. Pídele a la administradora que te agregue en Equipo.</p>
+          <p style="margin:0">Tu UID es:</p><code class="in" style="user-select:all;word-break:break-all">${esc(u.uid)}</code>
+          <p class="muted" style="margin:0;font-size:13px">Si eres la administradora: en Firestore › users crea un documento con este UID como ID y los campos name, email, role = admin y active = true.</p>
           <button class="btn" id="out">Salir</button></div></div>`;
         $("#out").onclick = () => fb.logout();
         return;
       }
       if (first) startData();
       else renderShell();
-    }, e => { root.innerHTML = `<div class="empty">No se pudo leer tu usuario: ${esc(errMsg(e))}</div>`; }));
+    }, e => {
+      root.innerHTML = `<div class="login"><div class="card"><h2 style="margin:0">No se pudo verificar tu acceso</h2>
+        <p class="muted" style="margin:0">${esc(errMsg(e))}</p><p style="margin:0">Tu UID es:</p><code class="in" style="user-select:all;word-break:break-all">${esc(u.uid)}</code>
+        <p class="muted" style="margin:0;font-size:13px">Revisa que en Firestore › users exista un documento con este UID exacto como ID, y que las reglas estén publicadas (firebase deploy --only firestore).</p>
+        <button class="btn" id="out2">Salir</button></div></div>`;
+      $("#out2").onclick = () => fb.logout();
+    }));
   });
 }
 
