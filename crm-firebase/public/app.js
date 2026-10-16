@@ -66,6 +66,7 @@ const ICONS = {
   agenda: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   chev: '<path d="M9 6l6 6-6 6"/>',
+  reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
@@ -88,12 +89,14 @@ const SITUATIONS = {
   pedido: "Convierte la cotización en pedido",
   cotizacion: "Pregúntale por la cotización",
   seguimiento: "Seguimiento programado",
+  reponer: "Ofrécele reponer",
 };
 const DEFAULT_TEMPLATES = [
   { key: "responder", name: "Responder mensaje", text: "Hola {nombre}, gracias por escribirnos a {empresa}. ¿En qué te podemos ayudar?" },
   { key: "cerrar", name: "Cerrar con el producto elegido", text: "Hola {nombre}, ¿te hago el pedido de {producto}?" },
   { key: "pedido", name: "Confirmar pedido", text: "Hola {nombre}, recibimos tu aprobación de la cotización {cotizacion} por {total}. ¿Te confirmo el pedido y la dirección de entrega?" },
   { key: "cotizacion", name: "Seguimiento a cotización", text: "Hola {nombre}, ¿pudiste revisar la cotización {cotizacion} por {total}? Cuéntame si te falta algo para decidir." },
+  { key: "reponer", name: "Recordar reposición", text: "Hola {nombre}, ¿cómo te ha ido con {ultimo}? Ya van {dias} días desde tu última compra. ¿Te preparo el pedido de reposición?" },
   { key: "seguimiento", name: "Seguimiento general", text: "Hola {nombre}, te escribe {asesor} de {empresa}. ¿Cómo vas? Quedo atenta a lo que necesites." },
 ];
 
@@ -181,7 +184,7 @@ function startData() {
   setInterval(() => { if (S.view === "hoy" && !document.hidden) scheduleRender(); }, 60000);
 }
 let rq = false;
-function scheduleRender() { if (rq) return; rq = true; requestAnimationFrame(() => { rq = false; renderShell(); }); }
+function scheduleRender() { if (S.dragging) { S.pendingRender = true; return; } if (rq) return; rq = true; requestAnimationFrame(() => { rq = false; renderShell(); }); }
 function route() {
   const [v, id] = (location.hash.slice(1) || "hoy").split("/");
   S.view = v || "hoy";
@@ -195,7 +198,7 @@ const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["metricas", "Métricas"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -228,7 +231,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -246,6 +249,29 @@ function fillTpl(text, c, extra = {}) {
 }
 
 // ======================= Tareas de "Hoy" =======================
+// ---- Reposición: cuándo le toca volver a comprar a cada cliente ----
+const FREQ_DAYS = { Mensual: 30, Bimestral: 60, Trimestral: 90, Semestral: 180, Anual: 365 };
+const DEFAULT_REORDER = 90;
+let _ordIdx = null, _ordRef = null;
+function ordersOf(cid) {
+  if (_ordRef !== S.orders) { _ordRef = S.orders; _ordIdx = {}; S.orders.forEach(o => { if (o.status !== "Cancelado") (_ordIdx[o.contactId] = _ordIdx[o.contactId] || []).push(o); }); Object.values(_ordIdx).forEach(l => l.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))); }
+  return _ordIdx[cid] || [];
+}
+function reorderInfo(c) {
+  if (!c || c.archived || c.noReorder || c.stage === "Perdido") return null;
+  const os = ordersOf(c.id), ex = c.extra || {};
+  let last = c.lastPurchaseAt || 0, items = "", total = 0;
+  ["Fecha última compra", "Fecha último servicio"].forEach(k => { if (isoRe.test(ex[k] || "")) { const t = new Date(ex[k] + "T12:00:00").getTime(); if (t > last) { last = t; items = ex["Productos comprados"] || ex["Servicio contratado"] || ""; total = num(ex["Última compra ($)"] || ex["Último servicio $"] || 0); } } });
+  const lo = os[os.length - 1];
+  if (lo && (lo.createdAt || 0) >= last) { last = lo.createdAt; items = (lo.items || []).map(i => i.name).join(", "); total = lo.total || 0; }
+  if (!last || (c.type !== "Cliente" && !os.length)) return null;
+  let days = Number(c.reorderDays) || 0, how = "definido en la ficha";
+  if (!days && FREQ_DAYS[ex.Frecuencia]) { days = FREQ_DAYS[ex.Frecuencia]; how = "frecuencia " + ex.Frecuencia.toLowerCase(); }
+  if (!days && os.length >= 2) { days = Math.round((os[os.length - 1].createdAt - os[0].createdAt) / (os.length - 1) / DAY); how = "promedio entre sus pedidos"; }
+  if (!days || days < 7) { days = DEFAULT_REORDER; how = "valor por defecto"; }
+  const due = last + days * DAY;
+  return { last, days, how, due, dueIso: new Date(due - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10), items, total, inDays: Math.round((due - Date.now()) / DAY) };
+}
 const safeKey = s => String(s).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120);
 function tasksFor(c) {
   const out = [], now = Date.now(), done = c.done || {}, t = todayIso();
@@ -264,6 +290,11 @@ function tasksFor(c) {
     if (!done[safeKey("cotizacion:" + q.id)]) out.push({ key: safeKey("cotizacion:" + q.id), kind: "cotizacion", rank: 3, q, title: `Pregúntale qué le faltó para decidir la cotización ${q.number}`,
       sub: `recibió la cotización ${q.number} por ${money(q.total)} hace ${ago(q.sentAt)} y no ha respondido`, hint: "Pregúntale qué le falta: precio, medidas, tiempos de entrega o forma de pago." });
   });
+  const ri = reorderInfo(c);
+  if (ri && ri.inDays <= 7 && !done[safeKey("reponer:" + ri.dueIso)])
+    out.push({ key: safeKey("reponer:" + ri.dueIso), kind: "reponer", rank: 3.5, ri, title: `Ofrécele reponer: última compra hace ${ago(ri.last)}`,
+      sub: ri.inDays < 0 ? `le tocaba volver a comprar el ${fmtDate(ri.dueIso)}` : `le toca volver a comprar ${ri.inDays === 0 ? "hoy" : "en " + ri.inDays + " d"}`,
+      hint: (ri.items ? `Compró: ${ri.items}${ri.total ? " por " + money(ri.total) : ""}. ` : "") + `Compra cada ${ri.days} días (${ri.how}).` });
   if (c.nextDate && c.nextDate <= t && !done[safeKey("seguimiento:" + c.nextDate)])
     out.push({ key: safeKey("seguimiento:" + c.nextDate), kind: "seguimiento", rank: 4, title: c.nextAction || "Seguimiento programado",
       sub: c.nextDate < t ? `seguimiento vencido desde ${fmtDate(c.nextDate)}` : "seguimiento para hoy", hint: c.obs ? `Nota: ${c.obs}` : "Tenías programado contactarlo hoy." });
@@ -331,7 +362,8 @@ function renderHoyDetail(el, it) {
   const { c, task, win } = it;
   watchHoyMsgs(c.id);
   const tpl = tplFor(task.kind) || tplFor("seguimiento");
-  const msg = fillTpl(tpl.text, c, task.q ? { cotizacion: task.q.number, total: money(task.q.total) } : {});
+  const msg = fillTpl(tpl.text, c, task.q ? { cotizacion: task.q.number, total: money(task.q.total) }
+    : task.ri ? { ultimo: task.ri.items || "tu último pedido", dias: String(Math.round((Date.now() - task.ri.last) / DAY)) } : {});
   const winTxt = win.open ? `La ventana de 24 h cierra ${whenLabel(win.closesAt)}` : win.never ? "Todavía no te ha escrito por WhatsApp: el primer mensaje debe ser una plantilla aprobada"
     : `La ventana se cerró hace ${ago(win.closesAt)}: solo puedes escribirle con una plantilla aprobada`;
   el.innerHTML = `<button class="btn sm back" id="back">← Volver</button>
@@ -528,37 +560,96 @@ async function setStage(c, stage) {
 }
 
 // ======================= Vista: Embudo =======================
+async function moveStage(c, stage) {
+  if (!c || (c.stage || "Nuevo") === stage) return;
+  const prev = c.stage || "Nuevo", extra = {};
+  if (stage === "Perdido") {
+    const why = await promptText("¿Por qué se perdió " + contactName(c) + "? (opcional)", "", "Ej: precio, compró a otro proveedor");
+    if (why === null) return;
+    if (why) extra.lostReason = why;
+  }
+  c.stage = stage; c.stageAt = Date.now(); renderShell(); // se ve al instante; Firebase confirma después
+  try { await fb.update("contacts/" + c.id, { stage, stageAt: Date.now(), ...(stage === "Ganado" ? { type: "Cliente" } : {}), ...extra, ...stamp() }); toast(contactName(c) + " → " + stage); }
+  catch (e) { c.stage = prev; renderShell(); toast("No se pudo mover: " + errMsg(e)); }
+}
+function stageSheet(c) {
+  const m = $("#modal"), cur = c.stage || "Nuevo";
+  m.innerHTML = `<div class="mh"><h2>${esc(contactName(c))}</h2><button class="iconbtn" id="sx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><p class="eyebrow" style="margin:0">Mover a la etapa</p>
+      <div class="stage-pick">${STAGES.map(st => `<button class="btn ${st === cur ? "on" : ""}" data-st="${st}">${st === cur ? "✓ " : ""}${st}</button>`).join("")}</div>
+      ${c.company && c.name ? `<p class="muted" style="margin:0">${esc(c.company)}</p>` : ""}${c.lostReason && cur === "Perdido" ? `<p class="muted" style="margin:0">Motivo: ${esc(c.lostReason)}</p>` : ""}</div>
+    <div class="mf"><button class="btn" id="sconv">Conversación</button><button class="btn primary" id="scard">Ver ficha</button></div>`;
+  $("#sx").onclick = () => m.close();
+  $("#scard").onclick = () => { m.close(); openContact(c.id); };
+  $("#sconv").onclick = () => { m.close(); go("conv", c.id); };
+  $$("[data-st]", m).forEach(b => b.onclick = () => { m.close(); moveStage(c, b.dataset.st); });
+  m.showModal();
+}
 function viewEmbudo(el) {
-  const f = S.embF || {};
-  let list = S.contacts.filter(c => !c.archived && (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner) && (f.showLost || c.stage !== "Perdido"));
-  const openQuoteTotal = c => S.quotes.filter(q => q.contactId === c.id && ["Enviada", "Aceptada", "Borrador"].includes(q.status)).reduce((s, q) => s + (q.total || 0), 0);
-  const stages = f.showLost ? STAGES : STAGES.filter(s => s !== "Perdido");
-  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Embudo</h1><span class="sub">Arrastra las tarjetas entre etapas</span></div>
-    <div class="toolbar"><select class="in" id="ef1"><option value="">Todos los segmentos</option>${SEGMENTS.map(s => `<option ${f.seg === s ? "selected" : ""}>${s}</option>`).join("")}</select>
+  const f = S.embF || {}, q = norm(f.q || ""), more = S.embMore || (S.embMore = {});
+  const base = S.contacts.filter(c => !c.archived);
+  const segCount = sg => base.filter(c => !sg || c.segment === sg).length;
+  let list = base.filter(c => (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner));
+  if (q) list = list.filter(c => norm([c.name, c.company, c.phone, c.city, c.chosenProduct && c.chosenProduct.name].join(" ")).includes(q));
+  const qv = {}; S.quotes.forEach(x => { if (["Enviada", "Aceptada", "Borrador"].includes(x.status)) qv[x.contactId] = (qv[x.contactId] || 0) + (x.total || 0); });
+  const stages = f.showLost ? STAGES : STAGES.filter(st => st !== "Perdido");
+  // Conserva el desplazamiento del tablero cuando se redibuja por cambios en vivo
+  const ob = $(".board"), keep = ob ? { x: ob.scrollLeft, y: Object.fromEntries($$(".col").map(cl => [cl.dataset.stage, $(".col-body", cl).scrollTop])) } : null;
+  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Embudo</h1>
+      <span class="sub">Toca una tarjeta para moverla de etapa${matchMedia("(pointer:fine)").matches ? " o arrástrala con el mouse" : ""}</span></div>
+    <div class="seg-tabs">${["", ...SEGMENTS].filter(sg => !sg || segCount(sg)).map(sg => `<button class="${(f.seg || "") === sg ? "on" : ""}" data-seg="${sg}">${sg || "Todos"} <small class="tabnum">${segCount(sg)}</small></button>`).join("")}</div>
+    <div class="toolbar"><input class="in" id="eq" placeholder="Buscar en el embudo" value="${esc(f.q || "")}">
       <select class="in" id="ef2"><option value="">Todos los responsables</option>${[...new Set(S.contacts.map(c => c.owner).filter(Boolean))].map(o => `<option ${f.owner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
       <label class="pill"><input type="checkbox" id="ef3" ${f.showLost ? "checked" : ""}> Ver perdidos</label></div>
-    <div class="board">${stages.map(s => {
-      const cards = list.filter(c => (c.stage || "Nuevo") === s);
-      const total = cards.reduce((a, c) => a + openQuoteTotal(c), 0);
-      return `<div class="col" data-stage="${s}"><div class="col-head"><b>${s}</b><small class="tabnum">${cards.length}${total ? " · " + money(total) : ""}</small></div>
-        <div class="col-body">${cards.slice(0, 150).map(c => { const v = openQuoteTotal(c); return `<div class="deal" draggable="true" data-id="${c.id}" tabindex="0">
+    <div class="board">${stages.map(st => {
+      const cards = list.filter(c => (c.stage || "Nuevo") === st).sort((a, b) => (b.stageAt || b.updatedAt || 0) - (a.stageAt || a.updatedAt || 0));
+      const total = cards.reduce((a, c) => a + (qv[c.id] || 0), 0), lim = more[st] || 40;
+      return `<div class="col" data-stage="${st}"><div class="col-head"><b>${st}</b><small class="tabnum">${cards.length}${total ? " · " + money(total) : ""}</small></div>
+        <div class="col-body">${cards.slice(0, lim).map(c => `<div class="deal" data-id="${c.id}" tabindex="0" role="button" aria-label="${esc(contactName(c))}, ${st}">
           <span class="nm">${esc(contactName(c))}</span>${c.company && c.name ? `<span class="muted" style="font-size:13px">${esc(c.company)}</span>` : ""}
           ${c.chosenProduct ? `<span style="font-size:13px">${esc(c.chosenProduct.name)}</span>` : ""}
-          <div class="ln"><span>${esc(c.owner || "")}</span><span class="tabnum">${v ? money(v) : esc(c.temperature || "")}</span></div></div>`; }).join("")}
-          ${cards.length > 150 ? `<small class="muted">y ${cards.length - 150} más: usa los filtros</small>` : ""}</div></div>`;
+          <div class="ln"><span>${esc(c.owner || "")}</span><span class="tabnum">${qv[c.id] ? money(qv[c.id]) : esc(c.temperature || "")}</span></div>
+          ${c.stageAt && st !== "Nuevo" ? `<small class="age">en esta etapa hace ${ago(c.stageAt)}</small>` : ""}</div>`).join("")}
+          ${cards.length > lim ? `<button class="btn sm" data-more="${st}">Ver ${Math.min(50, cards.length - lim)} más (quedan ${cards.length - lim})</button>` : ""}
+          ${!cards.length ? '<small class="muted" style="padding:6px">Vacío</small>' : ""}</div></div>`;
     }).join("")}</div></div>`;
-  $("#ef1").onchange = e => { S.embF = { ...f, seg: e.target.value }; renderShell(); };
+  const board = $(".board", el);
+  if (keep) { board.scrollLeft = keep.x; $$(".col", el).forEach(cl => { const y = keep.y[cl.dataset.stage]; if (y) $(".col-body", cl).scrollTop = y; }); }
+  $$("[data-seg]", el).forEach(b => b.onclick = () => { S.embF = { ...f, seg: b.dataset.seg }; S.embMore = {}; renderShell(); });
+  $("#eq").oninput = e => { S.embF = { ...f, q: e.target.value }; renderShell(); };
   $("#ef2").onchange = e => { S.embF = { ...f, owner: e.target.value }; renderShell(); };
   $("#ef3").onchange = e => { S.embF = { ...f, showLost: e.target.checked }; renderShell(); };
+  $$("[data-more]", el).forEach(b => b.onclick = () => { more[b.dataset.more] = (more[b.dataset.more] || 40) + 50; renderShell(); });
   $$(".deal", el).forEach(d => {
-    d.ondragstart = e => { S.dragId = d.dataset.id; try { e.dataTransfer.setData("text/plain", d.dataset.id); } catch { } };
-    d.onclick = () => openContact(d.dataset.id);
-    d.onkeydown = e => { if (e.key === "Enter") openContact(d.dataset.id); };
-  });
-  $$(".col", el).forEach(col => {
-    col.ondragover = e => { e.preventDefault(); col.classList.add("over"); };
-    col.ondragleave = () => col.classList.remove("over");
-    col.ondrop = async e => { e.preventDefault(); col.classList.remove("over"); const c = byId(S.contacts, S.dragId || e.dataTransfer.getData("text/plain")); S.dragId = null; if (c && c.stage !== col.dataset.stage) { await setStage(c, col.dataset.stage); toast(contactName(c) + " → " + col.dataset.stage); } };
+    const c = byId(S.contacts, d.dataset.id);
+    d.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); stageSheet(c); } };
+    d.onpointerdown = e => {
+      if (e.button !== 0) return;
+      const x0 = e.clientX, y0 = e.clientY, mouse = e.pointerType === "mouse";
+      let ghost = null, over = null, timer = null;
+      const finish = () => { S.dragging = false; if (S.pendingRender) { S.pendingRender = false; scheduleRender(); } };
+      const move = ev => {
+        if (!mouse) return; // en pantallas táctiles se mueve con el menú, así no se bloquea el desplazamiento
+        if (!ghost && Math.hypot(ev.clientX - x0, ev.clientY - y0) > 6) {
+          S.dragging = true; ghost = d.cloneNode(true); ghost.classList.add("ghost"); ghost.style.width = d.offsetWidth + "px"; document.body.append(ghost); d.classList.add("dragging");
+        }
+        if (!ghost) return;
+        ghost.style.left = ev.clientX - 20 + "px"; ghost.style.top = ev.clientY - 16 + "px";
+        const col = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(".col");
+        if (col !== over) { over && over.classList.remove("over"); over = col; over && over.classList.add("over"); }
+        const r = board.getBoundingClientRect();
+        clearInterval(timer);
+        if (ev.clientX > r.right - 60) timer = setInterval(() => board.scrollLeft += 18, 30);
+        else if (ev.clientX < r.left + 60) timer = setInterval(() => board.scrollLeft -= 18, 30);
+      };
+      const up = ev => {
+        removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", cancel); clearInterval(timer);
+        if (ghost) { ghost.remove(); d.classList.remove("dragging"); over && over.classList.remove("over"); finish(); if (over) moveStage(c, over.dataset.stage); }
+        else if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 10) stageSheet(c);
+      };
+      const cancel = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", cancel); clearInterval(timer); ghost && ghost.remove(); d.classList.remove("dragging"); over && over.classList.remove("over"); finish(); };
+      addEventListener("pointermove", move); addEventListener("pointerup", up); addEventListener("pointercancel", cancel);
+    };
   });
 }
 
@@ -595,7 +686,7 @@ const C_FIELDS = [
   ["Contacto", [["name", "Nombre"], ["phone", "WhatsApp", "tel"], ["email", "Correo", "email"], ["cargo", "Cargo"]]],
   ["Empresa", [["company", "Hotel / empresa"], ["city", "Ciudad"], ["segment", "Segmento", SEGMENTS], ["type", "Tipo", ["Prospecto", "Cliente"]]]],
   ["Venta", [["stage", "Etapa", STAGES], ["temperature", "Temperatura", TEMPS], ["potential", "Potencial", ["Alto", "Medio", "Bajo"]], ["level", "Nivel", ["3", "2", "1", "0", "-1"]],
-    ["owner", "Responsable", "team"], ["looking", "Qué busca", "wide"]]],
+    ["owner", "Responsable", "team"], ["reorderDays", "Recompra cada (días)", "num"], ["looking", "Qué busca", "wide"]]],
   ["Seguimiento", [["nextDate", "Próx. seguimiento", "date"], ["nextAction", "Qué hacer"], ["obs", "Observaciones", "textarea"]]],
 ];
 function openContact(id) {
@@ -609,7 +700,7 @@ function openContact(id) {
       return `<div><label class="lb" for="cf_${k}">${label}</label><select class="in" id="cf_${k}" data-k="${k}"><option value="">—</option>${[...new Set([...opts, ...(v && !opts.includes(String(v)) ? [String(v)] : [])])].map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
     }
     if (t === "textarea") return `<div class="full"><label class="lb" for="cf_${k}">${label}</label><textarea class="in" id="cf_${k}" data-k="${k}" rows="3">${esc(v)}</textarea></div>`;
-    return `<div class="${t === "wide" ? "full" : ""}"><label class="lb" for="cf_${k}">${label}</label><input class="in" id="cf_${k}" data-k="${k}" type="${["tel", "email", "date"].includes(t) ? t : "text"}" value="${esc(v)}"></div>`;
+    return `<div class="${t === "wide" ? "full" : ""}"><label class="lb" for="cf_${k}">${label}</label><input class="in" id="cf_${k}" data-k="${k}" type="${["tel", "email", "date"].includes(t) ? t : t === "num" ? "number" : "text"}" value="${esc(v)}"></div>`;
   };
   const extra = c.extra && Object.keys(c.extra).length ? `<fieldset class="fs"><legend>Datos del Excel (${esc(c.sourceSheet || "")})</legend><div class="grid2">${Object.entries(c.extra).map(([k, v]) => `<div><label class="lb">${esc(k)}</label><div>${esc(v)}</div></div>`).join("")}</div></fieldset>` : "";
   const qs = id ? S.quotes.filter(q => q.contactId === id) : [];
@@ -619,6 +710,8 @@ function openContact(id) {
       <button class="iconbtn" type="button" id="cx" aria-label="Cerrar">✕</button></div>
     <div class="mb">${id && c.updatedAt ? `<small class="muted">Última modificación: ${fmtDT(c.updatedAt)}${c.updatedBy ? " · por " + esc(c.updatedBy) : ""}</small>` : ""}
       ${C_FIELDS.map(([g, fs]) => `<fieldset class="fs"><legend>${g}</legend><div class="grid2">${fs.map(field).join("")}</div></fieldset>`).join("")}
+      ${(() => { const ri = id && reorderInfo(c); return ri ? `<fieldset class="fs"><legend>Reposición</legend><div>Última compra: <b>${fmtDate(new Date(ri.last).toISOString().slice(0, 10))}</b>${ri.items ? " · " + esc(ri.items) : ""}${ri.total ? " · " + money(ri.total) : ""}</div>
+        <div>Próxima compra estimada: <b>${fmtDate(ri.dueIso)}</b> <span class="muted">(cada ${ri.days} días, ${esc(ri.how)})</span></div></fieldset>` : ""; })()}
       ${qs.length ? `<fieldset class="fs"><legend>Cotizaciones</legend>${qs.map(q => `<div><a href="#" data-q="${q.id}">${esc(q.number)}</a> · ${money(q.total)} · ${esc(q.status)} · <span class="muted">${fmtDT(q.createdAt)}</span></div>`).join("")}</fieldset>` : ""}
       ${extra}
       ${id ? `<fieldset class="fs"><legend>Historial</legend><div style="display:flex;gap:8px"><input class="in" id="cnoteIn" placeholder="Agregar nota: ej. llamé, pidió muestras"><button class="btn" type="button" id="cnoteAdd">Agregar</button></div><div class="lastmsgs" id="chist"><span class="muted">Cargando…</span></div></fieldset>` : ""}
@@ -801,6 +894,37 @@ function viewAgenda(el) {
       : `<div class="empty"><p>No hay seguimientos programados.</p><p>Usa "Recordar en…" en Hoy o la fecha de próximo seguimiento en la ficha del contacto.</p></div>`}</div>`;
   $("#agm").onchange = e => { S.agMine = e.target.checked; renderShell(); };
   $$("tbody tr", el).forEach(tr => tr.onclick = () => openContact(tr.dataset.id));
+}
+
+// ======================= Avisos de reposición =======================
+function viewReposicion(el) {
+  const all = S.contacts.map(c => ({ c, ri: reorderInfo(c) })).filter(x => x.ri && (!S.rpMine || x.c.owner === S.me.name)).sort((a, b) => a.ri.due - b.ri.due);
+  const showAll = S.rpAll, list = showAll ? all : all.filter(x => x.ri.inDays <= 7);
+  const tpl = tplFor("reponer");
+  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Avisos de reposición</h1><span class="sub tabnum">${all.filter(x => x.ri.inDays < 0).length} vencidos · ${all.filter(x => x.ri.inDays >= 0 && x.ri.inDays <= 7).length} esta semana</span></div>
+    <div class="toolbar"><div class="seg"><button class="${showAll ? "" : "on"}" data-all="0">Vencidos y próximos 7 días</button><button class="${showAll ? "on" : ""}" data-all="1">Todos los clientes (${all.length})</button></div>
+      <label class="pill"><input type="checkbox" id="rpm" ${S.rpMine ? "checked" : ""}> Solo los míos</label></div>
+    <p class="muted" style="max-width:80ch;margin:0 0 12px">La próxima compra se calcula con la fecha de su última compra (pedidos del CRM o "Fecha última compra" del Excel) más cada cuánto compra: lo que pongas en la ficha en "Recompra cada (días)", la frecuencia del Excel, el promedio entre sus pedidos o ${DEFAULT_REORDER} días por defecto. Los avisos de los próximos 7 días también salen en Hoy.</p>
+    ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th>Última compra</th><th>Compró</th><th class="num">Valor</th><th>Próxima compra</th><th>Responsable</th><th></th></tr></thead><tbody>
+      ${list.map(({ c, ri }) => { const msg = fillTpl(tpl.text, c, { ultimo: ri.items || "tu último pedido", dias: String(Math.round((Date.now() - ri.last) / DAY)) }); return `<tr data-id="${c.id}">
+        <td><b>${esc(contactName(c))}</b>${c.company && c.name ? `<div class="muted" style="font-size:13px">${esc(c.company)}</div>` : ""}</td>
+        <td class="tabnum">${fmtDate(new Date(ri.last).toISOString().slice(0, 10))}</td><td title="${esc(ri.items)}" style="max-width:200px">${esc(ri.items || "—")}</td><td class="num">${ri.total ? money(ri.total) : ""}</td>
+        <td title="${esc(fmtDate(ri.dueIso) + " · " + ri.how)}"><span class="pill ${ri.inDays < 0 ? "red" : ri.inDays <= 7 ? "amber" : ""}">${ri.inDays < 0 ? "vencido hace " + -ri.inDays + " d" : ri.inDays === 0 ? "hoy" : "en " + ri.inDays + " d"}</span><div class="muted" style="font-size:12px">compra cada ${ri.days} días</div></td>
+        <td>${esc(c.owner || "")}</td>
+        <td style="white-space:nowrap">${waLink(c.phone) ? `<a class="btn sm" href="${waLink(c.phone, msg)}" target="_blank" rel="noopener" data-wa="${c.id}">WhatsApp</a>` : ""} <button class="btn sm" data-done="${c.id}" data-due="${ri.dueIso}">Ya lo contacté</button></td></tr>`; }).join("")}
+      </tbody></table></div>`
+      : `<div class="empty"><p><b>${showAll ? "Todavía no hay clientes con compras registradas." : "Nadie necesita reponer esta semana."}</b></p><p>Aparecen aquí los clientes con una última compra conocida: los pedidos del CRM y los hoteles activos importados del Excel.</p></div>`}</div>`;
+  $$("[data-all]", el).forEach(b => b.onclick = () => { S.rpAll = b.dataset.all === "1"; renderShell(); });
+  $("#rpm").onchange = e => { S.rpMine = e.target.checked; renderShell(); };
+  $$("tbody tr", el).forEach(tr => tr.onclick = e => { if (e.target.closest("a,button")) return; openContact(tr.dataset.id); });
+  $$("[data-wa]", el).forEach(a => a.onclick = () => { const c = byId(S.contacts, a.dataset.wa); logOutbound(c, decodeURIComponent((a.href.split("text=")[1] || "")), "Reposición"); });
+  $$("[data-done]", el).forEach(b => b.onclick = async () => {
+    const c = byId(S.contacts, b.dataset.done);
+    const d = await promptText("¿Cuándo vuelves a contactar a " + contactName(c) + " si no compra?", addDays(todayIso(), 7), "", "date");
+    if (d === null) return;
+    await fb.update("contacts/" + c.id, { [`done.${safeKey("reponer:" + b.dataset.due)}`]: Date.now(), ...(d ? { nextDate: d, nextAction: "Seguimiento de reposición" } : {}), ...stamp() });
+    toast("Listo");
+  });
 }
 
 // ======================= Métricas =======================
