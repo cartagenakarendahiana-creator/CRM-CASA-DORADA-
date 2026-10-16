@@ -989,7 +989,7 @@ function viewImportar(el) {
       if (!exists) Object.assign(data, { createdAt: now, stageAt: now, unread: 0 });
       ops.push({ op: "set", path: "contacts/" + id, data, merge: true });
     }
-    try { await fb.batch(ops); S.importMsg = "Listo:\n" + report.join("\n"); toast(contacts.size + " contactos importados"); }
+    try { await fb.batch(ops, (d, t) => { S.importMsg = `Importando… ${d} de ${t}`; if ($("#xr")) $("#xr").textContent = S.importMsg; }); S.importMsg = "Listo:\n" + report.join("\n"); toast(contacts.size + " contactos importados"); }
     catch (er) { S.importMsg = "Error: " + errMsg(er); }
     if ($("#xr")) $("#xr").textContent = S.importMsg;
   };

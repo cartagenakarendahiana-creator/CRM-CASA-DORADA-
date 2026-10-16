@@ -1,13 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Una sola lectura del usuario por operación: Firebase limita a 20 lecturas por lote de escrituras.
+    // Si el documento no existe, get() falla y se niega el acceso.
     function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function member() {
-      return request.auth != null
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && me().active != false;
-    }
-    function isAdmin() { return member() && me().role == 'admin'; }
+    function member() { return request.auth != null && me().get('active', true) != false; }
+    function isAdmin() { return request.auth != null && me().get('active', true) != false && me().get('role', '') == 'admin'; }
 
     // Equipo: todos ven la lista; solo la administradora la cambia (las cuentas nuevas las crea la función)
     match /users/{uid} {

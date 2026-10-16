@@ -38,12 +38,22 @@ export const fb = {
   update: (path, data) => updateDoc(doc(db, path), data),
   remove: path => deleteDoc(doc(db, path)),
   inc: n => increment(n),
-  async batch(ops) {
-    for (let i = 0; i < ops.length; i += 400) {
-      const b = writeBatch(db);
-      ops.slice(i, i + 400).forEach(o => o.op === "delete" ? b.delete(doc(db, o.path)) : b.set(doc(db, o.path), o.data, { merge: !!o.merge }));
-      await b.commit();
-    }
+  // Lotes pequeños: las reglas de seguridad leen el usuario en cada escritura y Firebase
+  // permite máximo 20 lecturas por lote. Se envían varios lotes a la vez.
+  async batch(ops, onProgress) {
+    const SIZE = 5, chunks = [];
+    for (let i = 0; i < ops.length; i += SIZE) chunks.push(ops.slice(i, i + SIZE));
+    let next = 0, done = 0;
+    const worker = async () => {
+      while (next < chunks.length) {
+        const chunk = chunks[next++], b = writeBatch(db);
+        chunk.forEach(o => o.op === "delete" ? b.delete(doc(db, o.path)) : b.set(doc(db, o.path), o.data, { merge: !!o.merge }));
+        await b.commit();
+        done += chunk.length;
+        onProgress && onProgress(done, ops.length);
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
   },
   nextNumber: name => runTransaction(db, async t => {
     const r = doc(db, "counters/" + name), s = await t.get(r);
