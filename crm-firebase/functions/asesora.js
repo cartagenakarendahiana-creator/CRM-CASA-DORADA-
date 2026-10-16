@@ -1,0 +1,260 @@
+// Asesora virtual: responde por WhatsApp con Claude (API de Anthropic).
+// Modo mixto: resuelve preguntas de productos, precios, medidas y disponibilidad;
+// pasa a una persona los cierres de pedido, negociaciones y quejas.
+const Anthropic = require("@anthropic-ai/sdk");
+
+const MODEL = "claude-opus-5-5";
+const MAX_ROUNDS = 6;       // vueltas de herramientas por mensaje
+const HISTORY = 40;         // mensajes de contexto
+const DEBOUNCE_MS = 7000;   // espera por si el cliente manda varios mensajes seguidos
+const TEMPS = ["🔥 Caliente", "🌤 Tibio", "❄️ Frío"];
+
+const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const isoDay = d => new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+const nowText = () => new Date().toLocaleString("es-CO", { timeZone: "America/Bogota", dateStyle: "full", timeStyle: "short" });
+const priceFor = (p, qty) => p.priceWholesale && p.minWholesale && qty >= p.minWholesale ? p.priceWholesale : p.priceRetail || 0;
+const money = n => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+const obj = (properties, required) => ({ type: "object", properties, required, additionalProperties: false });
+const TOOLS = [
+  { name: "buscar_productos", description: "Busca en el catálogo de Casa Dorada por nombre, categoría, medida o descripción. Devuelve precio al detal, precio por mayor y desde cuántas unidades aplica. Úsala SIEMPRE antes de dar un precio o decir si hay un producto; nunca inventes precios ni productos. Con consulta vacía lista todo el catálogo.",
+    input_schema: obj({ consulta: { type: "string", description: "Palabras a buscar, ej. 'sábana 1.40' o 'toallas'" } }, ["consulta"]) },
+  { name: "actualizar_ficha", description: "Guarda en la ficha del cliente los datos que te dio en la conversación. Envía solo los campos que conoces con certeza.",
+    input_schema: obj({
+      nombre: { type: "string", description: "Nombre de la persona" },
+      empresa: { type: "string", description: "Empresa, hotel o negocio" },
+      ciudad: { type: "string" },
+      correo: { type: "string" },
+      que_busca: { type: "string", description: "Resumen corto de lo que necesita, ej. '20 juegos de sábanas 1.40 para hotel'" },
+      temperatura: { type: "string", enum: TEMPS, description: "Qué tan cerca está de comprar" },
+      producto_elegido_id: { type: "string", description: "id del producto que eligió (de buscar_productos)" },
+      nota: { type: "string", description: "Dato útil para el equipo que no cabe en los otros campos" },
+    }, []) },
+  { name: "crear_cotizacion", description: "Prepara una cotización en estado Borrador con productos del catálogo. Una persona del equipo la revisa antes de enviarla formalmente. Úsala cuando el cliente pida cotización o precio total por cantidades.",
+    input_schema: obj({
+      items: { type: "array", description: "Productos y cantidades", items: obj({ producto_id: { type: "string" }, cantidad: { type: "integer" } }, ["producto_id", "cantidad"]) },
+      notas: { type: "string", description: "Condiciones o detalles que pidió el cliente" },
+    }, ["items"]) },
+  { name: "agendar_seguimiento", description: "Programa la próxima acción del equipo con este cliente (aparece en Hoy y en Agenda). Úsala cuando el cliente diga que decide después, que le escriban otro día, etc.",
+    input_schema: obj({ fecha: { type: "string", description: "Fecha AAAA-MM-DD" }, accion: { type: "string", description: "Qué hay que hacer, ej. 'Preguntar si aprobó la cotización'" } }, ["fecha", "accion"]) },
+  { name: "pasar_a_humano", description: "Pasa la conversación a una persona del equipo y deja de responder en este chat. Úsala para: cerrar un pedido (datos de envío, pago, confirmación), negociar precio o descuentos, quejas o reclamos, garantías, preguntas que el catálogo y las instrucciones no responden, o si el cliente pide hablar con una persona.",
+    input_schema: obj({ motivo: { type: "string", enum: ["Cerrar pedido", "Negociación", "Queja o reclamo", "Pide una persona", "No sé la respuesta", "Otro"] },
+      resumen: { type: "string", description: "Resumen para la persona que toma el chat: qué quiere el cliente y qué falta" } }, ["motivo", "resumen"]) },
+].map(t => ({ ...t, strict: true }));
+
+function systemPrompt(cfg) {
+  const name = cfg.name || "Sofía";
+  return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"} por WhatsApp. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por WhatsApp; máximo 1 o 2 emojis). Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
+
+Tu trabajo (modo mixto):
+- Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
+- Explica el precio por mayor cuando aplique ("desde X unidades queda a $Y").
+- Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
+- Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
+- Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
+- Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide descuento o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
+- Si recibes un audio, imagen o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
+- No des descuentos, no confirmes pedidos, pagos, envíos ni fechas de entrega.
+
+Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por WhatsApp: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
+Los mensajes del equipo humano en el historial también son de tu lado de la conversación; sé coherente con ellos.
+
+Instrucciones del negocio (horarios, envíos, pagos, políticas):
+${(cfg.instructions || "No hay instrucciones adicionales.").trim()}`;
+}
+
+function contactText(c) {
+  const f = [["Nombre", c.name], ["Empresa", c.company], ["Ciudad", c.city], ["Correo", c.email], ["Segmento", c.segment], ["Tipo", c.type],
+    ["Etapa", c.stage], ["Temperatura", c.temperature], ["Qué busca", c.looking], ["Producto elegido", c.chosenProduct && `${c.chosenProduct.name} ${money(c.chosenProduct.price)}`],
+    ["Próximo seguimiento", c.nextDate && `${c.nextDate} ${c.nextAction || ""}`], ["Observaciones", c.obs]];
+  return `Hoy es ${nowText()}.\nFicha actual del cliente:\n` + f.filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`).join("\n");
+}
+
+// Historial de WhatsApp → turnos user/assistant (las notas internas no se incluyen)
+function toMessages(msgs) {
+  const out = [];
+  for (const m of msgs) {
+    if (m.dir !== "in" && m.dir !== "out") continue;
+    const role = m.dir === "in" ? "user" : "assistant";
+    const text = String(m.text || "").trim() || "[mensaje vacío]";
+    const last = out[out.length - 1];
+    if (last && last.role === role) last.content += "\n" + text; else out.push({ role, content: text });
+  }
+  if (out.length && out[0].role === "assistant") out.unshift({ role: "user", content: "(Inicio de la conversación)" });
+  return out;
+}
+
+function makeTools({ db, admin, cref, contact, products, aiName }) {
+  const active = products.filter(p => p.active !== false);
+  const pub = p => ({ id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
+    precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null });
+  const done = []; // lo que hizo la asesora, para la nota interna
+  const run = {
+    async buscar_productos({ consulta }) {
+      const words = norm(consulta).split(/\s+/).filter(w => w.length > 1);
+      if (!words.length) return { productos: active.slice(0, 60).map(pub), total: active.length };
+      const scored = active.map(p => { const hay = norm(`${p.name} ${p.category} ${p.desc}`); return [p, words.filter(w => hay.includes(w)).length]; })
+        .filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).slice(0, 12);
+      return scored.length ? { productos: scored.map(([p]) => pub(p)) } : { productos: [], aviso: "No hay coincidencias. Prueba con otras palabras o con consulta vacía para ver todo el catálogo." };
+    },
+    async actualizar_ficha(a) {
+      const patch = {};
+      const map = { nombre: "name", empresa: "company", ciudad: "city", correo: "email", que_busca: "looking", temperatura: "temperature" };
+      for (const [k, f] of Object.entries(map)) if (a[k] && String(a[k]).trim()) patch[f] = String(a[k]).trim().slice(0, 300);
+      if (patch.temperature && !TEMPS.includes(patch.temperature)) delete patch.temperature;
+      if (a.producto_elegido_id) {
+        const p = active.find(x => x.id === a.producto_elegido_id);
+        if (!p) return { error: "Ese id no existe en el catálogo." };
+        patch.chosenProduct = { id: p.id, name: p.name, price: p.priceRetail || 0, desc: p.desc || "" };
+      }
+      if (a.nota && String(a.nota).trim()) patch.obs = [contact.obs, `${isoDay(Date.now())} (${aiName}): ${String(a.nota).trim()}`].filter(Boolean).join("\n").slice(0, 3000);
+      if (!Object.keys(patch).length) return { ok: true, guardado: [] };
+      await cref.set({ ...patch, updatedAt: Date.now(), updatedBy: aiName }, { merge: true });
+      Object.assign(contact, patch);
+      done.push("actualizó la ficha (" + Object.keys(patch).join(", ") + ")");
+      return { ok: true, guardado: Object.keys(patch) };
+    },
+    async crear_cotizacion({ items, notas }) {
+      const lines = [];
+      for (const it of items || []) {
+        const p = active.find(x => x.id === it.producto_id), qty = Math.max(1, Math.round(Number(it.cantidad) || 0));
+        if (!p) return { error: `El producto ${it.producto_id} no existe en el catálogo. Búscalo con buscar_productos.` };
+        lines.push({ productId: p.id, name: p.name, qty, price: priceFor(p, qty) });
+      }
+      if (!lines.length) return { error: "La cotización necesita al menos un producto." };
+      const subtotal = lines.reduce((s, l) => s + l.qty * l.price, 0), now = Date.now();
+      const qref = db.collection("quotes").doc();
+      const number = await db.runTransaction(async t => {
+        const cr = db.doc("counters/quotes"), s = await t.get(cr);
+        const n = (s.exists ? s.get("n") || 0 : 0) + 1;
+        const num = "COT-" + String(n).padStart(4, "0");
+        t.set(cr, { n });
+        t.set(qref, { contactId: cref.id, contactName: contact.name || contact.company || contact.phone || "", items: lines, subtotal, discount: 0, total: subtotal,
+          status: "Borrador", validUntil: isoDay(now + 15 * 864e5), notes: String(notas || "").slice(0, 1000), number: num, aiCreated: true,
+          createdAt: now, createdBy: "asesora", createdByName: aiName, updatedAt: now, updatedBy: aiName });
+        return num;
+      });
+      const first = lines[0], p = active.find(x => x.id === first.productId);
+      await cref.set({ chosenProduct: { id: first.productId, name: first.name, price: first.price, desc: p.desc || "" }, updatedAt: now, updatedBy: aiName }, { merge: true });
+      done.push(`preparó la cotización ${number} por ${money(subtotal)} (borrador para revisar)`);
+      return { ok: true, numero: number, lineas: lines.map(l => ({ producto: l.name, cantidad: l.qty, precio_unitario: l.price, subtotal: l.qty * l.price })), total: subtotal,
+        aviso: "Queda en borrador: dile al cliente el total aproximado y que una asesora del equipo se la confirma." };
+    },
+    async agendar_seguimiento({ fecha, accion }) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || "") || fecha < isoDay(Date.now())) return { error: "La fecha debe ser AAAA-MM-DD y no puede estar en el pasado." };
+      await cref.set({ nextDate: fecha, nextAction: String(accion || "").slice(0, 200), updatedAt: Date.now(), updatedBy: aiName }, { merge: true });
+      done.push(`agendó seguimiento el ${fecha}: ${accion}`);
+      return { ok: true };
+    },
+    async pasar_a_humano({ motivo, resumen }) {
+      const at = Date.now();
+      await cref.set({ aiHandoff: { reason: String(motivo || "Otro"), summary: String(resumen || "").slice(0, 1000), at }, updatedAt: at, updatedBy: aiName }, { merge: true });
+      done.push(`pasó el chat a una persona (${motivo}): ${resumen}`);
+      return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
+    },
+  };
+  return { run, done };
+}
+
+// Valida a mano lo que la herramienta espera (además de strict:true)
+function validInput(name, input) {
+  if (!input || typeof input !== "object") return false;
+  const req = { buscar_productos: ["consulta"], crear_cotizacion: ["items"], agendar_seguimiento: ["fecha", "accion"], pasar_a_humano: ["motivo", "resumen"] }[name] || [];
+  return req.every(k => input[k] !== undefined) && (name !== "crear_cotizacion" || Array.isArray(input.items));
+}
+
+// Corre a Claude con herramientas y devuelve el texto final para el cliente
+async function think({ apiKey, cfg, contact, history, tools }) {
+  const client = new Anthropic({ apiKey });
+  const messages = toMessages(history);
+  if (!messages.length || messages[messages.length - 1].role !== "user") return { text: "" };
+  const system = [
+    { type: "text", text: systemPrompt(cfg), cache_control: { type: "ephemeral" } },
+    { type: "text", text: contactText(contact) },
+  ];
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const r = await client.beta.messages.create({
+      model: MODEL, max_tokens: 8000, system, messages, tools: TOOLS,
+      output_config: { effort: "medium" },
+      // Si Claude declina por seguridad, la API reintenta con el modelo de respaldo recomendado
+      betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
+    });
+    if (r.stop_reason === "refusal") return { refusal: true };
+    if (r.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: r.content }); continue; }
+    const uses = r.content.filter(b => b.type === "tool_use");
+    const text = r.content.filter(b => b.type === "text").map(b => b.text).join("").trim();
+    if (r.stop_reason !== "tool_use" || !uses.length) return { text };
+    messages.push({ role: "assistant", content: r.content });
+    const results = [];
+    for (const u of uses) {
+      let out;
+      try {
+        out = !tools.run[u.name] ? { error: "Herramienta desconocida" } : !validInput(u.name, u.input) ? { error: "Datos incompletos, revisa los campos obligatorios." } : await tools.run[u.name](u.input);
+      } catch (e) { console.error("herramienta", u.name, e); out = { error: "No se pudo completar: " + (e.message || e) }; }
+      results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(out), ...(out && out.error ? { is_error: true } : {}) });
+    }
+    messages.push({ role: "user", content: results });
+  }
+  return { text: "" };
+}
+
+// Decide si responde, arma el contexto, llama a Claude y envía la respuesta
+async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+  const cref = db.doc("contacts/" + cid);
+  const cfgSnap = await db.doc("settings/asesora").get();
+  const cfg = cfgSnap.exists ? cfgSnap.data() : {};
+  if (!cfg.enabled || !apiKey) return "apagada";
+  const msnap = await cref.collection("messages").doc(mid).get();
+  if (!msnap.exists || msnap.get("dir") !== "in") return "no-entrante";
+  const ts = msnap.get("ts") || 0;
+  if (debounce) await wait(debounce);
+
+  // Reclama el turno: solo responde al último mensaje y una sola vez (los disparadores pueden repetirse)
+  const claim = await db.runTransaction(async t => {
+    const s = await t.get(cref);
+    if (!s.exists) return "sin-contacto";
+    const c = s.data(), now = Date.now();
+    if ((c.lastInboundAt || 0) > ts) return "hay-mensaje-mas-nuevo";
+    if ((c.aiHandledTs || 0) >= ts) return "ya-respondido";
+    if (c.aiOff) return "pausada-en-chat";
+    if (c.aiHandoff) return "esperando-persona";
+    if ((c.aiPausedUntil || 0) > now) return "persona-escribiendo";
+    t.set(cref, { aiHandledTs: ts }, { merge: true });
+    return "ok";
+  });
+  if (claim !== "ok") return claim;
+
+  const contact = (await cref.get()).data();
+  const [hs, ps] = await Promise.all([
+    cref.collection("messages").orderBy("ts", "desc").limit(HISTORY).get(),
+    db.collection("products").get(),
+  ]);
+  const history = hs.docs.map(d => d.data()).reverse();
+  const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
+  const aiName = (cfg.name || "Sofía") + " · IA";
+  const tools = makeTools({ db, admin, cref, contact, products, aiName });
+
+  let res;
+  try { res = await think({ apiKey, cfg, contact, history, tools }); }
+  catch (e) {
+    console.error("asesora", e);
+    await cref.set({ aiError: { at: Date.now(), message: String(e.message || e).slice(0, 300) } }, { merge: true });
+    return "error";
+  }
+  if (res.refusal) {
+    await cref.set({ aiHandoff: { reason: "Otro", summary: "La asesora virtual no pudo responder este mensaje.", at: Date.now() } }, { merge: true });
+    tools.done.push("no pudo responder y pasó el chat a una persona");
+  }
+  const text = (res.text || "").trim();
+  if (text && text !== "[SIN RESPUESTA]") {
+    // Si una persona respondió mientras la IA pensaba, no enviar
+    const fresh = (await cref.get()).data();
+    if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
+    await send({ cref, contact: fresh, text, byName: aiName });
+    if ((fresh.stage || "Nuevo") === "Nuevo") await cref.set({ stage: "Contactado", stageAt: Date.now() }, { merge: true });
+  }
+  if (tools.done.length) await cref.collection("messages").add({ dir: "note", text: `${aiName}: ` + tools.done.join("; ") + ".", ts: Date.now(), by: "asesora", byName: aiName });
+  return text && text !== "[SIN RESPUESTA]" ? "respondido" : "sin-texto";
+}
+
+module.exports = { handleInbound, toMessages, TOOLS, systemPrompt };

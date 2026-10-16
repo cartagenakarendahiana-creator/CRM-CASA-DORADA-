@@ -8,6 +8,7 @@ CRM de ventas por WhatsApp para Casa Dorada: dice a quién atender hoy, en qué 
 - **Contactos**: ficha completa, historial e importación de `CasaDorada_CRM.xlsx`.
 - **Cotizaciones** (COT-0001…) con precio al detal y al por mayor, que se convierten en **Pedidos** (PED-0001…).
 - **Productos**, **Plantillas** de mensajes por situación y **Equipo** con usuario por persona.
+- **Asesora virtual** (IA con Claude): responde WhatsApp 24/7, da precios del catálogo, llena la ficha, prepara cotizaciones en borrador, agenda seguimientos y pasa a una persona los cierres, negociaciones y quejas.
 
 La instalación está en [INSTALAR-FIREBASE.md](INSTALAR-FIREBASE.md).
 
@@ -19,6 +20,7 @@ public/                 la aplicación (Firebase Hosting)
   fb.js                 acceso a Firebase (Auth, Firestore, Functions)
   firebase-config.js    configuración de tu proyecto
 functions/index.js      webhook y envío de WhatsApp, alta de usuarios
+functions/asesora.js    asesora virtual (Claude): herramientas y reglas de cuándo responde
 firestore.rules         quién puede leer y escribir
 ```
 
@@ -31,3 +33,4 @@ firestore.rules         quién puede leer y escribir
 | `contacts/{id}/messages` | mensajes de WhatsApp (`in`/`out`) y notas (`note`) |
 | `quotes`, `orders` | cotizaciones y pedidos, numerados con `counters/` |
 | `products`, `templates` | catálogo y plantillas |
+| `settings/asesora` | asesora virtual: enabled, name, instructions, pauseHours |
