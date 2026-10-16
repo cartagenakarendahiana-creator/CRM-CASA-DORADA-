@@ -17,7 +17,7 @@ La instalación tiene dos fases. La **fase 1** deja el CRM funcionando hoy, grat
 1. Entra a **console.firebase.google.com** con tu cuenta de Google y pulsa **Crear un proyecto**. Llámalo, por ejemplo, `crm-casa-dorada`. Puedes desactivar Google Analytics.
 2. En el menú, abre **Compilación › Firestore Database › Crear base de datos**:
    - Modo: **producción**.
-   - Ubicación: **southamerica-east1 (São Paulo)**. No se puede cambiar después.
+   - Ubicación: **us-east1 (South Carolina)**. No se puede cambiar después.
 3. Abre **Compilación › Authentication › Comenzar** y activa **Correo electrónico/contraseña**.
 
 ### 2. Crear tu usuario de administradora
@@ -98,7 +98,7 @@ En Firebase, ve a **Configuración › Uso y facturación** y cambia a **Blaze**
 
 ### 9. Conectar el webhook
 1. En Meta, ve a **WhatsApp › Configuración › Webhook › Editar** y llena:
-   - **URL de devolución de llamada:** `https://southamerica-east1-TU-PROYECTO.cloudfunctions.net/whatsappWebhook`
+   - **URL de devolución de llamada:** `https://us-east1-crm-casa-dorada.cloudfunctions.net/whatsappWebhook`
    - **Token de verificación:** la palabra que inventaste en WA_VERIFY_TOKEN
 2. Pulsa **Verificar y guardar** y suscribe el campo **messages**.
 3. Pasa la app a modo **Activo** (Live).

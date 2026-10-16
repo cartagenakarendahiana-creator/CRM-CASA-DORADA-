@@ -9,7 +9,7 @@ const admin = require("firebase-admin");
 
 admin.initializeApp();
 const db = admin.firestore();
-const REGION = "southamerica-east1";
+const REGION = "us-east1";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 const WA_TOKEN = defineSecret("WA_TOKEN");             // token permanente del usuario del sistema
