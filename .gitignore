@@ -7,4 +7,4 @@
 !crm-firebase/functions/package.json
 crm-firebase/functions/.env
 crm-firebase/functions/node_modules/
-crm-firebase/.firebaserc
+!crm-firebase/.firebaserc
