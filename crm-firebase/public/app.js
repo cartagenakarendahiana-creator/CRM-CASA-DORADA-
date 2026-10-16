@@ -66,6 +66,8 @@ const ICONS = {
   agenda: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   chev: '<path d="M9 6l6 6-6 6"/>',
+  metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
@@ -193,9 +195,9 @@ const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
-  ["Configuración", [["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"]]],
+  ["Configuración", [["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -226,7 +228,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -799,6 +801,118 @@ function viewAgenda(el) {
       : `<div class="empty"><p>No hay seguimientos programados.</p><p>Usa "Recordar en…" en Hoy o la fecha de próximo seguimiento en la ficha del contacto.</p></div>`}</div>`;
   $("#agm").onchange = e => { S.agMine = e.target.checked; renderShell(); };
   $$("tbody tr", el).forEach(tr => tr.onclick = () => openContact(tr.dataset.id));
+}
+
+// ======================= Métricas =======================
+const RANGES = { mes: "Este mes", pasado: "Mes pasado", d90: "Últimos 90 días", anio: "Este año", todo: "Todo" };
+function rangeOf(k) {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  if (k === "mes") return [new Date(y, m, 1).getTime(), Infinity];
+  if (k === "pasado") return [new Date(y, m - 1, 1).getTime(), new Date(y, m, 1).getTime()];
+  if (k === "d90") return [Date.now() - 90 * DAY, Infinity];
+  if (k === "anio") return [new Date(y, 0, 1).getTime(), Infinity];
+  return [0, Infinity];
+}
+const pct = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
+// Barras horizontales: etiqueta, barra y valor escrito (se lee sin depender del color)
+function hbars(rows, fmt = money, sub) {
+  const max = Math.max(1, ...rows.map(r => r.v));
+  return rows.length ? `<div class="hbars">${rows.map(r => `<div class="hbar" data-tip="${esc(r.k)}: ${esc(fmt(r.v))}${sub ? " · " + esc(sub(r)) : ""}">
+      <span class="hk" title="${esc(r.k)}">${esc(r.k)}</span><span class="ht"><span class="hf" style="width:${r.v ? Math.max(1.5, r.v / max * 100) : 0}%"></span></span>
+      <span class="hv tabnum">${esc(fmt(r.v))}${sub ? `<small>${esc(sub(r))}</small>` : ""}</span></div>`).join("")}</div>`
+    : '<p class="muted">Sin datos en este periodo.</p>';
+}
+function viewMetricas(el) {
+  const rk = S.mRange || "mes", [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;
+  const orders = S.orders.filter(o => o.status !== "Cancelado" && inR(o.createdAt));
+  const sales = orders.reduce((s, o) => s + (o.total || 0), 0);
+  const quotes = S.quotes.filter(q => inR(q.createdAt));
+  const sent = quotes.filter(q => q.status !== "Borrador"), conv = quotes.filter(q => q.status === "Convertida");
+  const pipeline = S.quotes.filter(q => ["Enviada", "Aceptada"].includes(q.status)).reduce((s, q) => s + (q.total || 0), 0);
+  const newC = S.contacts.filter(c => !c.sourceSheet && inR(c.createdAt)).length;
+  // Ventas por mes: últimos 12 meses, siempre visibles para ver la tendencia
+  const now = new Date(), months = [];
+  for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push({ s: d.getTime(), e: new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(), k: d.toLocaleDateString("es-CO", { month: "short" }).replace(".", ""), y: d.getFullYear() }); }
+  months.forEach(m => { const os = S.orders.filter(o => o.status !== "Cancelado" && o.createdAt >= m.s && o.createdAt < m.e); m.v = os.reduce((s, o) => s + (o.total || 0), 0); m.n = os.length; });
+  const mMax = Math.max(1, ...months.map(m => m.v)), peak = months.reduce((p, m) => m.v > p.v ? m : p, months[0]);
+  const by = (list, keyFn) => { const g = {}; list.forEach(x => { const k = keyFn(x) || "Sin asignar"; (g[k] = g[k] || { k, v: 0, n: 0 }); g[k].v += x.total || 0; g[k].n++; }); return Object.values(g).sort((p, q) => q.v - p.v); };
+  const prod = {}; orders.forEach(o => (o.items || []).forEach(i => { const k = i.name || "—"; (prod[k] = prod[k] || { k, v: 0, n: 0 }); prod[k].v += (i.qty || 0) * (i.price || 0); prod[k].n += Number(i.qty) || 0; }));
+  const prodRows = Object.values(prod).sort((p, q) => q.v - p.v).slice(0, 10);
+  const stageRows = STAGES.map(st => ({ k: st, v: S.contacts.filter(c => !c.archived && (c.stage || "Nuevo") === st).length }));
+  const qStatus = Q_STATUS.map(st => ({ k: st, v: quotes.filter(q => q.status === st).length })).filter(r => r.v);
+  el.innerHTML = `<div class="page" style="max-width:1200px"><div class="page-head"><h1>Métricas</h1><span class="spacer"></span>
+      <div class="seg" role="group" aria-label="Periodo">${Object.entries(RANGES).map(([k, t]) => `<button class="${k === rk ? "on" : ""}" data-r="${k}">${t}</button>`).join("")}</div></div>
+    <div class="tiles">
+      <div class="tile"><small>Ventas</small><b class="mono">${money(sales)}</b><span>${orders.length} ${orders.length === 1 ? "pedido" : "pedidos"}</span></div>
+      <div class="tile"><small>Ticket promedio</small><b class="mono">${orders.length ? money(sales / orders.length) : "—"}</b><span>por pedido</span></div>
+      <div class="tile"><small>Cotizaciones enviadas</small><b>${sent.length}</b><span>${quotes.length} creadas</span></div>
+      <div class="tile"><small>Conversión a pedido</small><b>${pct(conv.length, sent.length)}</b><span>${conv.length} de ${sent.length} enviadas</span></div>
+      <div class="tile"><small>En negociación hoy</small><b class="mono">${money(pipeline)}</b><span>cotizaciones enviadas y aceptadas</span></div>
+      <div class="tile"><small>Contactos nuevos</small><b>${newC}</b><span>sin contar los importados</span></div>
+    </div>
+    <section class="mcard"><h3>Ventas por mes <small class="muted">últimos 12 meses</small></h3>
+      <div class="vbars" role="img" aria-label="Ventas por mes en los últimos 12 meses">${months.map(m => `<div class="vb" data-tip="${esc(m.k)} ${m.y}: ${esc(money(m.v))} · ${m.n} ${m.n === 1 ? "pedido" : "pedidos"}">
+        <span class="vv tabnum">${(m === peak && m.v) || m === months[11] ? esc(money(m.v)) : ""}</span>
+        <span class="vf" style="height:${m.v ? Math.max(2, m.v / mMax * 100) : 0}%"></span><span class="vk">${esc(m.k)}</span></div>`).join("")}</div>
+      <details class="mtable"><summary>Ver tabla</summary><table class="t"><thead><tr><th>Mes</th><th class="num">Pedidos</th><th class="num">Ventas</th></tr></thead>
+        <tbody>${months.map(m => `<tr><td>${esc(m.k)} ${m.y}</td><td class="num">${m.n}</td><td class="num">${money(m.v)}</td></tr>`).join("")}</tbody></table></details></section>
+    <div class="mgrid">
+      <section class="mcard"><h3>Ventas por asesor <small class="muted">${esc(RANGES[rk].toLowerCase())}</small></h3>${hbars(by(orders, o => o.createdByName), money, r => r.n + (r.n === 1 ? " pedido" : " pedidos"))}</section>
+      <section class="mcard"><h3>Productos más vendidos <small class="muted">${esc(RANGES[rk].toLowerCase())}</small></h3>${hbars(prodRows, money, r => r.n + " und")}</section>
+      <section class="mcard"><h3>Embudo hoy <small class="muted">contactos por etapa</small></h3>${hbars(stageRows, v => String(v))}</section>
+      <section class="mcard"><h3>Cotizaciones por estado <small class="muted">${esc(RANGES[rk].toLowerCase())}</small></h3>${hbars(qStatus, v => String(v))}</section>
+    </div></div>`;
+  $$("[data-r]", el).forEach(b => b.onclick = () => { S.mRange = b.dataset.r; renderShell(); });
+  bindTips(el);
+}
+function bindTips(el) {
+  let tip = $("#tip"); if (!tip) { tip = document.createElement("div"); tip.id = "tip"; tip.className = "tip"; document.body.append(tip); }
+  tip.hidden = true;
+  $$("[data-tip]", el).forEach(n => {
+    n.onmousemove = e => { tip.textContent = n.dataset.tip; tip.hidden = false; const w = tip.offsetWidth; tip.style.left = Math.min(innerWidth - w - 8, e.clientX + 12) + "px"; tip.style.top = (e.clientY + 14) + "px"; };
+    n.onmouseleave = () => { tip.hidden = true; };
+  });
+}
+
+// ======================= Exportar Excel =======================
+const dt = ms => ms ? new Date(ms) : "";
+const isoDt = iso => isoRe.test(iso || "") ? new Date(iso + "T12:00:00") : (iso || "");
+function exportWorkbook() {
+  const wb = XLSX.utils.book_new();
+  const add = (name, rows) => { const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "(vacío)": "" }], { cellDates: true });
+    const keys = Object.keys(rows[0] || {}); ws["!cols"] = keys.map(k => ({ wch: Math.min(45, Math.max(10, k.length + 2, ...rows.slice(0, 200).map(r => String(r[k] ?? "").length))) }));
+    XLSX.utils.book_append_sheet(wb, ws, name); };
+  const extraKeys = [...new Set(S.contacts.flatMap(c => Object.keys(c.extra || {})))];
+  add("Contactos", S.contacts.map(c => {
+    const r = { Nombre: c.name || "", "Hotel / empresa": c.company || "", WhatsApp: c.phone || "", Correo: c.email || "", Cargo: c.cargo || "", Ciudad: c.city || "",
+      Segmento: c.segment || "", Tipo: c.type || "", Etapa: c.stage || "", Temperatura: c.temperature || "", Potencial: c.potential || "", Nivel: c.level || "",
+      Responsable: c.owner || "", "Qué busca": c.looking || "", "Producto elegido": c.chosenProduct ? c.chosenProduct.name : "", "Próx. seguimiento": isoDt(c.nextDate),
+      "Qué hacer": c.nextAction || "", Observaciones: c.obs || "", "Total comprado": c.totalPurchased || "", "Última compra": dt(c.lastPurchaseAt),
+      "Último mensaje": c.lastMessage || "", "Último mensaje del cliente": dt(c.lastInboundAt), "Creado": dt(c.createdAt), "Modificado": dt(c.updatedAt), "Modificado por": c.updatedBy || "", "ID": c.id };
+    extraKeys.forEach(k => r["Excel: " + k] = (c.extra || {})[k] ?? "");
+    return r; }));
+  add("Cotizaciones", S.quotes.map(q => ({ "Número": q.number, Cliente: q.contactName, Estado: q.status, Subtotal: q.subtotal || 0, "Descuento %": q.discount || 0, Total: q.total || 0,
+    "Válida hasta": isoDt(q.validUntil), Creada: dt(q.createdAt), Enviada: dt(q.sentAt), "Creada por": q.createdByName || "", Pedido: q.orderNumber || "", Notas: q.notes || "" })));
+  add("Productos cotizados", S.quotes.flatMap(q => (q.items || []).map(i => ({ "Cotización": q.number, Cliente: q.contactName, Estado: q.status, Producto: i.name, Cantidad: i.qty, "Precio unitario": i.price, Subtotal: i.qty * i.price }))));
+  add("Pedidos", S.orders.map(o => ({ "Número": o.number, Cliente: o.contactName, Estado: o.status, Pago: o.payment || "", Total: o.total || 0, "Cotización": o.quoteNumber || "",
+    Creado: dt(o.createdAt), "Creado por": o.createdByName || "", Notas: o.notes || "" })));
+  add("Productos", S.products.map(p => ({ Producto: p.name, "Categoría": p.category || "", Referencia: p.sku || "", "Descripción": p.desc || "", "Precio detal": p.priceRetail || 0,
+    "Precio por mayor": p.priceWholesale || "", "Por mayor desde": p.minWholesale || "", Estado: p.active === false ? "Inactivo" : "Activo" })));
+  XLSX.writeFile(wb, `CasaDorada_CRM_${todayIso()}.xlsx`);
+  try { localStorage.setItem("crm-last-export", String(Date.now())); } catch { }
+}
+function viewExportar(el) {
+  let last = null; try { last = Number(localStorage.getItem("crm-last-export")) || null; } catch { }
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Exportar Excel</h1></div>
+    <div class="card" style="padding:22px;display:grid;gap:12px;max-width:720px">
+      <p style="margin:0">Descarga una copia de todo el CRM en un archivo de Excel con estas hojas: <b>Contactos</b> (${S.contacts.length}), <b>Cotizaciones</b> (${S.quotes.length}), <b>Productos cotizados</b>, <b>Pedidos</b> (${S.orders.length}) y <b>Productos</b> (${S.products.length}).</p>
+      <p class="muted" style="margin:0">Guárdala en tu Google Drive como copia de seguridad. Te recomiendo hacerlo cada semana. Las conversaciones de WhatsApp y las notas no se incluyen.</p>
+      <p class="muted" style="margin:0">${last ? "Última copia desde este dispositivo: " + fmtDT(last) + (Date.now() - last > 7 * DAY ? " — ya pasó más de una semana." : ".") : "Todavía no has descargado una copia desde este dispositivo."}</p>
+      ${isAdmin() ? '<button class="btn primary" id="doExport" style="justify-self:start">Descargar Excel</button>' : '<p class="muted" style="margin:0">Solo la administradora puede exportar.</p>'}</div></div>`;
+  if ($("#doExport")) $("#doExport").onclick = () => {
+    if (typeof XLSX === "undefined") return info("No se pudo cargar el generador de Excel. Revisa tu conexión y recarga.");
+    try { exportWorkbook(); toast("Excel descargado"); renderShell(); } catch (e) { toast("No se pudo exportar: " + errMsg(e)); }
+  };
 }
 
 // ======================= Pedidos =======================
