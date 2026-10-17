@@ -5,5 +5,5 @@
     "headers": [{ "source": "**/*.@(js|css|html)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }]
   },
   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
-  "functions": [{ "source": "functions", "runtime": "nodejs20" }]
+  "functions": [{ "source": "functions", "runtime": "nodejs22", "predeploy": ["npm --prefix \"$RESOURCE_DIR\" install --omit=dev"] }]
 }
