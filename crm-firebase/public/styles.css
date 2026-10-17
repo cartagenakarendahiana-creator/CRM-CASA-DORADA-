@@ -682,7 +682,7 @@ details.how summary::-webkit-details-marker{display:none}
 @media (max-width:860px){.chat{grid-template-columns:1fr}}
 @media (max-width:860px){.hoy:has(.today.has-sel) .hoy-head{display:none}}
 
-/* Marca "Hilo de Oro" */
+/* Marca "House Chat" */
 .brand{gap:10px}
 .brand-logo{width:34px;height:34px;border-radius:9px;flex:none;box-shadow:0 2px 10px rgba(230,187,90,.18)}
 .brand-logo.sm{width:26px;height:26px;border-radius:7px;box-shadow:none}
