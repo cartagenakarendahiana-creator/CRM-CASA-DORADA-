@@ -66,6 +66,7 @@ const ICONS = {
   agenda: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   chev: '<path d="M9 6l6 6-6 6"/>',
+  send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
@@ -458,7 +459,7 @@ function renderHoyDetail(el, it) {
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="doneTask">Ya terminó</button>
         <button class="btn" id="snooze">Recordar en…</button><button class="btn" id="openContact">Ver ficha</button></div>
     </div>
-    <section><p class="eyebrow" style="display:flex;justify-content:space-between">Lo último de la conversación <span class="muted">${icon("bell")}</span></p><div class="lastmsgs">${S.hoyMsgsFor === c.id && S.hoyMsgs.length ? S.hoyMsgs.map(bubble).join("") : '<span class="muted">Sin mensajes registrados.</span>'}</div></section>`;
+    <section><p class="eyebrow" style="display:flex;justify-content:space-between">Lo último de la conversación <span class="muted">${icon("bell")}</span></p><div class="lastmsgs">${S.hoyMsgsFor === c.id && S.hoyMsgs.length ? chatHtml(S.hoyMsgs) : '<span class="muted">Sin mensajes registrados.</span>'}</div></section>`;
   $("#back").onclick = () => { S.hoyOpen = false; renderShell(); };
   $("#openConv").onclick = () => go("conv", c.id);
   $("#openContact").onclick = () => openContact(c.id);
@@ -473,10 +474,34 @@ function renderHoyDetail(el, it) {
   $("#doneTask").onclick = async () => { await fb.update("contacts/" + c.id, { ["done." + task.key]: Date.now(), ...stamp() }); toast("Listo"); };
   $("#snooze").onclick = () => snooze(c);
 }
-function bubble(m) {
-  const who = m.dir === "in" ? "Cliente" : m.dir === "note" ? "Nota" : (m.byName || "Equipo");
-  return `<div class="bubble ${m.dir === "out" ? "out" : m.dir === "note" ? "note" : ""}"><small>${esc(who)} · ${fmtDT(m.ts)}${m.status === "failed" ? " · ⚠ no se entregó" : m.status === "read" ? " · leído" : ""}</small>${esc(m.text)}</div>`;
+// Burbujas estilo WhatsApp: hora y palomitas dentro, cola en el primer mensaje de cada racha
+const TICK1 = '<svg viewBox="0 0 16 11" class="tk"><path d="M1 5.5l3.5 3.5L11 2.5"/></svg>';
+const TICK2 = '<svg viewBox="0 0 18 11" class="tk"><path d="M1 5.5l3.5 3.5L11 2.5M7.5 8.5l.6.6L14.6 2.5"/></svg>';
+function ticks(st) { return st === "read" ? `<span class="tks read" title="Leído">${TICK2}</span>` : st === "delivered" ? `<span class="tks" title="Entregado">${TICK2}</span>` : st === "failed" ? "" : `<span class="tks" title="Enviado">${TICK1}</span>`; }
+function bubble(m, tail = true, withDate = true) {
+  const t = `<span class="bt">${m.ts ? (withDate ? fmtDT(m.ts) : fmtTime(m.ts)) : ""}${m.dir === "out" ? ticks(m.status) : ""}</span>`;
+  if (m.dir === "note") return `<div class="bubble note"><small class="bw">Nota interna${m.byName ? " · " + esc(m.byName) : ""}</small><span class="btx">${esc(m.text)}</span>${t}</div>`;
+  const out = m.dir === "out";
+  const who = out ? `<small class="bw${m.ai || isAiName(m.byName) ? " ai" : ""}">${esc(m.byName || "Equipo")}</small>` : "";
+  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}">${tail ? who : ""}<span class="btx">${esc(m.text)}</span>${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
 }
+function dayLabel(ms) {
+  const d = new Date(ms), t = new Date(), y = new Date(Date.now() - DAY), same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(d, t)) return "Hoy";
+  if (same(d, y)) return "Ayer";
+  return d.toLocaleDateString("es-CO", { day: "numeric", month: "long", ...(d.getFullYear() !== t.getFullYear() ? { year: "numeric" } : {}) });
+}
+function chatHtml(list) {
+  let out = "", day = "", prev = null;
+  for (const m of list) {
+    const dl = dayLabel(m.ts || 0);
+    if (dl !== day) { out += `<div class="daychip">${esc(dl)}</div>`; day = dl; prev = null; }
+    const tail = !prev || prev.dir !== m.dir || (m.dir === "out" && prev.byName !== m.byName);
+    out += bubble(m, tail, false); prev = m;
+  }
+  return out;
+}
+const avColor = s => { let h = 0; for (const ch of String(s || "")) h = (h * 31 + ch.charCodeAt(0)) % 360; return `--av:hsl(${h} 45% 52%)`; };
 async function editLooking(c) {
   const v = await promptText("Qué busca " + contactName(c), c.looking || "", "Ej: sábana para cama de 1.40");
   if (v === null) return;
@@ -575,23 +600,23 @@ function viewConv(el) {
     <div class="chat-list"><div class="search"><input class="in" id="convQ" placeholder="Buscar conversación" value="${esc(S.convQ || "")}">
       <select class="in" id="convF"><option value="todas">Todas</option><option value="sin" ${S.convFilter === "sin" ? "selected" : ""}>Sin responder</option><option value="mias" ${S.convFilter === "mias" ? "selected" : ""}>Mías</option></select></div>
       ${list.map(x => { const last = Math.max(x.lastInboundAt || 0, x.lastOutboundAt || 0); return `<button class="conv ${c && x.id === c.id ? "on" : ""}" data-c="${x.id}">
-        <div class="avatar">${esc((contactName(x) || "?")[0].toUpperCase())}</div><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="muted">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
-        <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? (isAiName(x.lastOutboundBy) ? "IA: " : "Tú: ") : ""}${esc(x.lastMessage || "")}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
+        <div class="avatar c" style="${avColor(contactName(x))}">${esc((contactName(x) || "?")[0].toUpperCase())}</div><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="tm ${x.unread ? "new" : ""}">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
+        <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? (isAiName(x.lastOutboundBy) ? "✨ " : ticks("sent")) : ""}${esc(x.lastMessage || "")}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
         || `<div class="empty"><p>${WHATSAPP_ENABLED ? "Aún no hay conversaciones. Cuando un cliente escriba a tu WhatsApp aparecerá aquí." : "Aquí verás las conversaciones cuando conectes WhatsApp. Mientras tanto, los mensajes que registres desde Hoy o Contactos aparecen aquí."}</p></div>`}
     </div>
     <div class="chat-pane">${c ? `
-      <div class="chat-top"><button class="btn sm back" id="cback">←</button><div class="avatar">${esc(contactName(c)[0].toUpperCase())}</div>
-        <div style="flex:1;min-width:0"><b>${esc(contactName(c))}</b><div class="muted tabnum" style="font-size:13px">${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
+      <div class="chat-top"><button class="btn sm back" id="cback">←</button><div class="avatar c" style="${avColor(contactName(c))}">${esc(contactName(c)[0].toUpperCase())}</div>
+        <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
         <span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span></div>
       ${aiBar(c)}
-      <div class="msgs" id="msgs">${S.msgs.map(bubble).join("") || '<div class="empty">Sin mensajes todavía.</div>'}</div>
+      <div class="msgs" id="msgs">${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
       <div class="composer">
-        ${WHATSAPP_ENABLED && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje"></textarea><button class="btn primary" id="csend">Enviar</button></div>` : ""}
+        ${WHATSAPP_ENABLED && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
         ${WHATSAPP_ENABLED && !w.open ? `<div class="row"><select class="in" id="ctpl">${waTpls.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("") || "<option value=''>No hay plantillas aprobadas</option>"}</select><button class="btn primary" id="ctplsend" ${waTpls.length ? "" : "disabled"}>Enviar plantilla</button></div>
           <small class="muted">Pasaron más de 24 h desde su último mensaje: WhatsApp solo permite plantillas aprobadas por Meta.</small>` : ""}
         ${!WHATSAPP_ENABLED ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe el mensaje y ábrelo en WhatsApp"></textarea>
-          ${waLink(c.phone) ? `<button class="btn primary" id="cwa">Abrir en WhatsApp</button>` : ""}</div>` : ""}
-        <div class="row"><input class="in" id="cnote" placeholder="Agregar nota interna (el cliente no la ve)"><button class="btn" id="cnotebtn">Nota</button></div>
+          ${waLink(c.phone) ? `<button class="send" id="cwa" aria-label="Abrir en WhatsApp" title="Abrir en WhatsApp">${icon("send")}</button>` : ""}</div>` : ""}
+        <div class="row note-row"><input class="in" id="cnote" placeholder="Nota interna: el cliente no la ve"><button class="btn sm" id="cnotebtn">Guardar nota</button></div>
       </div>` : `<div class="empty" style="margin:auto">Elige una conversación.</div>`}</div>
     ${c ? `<aside class="chat-info">${contactSummary(c)}</aside>` : ""}</div>`;
   $("#convQ").oninput = e => { S.convQ = e.target.value; renderShell(); };
@@ -792,7 +817,7 @@ function openContact(id) {
     </div>
     <div class="mf">${id && isAdmin() ? '<button class="btn danger" type="button" id="cdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="cc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
   let unsub = null;
-  if (id) unsub = fb.watch(`contacts/${id}/messages`, list => { const h = $("#chist"); if (h) h.innerHTML = list.map(bubble).join("") || '<span class="muted">Sin mensajes ni notas.</span>'; }, { orderBy: ["ts", "desc"], limit: 50 });
+  if (id) unsub = fb.watch(`contacts/${id}/messages`, list => { const h = $("#chist"); if (h) h.innerHTML = list.map(m => bubble(m)).join("") || '<span class="muted">Sin mensajes ni notas.</span>'; }, { orderBy: ["ts", "desc"], limit: 50 });
   const close = () => { unsub && unsub(); m.close(); };
   m.onclose = () => { unsub && unsub(); };
   $("#cx").onclick = $("#cc").onclick = close;
