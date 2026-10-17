@@ -153,9 +153,10 @@ if (!fb.configured) {
   });
 }
 
+const APP_NAME = "Hilo de Oro";
 function renderLogin(err) {
   root.innerHTML = `<div class="login"><form class="card" id="lf">
-    <div class="brand"><div class="brand-mark">CD</div><div><b>${esc(EMPRESA)}</b><small>CRM</small></div></div>
+    <div class="brand login-brand"><img class="brand-logo" src="logo.svg" alt=""><div><b>${APP_NAME}</b><small>CRM · ${esc(EMPRESA)}</small></div></div>
     <div><label class="lb" for="le">Correo</label><input class="in" id="le" type="email" autocomplete="username" required></div>
     <div><label class="lb" for="lp">Contraseña</label><input class="in" id="lp" type="password" autocomplete="current-password" required></div>
     <p id="lerr" style="margin:0;color:var(--red)">${esc(err || "")}</p>
@@ -214,7 +215,7 @@ function renderShell() {
   root.innerHTML = `<div class="app">
     <aside class="side" id="side">
       <div class="side-top">
-        <div class="brand"><div class="brand-mark">CD</div><div><b>${esc(EMPRESA)}</b><small>CRM</small></div></div>
+        <div class="brand"><img class="brand-logo" src="logo.svg" alt=""><div><b>${APP_NAME}</b><small>CRM · ${esc(EMPRESA)}</small></div></div>
         <label class="side-search">${icon("buscar")}<input id="gsearch" placeholder="Buscar contacto" value="${esc(S.search)}" autocomplete="off"></label>
       </div>
       <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => k === S.view) ? "" : items.map(([k, t]) =>
@@ -224,7 +225,7 @@ function renderShell() {
         <button class="iconbtn" id="logout" title="Salir" aria-label="Salir">${icon("salir")}</button></div>
     </aside>
     <main class="main">
-      <div class="topbar-mobile"><button class="iconbtn" id="menuBtn" aria-label="Menú">${icon("menu")}</button><b>${esc(EMPRESA)}</b></div>
+      <div class="topbar-mobile"><button class="iconbtn" id="menuBtn" aria-label="Menú">${icon("menu")}</button><img class="brand-logo sm" src="logo.svg" alt=""><b class="brand-name">${APP_NAME}</b></div>
       ${!WHATSAPP_ENABLED ? `<div class="banner"><span>WhatsApp todavía no está conectado: los mensajes se abren en tu WhatsApp y los registras aquí.</span></div>` : ""}
       <div class="view" id="view"></div>
     </main></div>`;

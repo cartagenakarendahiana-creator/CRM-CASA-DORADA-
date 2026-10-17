@@ -681,3 +681,17 @@ details.how summary::-webkit-details-marker{display:none}
 @media (max-width:1100px){.chat{grid-template-columns:300px 1fr}.chat-info{display:none}}
 @media (max-width:860px){.chat{grid-template-columns:1fr}}
 @media (max-width:860px){.hoy:has(.today.has-sel) .hoy-head{display:none}}
+
+/* Marca "Hilo de Oro" */
+.brand{gap:10px}
+.brand-logo{width:34px;height:34px;border-radius:9px;flex:none;box-shadow:0 2px 10px rgba(230,187,90,.18)}
+.brand-logo.sm{width:26px;height:26px;border-radius:7px;box-shadow:none}
+.brand b,.brand-name{font-family:"Playfair Display",Georgia,"Times New Roman",serif;font-weight:700;letter-spacing:.005em;font-size:18px;line-height:1.1}
+.side .brand b{background:linear-gradient(135deg,#fbe6a6,#e6bb5a 55%,#c9963a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand small{font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-top:2px;display:block}
+.topbar-mobile .brand-name{color:#f1d488;font-size:17px}
+.login-brand{flex-direction:column;text-align:center;gap:12px;margin-bottom:6px}
+.login-brand .brand-logo{width:72px;height:72px;border-radius:18px;box-shadow:0 10px 30px rgba(14,24,36,.35)}
+.login-brand b{font-size:28px;color:var(--ink)}
+.login-brand small{color:var(--muted);font-size:11px}
+.login .btn{justify-content:center;padding:9px 14px;font-size:14px}
