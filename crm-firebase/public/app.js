@@ -385,6 +385,12 @@ function allTasks() {
 const pendingCount = () => S.contacts.reduce((n, c) => n + (tasksFor(c).length ? 1 : 0), 0);
 
 // ======================= Vista: Hoy =======================
+const KIND = {
+  humano: { label: "Atender", cls: "k-red" }, responder: { label: "Responder", cls: "k-blue" }, pedido: { label: "Pedido", cls: "k-green" },
+  cerrar: { label: "Cerrar", cls: "k-green" }, cotizacion: { label: "Cotización", cls: "k-orange" }, reponer: { label: "Reposición", cls: "k-purple" },
+  seguimiento: { label: "Seguimiento", cls: "k-gray" },
+};
+const shortLeft = ms => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? m + " min" : Math.round(m / 60) + " h"; };
 function viewHoy(el) {
   const items = allTasks(), t0 = new Date(); t0.setHours(0, 0, 0, 0); const since = t0.getTime();
   const convToday = S.contacts.filter(c => (c.lastInboundAt || 0) >= since || (c.lastOutboundAt || 0) >= since).length;
@@ -395,29 +401,41 @@ function viewHoy(el) {
   const closed = ordersToday.reduce((s, o) => s + (o.total || 0), 0);
   if (!S.sel || !items.some(i => i.c.id === S.sel)) S.sel = items[0] ? items[0].c.id : null;
   const openItems = items.filter(i => i.win.open), closedItems = items.filter(i => !i.win.open);
-  const row = i => `<button class="item ${i.c.id === S.sel ? "on" : ""}" data-sel="${i.c.id}">
-      <span class="dot ${i.win.open || i.task.rank <= 1 ? "hot" : ""}"></span>
-      <div class="row1"><span class="nm">${esc(contactName(i.c))}</span>
-        <span class="when">${i.win.open ? "cierra " + whenLabel(i.win.closesAt) : i.c.lastInboundAt ? icon("lock") + " cerró hace " + ago(i.win.closesAt) : esc(i.c.company || "")}</span></div>
-      <div class="what">${monoNums(esc(i.task.title))}</div><div class="sub">${monoNums(esc(i.task.sub))}${i.more ? ` · +${i.more} más` : ""}</div></button>`;
-  el.innerHTML = `<div class="page" style="max-width:none;padding-bottom:0">
-    <div class="page-head"><h1>Hoy</h1><span class="sub">${t0.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })} · <small>Actualizado ${upd}</small></span><span class="spacer"></span>
-      <div class="kpis"><div><b>${convToday}</b>conversaciones hoy</div><div><b>${mine}</b>tú</div><div><b>${team}</b>tu equipo</div>
-        <div><span class="dot" style="color:var(--green);margin-right:6px"></span><b class="mono">${money(closed)}</b>cerrado hoy · ${ordersToday.length} ${ordersToday.length === 1 ? "venta" : "ventas"}</div></div></div></div>
+  const row = i => { const k = KIND[i.task.kind] || KIND.seguimiento, left = i.win.open ? i.win.closesAt - Date.now() : 0;
+    return `<button class="hrow ${i.c.id === S.sel ? "on" : ""}" data-sel="${i.c.id}">
+      <span class="avatar c" style="${avColor(contactName(i.c))}">${esc((contactName(i.c) || "?")[0].toUpperCase())}</span>
+      <span class="hr-main">
+        <span class="hr-top"><span class="hr-name">${esc(contactName(i.c))}</span>
+          <span class="hr-time ${i.win.open && left < 3 * 3600e3 ? "urgent" : ""}">${i.win.open ? "cierra en " + shortLeft(left) : i.c.lastInboundAt ? "hace " + ago(i.c.lastInboundAt) : ""}</span></span>
+        ${i.c.company && i.c.name ? `<span class="hr-co">${esc(i.c.company)}</span>` : ""}
+        <span class="hr-task"><span class="tag ${k.cls}">${k.label}</span><span class="hr-title">${i.task.kind === "responder" && i.c.lastMessage ? "“" + esc(i.c.lastMessage) + "”" : monoNums(esc(i.task.title))}</span>${i.more ? `<span class="hr-more">+${i.more}</span>` : ""}</span>
+      </span></button>`; };
+  const fmtDay = t0.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
+  el.innerHTML = `<div class="hoy">
+    <header class="hoy-head">
+      <div><h1>Hoy</h1><p>${fmtDay.charAt(0).toUpperCase() + fmtDay.slice(1)} · actualizado ${upd}</p></div>
+      <div class="stats">
+        <div class="stat"><span>Conversaciones hoy</span><b>${convToday}</b></div>
+        <div class="stat"><span>Respondidas por ti</span><b>${mine}</b></div>
+        <div class="stat"><span>Por tu equipo</span><b>${team}</b></div>
+        <div class="stat money"><span>Vendido hoy</span><b>${money(closed)}</b><small>${ordersToday.length} ${ordersToday.length === 1 ? "venta" : "ventas"}</small></div>
+      </div></header>
     <div class="today ${S.sel && innerWidth <= 860 && S.hoyOpen ? "has-sel" : ""}">
       <div class="today-list">
-        <div class="list-head"><h2>Necesita tu intervención</h2><span class="badge">${items.length}</span></div>
-        <details class="how"><summary>Cómo se ordena</summary><ol>
-          <li>Primero los clientes con la ventana de WhatsApp abierta, el que cierra más pronto arriba.</li>
-          <li>Luego los que tienen la ventana cerrada (solo se les puede escribir con una plantilla aprobada).</li>
-          <li>En cada uno, la acción más importante: responder, convertir una cotización aceptada, cerrar con el producto elegido, preguntar por una cotización sin respuesta o el seguimiento programado.</li></ol></details>
+        <div class="hl-head"><b>Pendientes</b><span class="hl-count">${items.length}</span><span class="spacer"></span>
+          <details class="how"><summary title="Cómo se ordena">?</summary><div class="how-pop">
+            <b>Cómo se ordena</b><ol>
+            <li>Primero los chats con la ventana de WhatsApp abierta; arriba el que cierra más pronto.</li>
+            <li>Luego los que tienen la ventana cerrada (solo plantilla aprobada).</li>
+            <li>En cada uno, la acción más importante: responder, convertir una cotización, cerrar, seguir una cotización, reponer o el seguimiento programado.</li></ol></div></details></div>
+        ${openItems.length ? `<div class="hl-group"><span class="dot live"></span>Ventana abierta<span class="n">${openItems.length}</span></div>` : ""}
         ${openItems.map(row).join("")}
-        ${closedItems.length ? `<div class="group">${icon("lock")}<div><b>Ventana de WhatsApp cerrada</b>Ya no se les puede escribir libre: solo con una plantilla.</div><span class="spacer"></span><span class="badge">${closedItems.length}</span></div>` : ""}
+        ${closedItems.length ? `<div class="hl-group">${icon("lock")}Sin ventana · solo plantilla<span class="n">${closedItems.length}</span></div>` : ""}
         ${closedItems.map(row).join("")}
         ${!items.length ? `<div class="empty"><p><b>Todo al día.</b></p><p>Aquí aparecen los clientes que te escriben, las cotizaciones por cerrar y los seguimientos programados.</p></div>` : ""}
       </div>
       <div class="detail" id="detail"></div>
-    </div>`;
+    </div></div>`;
   $$("[data-sel]", el).forEach(b => b.onclick = () => { S.sel = b.dataset.sel; S.hoyOpen = true; renderShell(); });
   const it = items.find(i => i.c.id === S.sel);
   renderHoyDetail($("#detail"), it);
@@ -435,31 +453,40 @@ function renderHoyDetail(el, it) {
   const tpl = tplFor(task.kind) || tplFor("seguimiento");
   const msg = fillTpl(tpl.text, c, task.q ? { cotizacion: task.q.number, total: money(task.q.total) }
     : task.ri ? { ultimo: task.ri.items || "tu último pedido", dias: String(Math.round((Date.now() - task.ri.last) / DAY)) } : {});
-  const winTxt = win.open ? `La ventana de 24 h cierra ${whenLabel(win.closesAt)}` : win.never ? "Todavía no te ha escrito por WhatsApp: el primer mensaje debe ser una plantilla aprobada"
-    : `La ventana se cerró hace ${ago(win.closesAt)}: solo puedes escribirle con una plantilla aprobada`;
+  const winTxt = win.open ? `Ventana abierta · cierra ${whenLabel(win.closesAt)}` : win.never ? "Aún no te escribe por WhatsApp · primer mensaje con plantilla"
+    : `Ventana cerrada hace ${ago(win.closesAt)} · solo plantilla`;
+  const k = KIND[task.kind] || KIND.seguimiento;
+  const since = c.sourceSheet ? (c.type === "Cliente" ? "Cliente" : "Prospecto") + " del Excel" : (c.type === "Cliente" ? "Cliente" : "Contacto") + " desde " + fmtDMY(c.createdAt || Date.now());
   el.innerHTML = `<button class="btn sm back" id="back">← Volver</button>
-    <div class="detail-head"><div><h2>${esc(contactName(c))}</h2>
-      <div class="muted tabnum">${esc(phoneId(c.phone) || c.phone || "sin teléfono")}${c.company && c.name ? " · " + esc(c.company) : ""} · ${c.sourceSheet ? (c.type === "Cliente" ? "cliente" : "prospecto") + " del Excel" : (c.type === "Cliente" ? "cliente" : "contacto") + " desde " + fmtDMY(c.createdAt || Date.now())}</div></div>
-      <button class="btn primary" id="openConv">Abrir conversación</button></div>
-    <section><p class="eyebrow">Qué busca</p><p class="big inline-edit" id="looking" title="Clic para editar">${esc(c.looking || "Sin registrar — clic para escribir qué busca")}</p></section>
-    <section><p class="eyebrow">Producto elegido</p><p class="big">${c.chosenProduct ? `${esc(c.chosenProduct.name)} ${money(c.chosenProduct.price)}${c.chosenProduct.desc ? ` <span class="muted">(${esc(c.chosenProduct.desc)})</span>` : ""}` : '<span class="muted">Ninguno todavía</span>'}
-      <button class="btn sm" id="chooseProd" style="margin-left:8px">${c.chosenProduct ? "Cambiar" : "Elegir producto"}</button></p></section>
-    <div class="closebox"><p class="eyebrow">Para cerrar la venta</p>
-      <span class="pill ${win.open ? "amber" : "red"}"><span class="dot"></span>${esc(winTxt)}</span>
-      <div class="step"><span class="n">1</span><div><b>${monoNums(esc(task.title))}</b><div class="muted">${esc(task.hint)}</div></div></div>
-      <div class="suggest"><span class="muted" style="font-size:14px">Mensaje sugerido · ${esc(tpl.name)}</span><p id="sugg">${esc(msg)}</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn" id="copyMsg">Copiar mensaje</button>
-          ${WHATSAPP_ENABLED && win.open ? `<button class="btn primary" id="sendMsg">Enviar por WhatsApp</button>` : ""}
-          ${!WHATSAPP_ENABLED && waLink(c.phone) ? `<a class="btn" href="${waLink(c.phone, msg)}" target="_blank" rel="noopener" id="waOpen">Abrir en WhatsApp</a>` : ""}
-          ${task.kind === "pedido" ? `<button class="btn primary" id="toOrder">Crear pedido</button>` : ""}
-          ${task.handoff ? `<button class="btn" id="aiBack">Devolver a ${esc(aiName())}</button>` : ""}
-          ${task.q ? `<button class="btn" id="openQuote">Ver ${esc(task.q.number)}</button>` : ""}
-        </div></div>
-      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="doneTask">Ya terminó</button>
-        <button class="btn" id="snooze">Recordar en…</button><button class="btn" id="openContact">Ver ficha</button></div>
+    <div class="hd-head">
+      <span class="avatar c lg" style="${avColor(contactName(c))}">${esc((contactName(c) || "?")[0].toUpperCase())}</span>
+      <div class="hd-id"><h2>${esc(contactName(c))}</h2>
+        <div class="hd-meta"><span class="mono">${esc(phoneId(c.phone) || c.phone || "sin teléfono")}</span>${c.company && c.name ? `<span>${esc(c.company)}</span>` : ""}<span>${esc(since)}</span>${c.stage ? `<span class="tag k-stage">${esc(c.stage)}</span>` : ""}</div></div>
+      <div class="hd-actions"><button class="btn" id="openContact">Ver ficha</button><button class="btn primary" id="openConv">${icon("conv")}Abrir conversación</button></div>
     </div>
-    <section><p class="eyebrow" style="display:flex;justify-content:space-between">Lo último de la conversación <span class="muted">${icon("bell")}</span></p><div class="lastmsgs">${S.hoyMsgsFor === c.id && S.hoyMsgs.length ? chatHtml(S.hoyMsgs) : '<span class="muted">Sin mensajes registrados.</span>'}</div></section>`;
+    <div class="hd-fields">
+      <div class="field"><span class="fl">Qué busca</span><div class="fv inline-edit ${c.looking ? "" : "empty-v"}" id="looking" title="Clic para editar">${esc(c.looking || "Sin registrar · clic para escribir")}</div></div>
+      <div class="field"><span class="fl">Producto elegido</span><div class="fv">${c.chosenProduct ? `${esc(c.chosenProduct.name)} <b class="mono">${money(c.chosenProduct.price)}</b>` : '<span class="empty-v">Ninguno todavía</span>'}
+        <button class="link" id="chooseProd">${c.chosenProduct ? "Cambiar" : "Elegir"}</button></div></div>
+    </div>
+    <section class="next">
+      <div class="next-head"><span class="fl">Siguiente paso</span><span class="win ${win.open ? "open" : "closed"}">${win.open ? '<span class="dot live"></span>' : icon("lock")}${esc(winTxt)}</span></div>
+      <div class="next-task"><span class="tag ${k.cls}">${k.label}</span><div><b>${monoNums(esc(task.title))}</b><p>${esc(task.hint)}</p></div></div>
+      <div class="sugg"><span class="fl">Mensaje sugerido · ${esc(tpl.name)}</span>
+        <div class="sugg-chat"><div class="bubble out tail"><span class="btx" id="sugg">${esc(msg)}</span></div></div></div>
+      <div class="next-actions">
+        ${WHATSAPP_ENABLED && win.open ? `<button class="btn primary" id="sendMsg">${icon("send")}Enviar por WhatsApp</button>` : ""}
+        ${!WHATSAPP_ENABLED && waLink(c.phone) ? `<a class="btn wa" href="${waLink(c.phone, msg)}" target="_blank" rel="noopener" id="waOpen">${icon("send")}Abrir en WhatsApp</a>` : ""}
+        <button class="btn" id="copyMsg">Copiar</button>
+        ${task.kind === "pedido" ? `<button class="btn primary" id="toOrder">Crear pedido</button>` : ""}
+        ${task.handoff ? `<button class="btn" id="aiBack">Devolver a ${esc(aiName())}</button>` : ""}
+        ${task.q ? `<button class="btn" id="openQuote">Ver ${esc(task.q.number)}</button>` : ""}
+        <span class="spacer"></span>
+        <button class="btn quiet" id="snooze">Recordar en…</button><button class="btn ok" id="doneTask">✓ Ya terminó</button>
+      </div>
+    </section>
+    <section class="last"><span class="fl">Lo último de la conversación</span>
+      <div class="lastmsgs">${S.hoyMsgsFor === c.id && S.hoyMsgs.length ? chatHtml(S.hoyMsgs) : '<div class="daychip">Sin mensajes registrados</div>'}</div></section>`;
   $("#back").onclick = () => { S.hoyOpen = false; renderShell(); };
   $("#openConv").onclick = () => go("conv", c.id);
   $("#openContact").onclick = () => openContact(c.id);
