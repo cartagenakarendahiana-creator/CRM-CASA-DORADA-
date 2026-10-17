@@ -153,7 +153,7 @@ if (!fb.configured) {
   });
 }
 
-const APP_NAME = "Hilo de Oro";
+const APP_NAME = "House Chat";
 function renderLogin(err) {
   root.innerHTML = `<div class="login"><form class="card" id="lf">
     <div class="brand login-brand"><img class="brand-logo" src="logo.svg" alt=""><div><b>${APP_NAME}</b><small>CRM · ${esc(EMPRESA)}</small></div></div>
