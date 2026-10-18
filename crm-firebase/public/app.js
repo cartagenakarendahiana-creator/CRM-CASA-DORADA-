@@ -220,8 +220,8 @@ function renderShell() {
       </div>
       <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => k === S.view) ? "" : items.map(([k, t]) =>
         `<button data-go="${k}" class="${S.view === k ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
-      <div class="side-user"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
-        <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div>
+      <div class="side-user"><button class="acc-btn" id="myAcc" title="Mi cuenta: cambiar contraseña"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
+        <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div></button>
         <button class="iconbtn" id="logout" title="Salir" aria-label="Salir">${icon("salir")}</button></div>
     </aside>
     <main class="main">
@@ -231,6 +231,7 @@ function renderShell() {
     </main></div>`;
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
   $("#logout").onclick = () => fb.logout();
+  $("#myAcc").onclick = () => { $("#side").classList.remove("open"); openAccount(); };
   $$("[data-grp]").forEach(b => b.onclick = () => { const k = "crm-nav-" + b.dataset.grp; try { localStorage.setItem(k, navClosed(b.dataset.grp) ? "0" : "1"); } catch { } renderShell(); });
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
@@ -1282,6 +1283,43 @@ function viewEquipo(el) {
   if ($("#nu")) $("#nu").onclick = () => openUser(null);
   if (isAdmin()) $$("tbody tr", el).forEach(tr => tr.onclick = () => openUser(tr.dataset.id));
 }
+// Mi cuenta: cambiar la propia contraseña
+const AUTH_ERR = { "auth/wrong-password": "La contraseña actual no es correcta.", "auth/invalid-credential": "La contraseña actual no es correcta.",
+  "auth/weak-password": "La contraseña nueva es muy débil: usa al menos 6 caracteres.", "auth/too-many-requests": "Demasiados intentos. Espera unos minutos y vuelve a intentar.",
+  "auth/requires-recent-login": "Por seguridad, sal y vuelve a entrar, y luego cambia la contraseña.", "auth/network-request-failed": "Sin conexión a internet." };
+function openAccount() {
+  const m = $("#modal");
+  m.innerHTML = `<form id="af"><div class="mh"><h2>Mi cuenta</h2><button class="iconbtn" type="button" id="ax" aria-label="Cerrar">✕</button></div>
+    <div class="mb">
+      <div class="acc-card"><div class="avatar lg c" style="${avColor(S.me.name)}">${esc((S.me.name || "?")[0].toUpperCase())}</div>
+        <div><b>${esc(S.me.name || "")}</b><div class="muted">${esc(S.user.email)} · ${S.me.role === "admin" ? "Administradora" : "Asesor"}</div></div></div>
+      <fieldset class="fs"><legend>Cambiar contraseña</legend><div class="grid2 pw-grid">
+        <div class="full"><label class="lb" for="apc">Contraseña actual</label><input class="in" id="apc" type="password" autocomplete="current-password" required></div>
+        <div><label class="lb" for="apn">Contraseña nueva</label><input class="in" id="apn" type="password" autocomplete="new-password" minlength="6" required placeholder="mínimo 6 caracteres"></div>
+        <div><label class="lb" for="apr">Repite la contraseña nueva</label><input class="in" id="apr" type="password" autocomplete="new-password" minlength="6" required></div>
+      </div>
+      <label class="show-pw"><input type="checkbox" id="aps"> Mostrar contraseñas</label>
+      <p id="aerr" class="form-err" role="alert"></p></fieldset>
+    </div>
+    <div class="mf"><button class="btn" type="button" id="ac">Cancelar</button><button class="btn primary" type="submit" id="asave">Cambiar contraseña</button></div></form>`;
+  $("#ax").onclick = $("#ac").onclick = () => m.close();
+  $("#aps").onchange = e => ["#apc", "#apn", "#apr"].forEach(q => $(q).type = e.target.checked ? "text" : "password");
+  $("#af").onsubmit = async e => {
+    e.preventDefault();
+    const cur = $("#apc").value, nw = $("#apn").value, err = $("#aerr");
+    err.textContent = "";
+    if (nw.length < 6) return err.textContent = "La contraseña nueva debe tener al menos 6 caracteres.";
+    if (nw !== $("#apr").value) return err.textContent = "Las dos contraseñas nuevas no coinciden.";
+    if (nw === cur) return err.textContent = "La contraseña nueva es igual a la actual.";
+    $("#asave").disabled = true;
+    try { await fb.changePassword(cur, nw); m.close(); toast("Contraseña cambiada. La próxima vez entra con la nueva."); }
+    catch (er) { err.textContent = AUTH_ERR[er.code] || "No se pudo cambiar: " + errMsg(er); $("#asave").disabled = false; }
+  };
+  m.style.width = "min(520px, calc(100vw - 24px))";
+  m.addEventListener("close", () => { m.style.width = ""; }, { once: true });
+  m.showModal();
+  $("#apc").focus();
+}
 function openUser(id) {
   const u = id ? byId(S.team, id) : { role: "asesor", active: true }, m = $("#modal");
   m.innerHTML = `<form id="uf"><div class="mh"><h2>${id ? esc(u.name) : "Agregar persona"}</h2><button class="iconbtn" type="button" id="ux">✕</button></div>
@@ -1290,6 +1328,7 @@ function openUser(id) {
       <div><label class="lb" for="ue">Correo</label><input class="in" id="ue" type="email" required value="${esc(u.email || "")}" ${id ? "disabled" : ""}></div>
       ${id ? "" : '<div><label class="lb" for="up">Contraseña inicial</label><input class="in" id="up" type="text" minlength="6" required placeholder="mínimo 6 caracteres"></div>'}
       <div><label class="lb" for="ur">Rol</label><select class="in" id="ur"><option value="asesor">Asesor</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>Administradora</option></select></div>
+      ${id && id !== S.user.uid ? `<div><label class="lb" for="upn">Nueva contraseña <span class="muted">(opcional)</span></label><input class="in" id="upn" type="text" minlength="6" autocomplete="off" placeholder="déjala vacía para no cambiarla"></div>` : ""}
       ${id ? `<div><label class="lb" for="ua">Acceso</label><select class="in" id="ua"><option value="1">Activo</option><option value="0" ${u.active === false ? "selected" : ""}>Sin acceso</option></select></div>` : ""}
     </div>${id ? "" : '<p class="muted" style="margin:0">Comparte el correo y la contraseña con la persona. Puede cambiarla con "Olvidé mi contraseña".</p>'}</div>
     <div class="mf"><button class="btn" type="button" id="uc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
@@ -1300,6 +1339,8 @@ function openUser(id) {
       if (id) {
         if (id === S.user.uid && ($("#ua").value === "0" || $("#ur").value !== "admin") && !await ask("Vas a quitarte el rol de administradora o el acceso. ¿Seguro?", "Sí")) return;
         await fb.update("users/" + id, { name: $("#un").value.trim(), role: $("#ur").value, active: $("#ua").value === "1", ...stamp() });
+        const np = $("#upn") ? $("#upn").value.trim() : "";
+        if (np) { if (np.length < 6) return toast("La contraseña debe tener al menos 6 caracteres."); await fb.call("setTeamPassword", { uid: id, password: np }); }
       } else await fb.call("createTeamUser", { name: $("#un").value.trim(), email: $("#ue").value.trim(), password: $("#up").value, role: $("#ur").value });
       m.close(); toast("Guardado");
     } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }

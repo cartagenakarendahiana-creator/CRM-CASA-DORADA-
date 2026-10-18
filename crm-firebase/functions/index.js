@@ -2,6 +2,7 @@
 // - whatsappWebhook: recibe los mensajes y estados de la API de WhatsApp (Meta)
 // - sendWhatsApp: envía texto (ventana de 24 h abierta) o plantillas aprobadas
 // - createTeamUser: la administradora crea cuentas para su equipo
+// - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
@@ -193,4 +194,15 @@ exports.createTeamUser = onCall({ region: REGION }, async req => {
   }
   await db.doc("users/" + user.uid).set({ name, email, role: role === "admin" ? "admin" : "asesor", active: true, createdAt: Date.now() }, { merge: true });
   return { uid: user.uid };
+});
+
+exports.setTeamPassword = onCall({ region: REGION }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede cambiar contraseñas de otras personas.");
+  const { uid, password } = req.data || {};
+  if (!uid || !password || String(password).length < 6) throw new HttpsError("invalid-argument", "La contraseña debe tener al menos 6 caracteres.");
+  const u = await db.doc("users/" + uid).get();
+  if (!u.exists) throw new HttpsError("not-found", "Esa persona no está en el equipo.");
+  await admin.auth().updateUser(uid, { password: String(password) });
+  return { ok: true };
 });
