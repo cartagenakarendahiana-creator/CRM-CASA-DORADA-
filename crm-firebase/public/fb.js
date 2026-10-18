@@ -1,6 +1,7 @@
 // Capa de datos: todo el acceso a Firebase pasa por aquí.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail,
+  updatePassword, EmailAuthProvider, reauthenticateWithCredential } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, query,
   orderBy, limit, where, addDoc, setDoc, updateDoc, deleteDoc, getDoc, runTransaction, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
@@ -22,6 +23,12 @@ export const fb = {
   login: (email, pass) => signInWithEmailAndPassword(auth, email, pass),
   logout: () => signOut(auth),
   resetPassword: email => sendPasswordResetEmail(auth, email),
+  // Firebase pide confirmar la contraseña actual antes de cambiarla
+  changePassword: async (current, next) => {
+    const u = auth.currentUser;
+    await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, current));
+    await updatePassword(u, next);
+  },
   watch(path, cb, opts = {}, onErr) {
     const c = [];
     (opts.where || []).forEach(w => c.push(where(...w)));

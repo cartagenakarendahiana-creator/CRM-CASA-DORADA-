@@ -695,3 +695,13 @@ details.how summary::-webkit-details-marker{display:none}
 .login-brand b{font-size:28px;color:var(--ink)}
 .login-brand small{color:var(--muted);font-size:11px}
 .login .btn{justify-content:center;padding:9px 14px;font-size:14px}
+
+/* Mi cuenta */
+.acc-btn{display:flex;align-items:center;gap:10px;flex:1;min-width:0;border:0;background:transparent;text-align:left;padding:4px 6px;margin:-4px -6px;border-radius:8px;color:inherit}
+.acc-btn:hover{background:rgba(255,255,255,.06)}
+.acc-btn:focus-visible{outline:2px solid var(--accent)}
+.acc-card{display:flex;align-items:center;gap:12px}
+.acc-card b{font-size:15px}.acc-card .muted{font-size:13px}
+.show-pw{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-top:10px;cursor:pointer}
+.form-err{color:var(--red);margin:8px 0 0;font-size:13px;min-height:1em}
+.pw-grid{grid-template-columns:1fr 1fr}@media (max-width:520px){.pw-grid{grid-template-columns:1fr}}
