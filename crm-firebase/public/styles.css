@@ -907,3 +907,17 @@ dialog{border:1px solid var(--line)}
 @media (max-width:860px){.page{padding:16px}.page-head{flex-wrap:wrap}.itiles{grid-template-columns:1fr}}
 @media (prefers-reduced-motion: reduce){.itile{transition:none}.itile:hover{transform:none}.chcard.flash{animation:none}}
 .itile-ic svg{width:28px;height:28px}
+
+/* Aplicaciones */
+.itile-ic.sm{width:34px;height:34px;border-radius:9px}.itile-ic.sm svg{width:20px;height:20px}
+.chgrid.apps{grid-template-columns:repeat(auto-fill,minmax(440px,1fr))}
+.app-k{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0 8px}
+.app-k div{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11.5px;color:var(--muted)}
+.app-k b{display:block;font-size:16px;color:var(--ink)}
+.app-what{margin:8px 0 12px;padding-left:18px;display:grid;gap:5px;color:#334155;font-size:13px}
+.app-steps{border-top:1px solid var(--line);padding-top:10px;margin-top:6px}
+.app-steps summary{cursor:pointer;font-weight:600;color:var(--accent);font-size:13px;margin-bottom:8px}
+.app-steps .codebox{margin-top:6px}
+.app-badge{display:flex;align-items:center;gap:8px;background:#f0f7ff;border:1px solid #cfe3f7;border-radius:8px;padding:8px 10px;font-size:13px}
+@media (prefers-color-scheme: dark){.app-what{color:#b6c2d4}.app-badge{background:#10243b;border-color:#1d3a5c}}
+@media (max-width:520px){.chgrid.apps{grid-template-columns:1fr}.app-k{grid-template-columns:1fr 1fr 1fr}}

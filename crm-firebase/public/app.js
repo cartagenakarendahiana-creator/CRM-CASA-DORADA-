@@ -215,6 +215,7 @@ function startData() {
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"] });
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
+  S.unsubs.push(fb.watchDoc("settings/apps", d => { S.apps = d || {}; scheduleRender(); }, () => { S.apps = {}; }));
   S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
   window.addEventListener("hashchange", route);
   route();
@@ -234,7 +235,7 @@ const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 // ======================= Estructura =======================
 const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
 // Páginas que viven dentro de otra sección del menú
-const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones" };
+const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps: "integraciones" };
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
@@ -272,7 +273,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -662,6 +663,10 @@ function viewIntegraciones(el) {
       { href: "#formularios", name: "Formularios", icon: "formularios", color: "#0ea5a4", desc: forms ? `${forms} ${forms === 1 ? "formulario activo" : "formularios activos"}` : "Para tu web, Instagram o un QR", state: forms ? "on" : "" },
       { href: "#automatizaciones", name: "Automatizaciones", icon: "automatizaciones", color: "#f59e0b", desc: autos ? `${autos} ${autos === 1 ? "regla activa" : "reglas activas"}` : "Cuando pasa algo, House Chat actúa", state: autos ? "on" : "" },
       { href: "#campanas", name: "Campañas", icon: "campanas", color: "#ef4444", desc: (S.campaigns || []).length ? `${(S.campaigns || []).length} ${(S.campaigns || []).length === 1 ? "campaña" : "campañas"} · mensajes por segmento` : "Mensajes a un grupo de clientes", state: (S.campaigns || []).length ? "on" : "" }]],
+    ["Aplicaciones", "Tu tienda en línea y tu facturación.", [
+      { href: "#apps", id: "app-shopify", name: "Shopify", svg: APP_ICONS.shopify, color: APP_COLORS.shopify, desc: (S.apps || {}).shopify && S.apps.shopify.on ? `${S.apps.shopify.shop} · ${S.apps.shopify.orders || 0} pedidos` : "Pedidos, clientes, carritos y productos", state: (S.apps || {}).shopify && S.apps.shopify.on ? "on" : "" },
+      { href: "#apps", id: "app-mastershop", name: "Mastershop", svg: APP_ICONS.mastershop, color: APP_COLORS.mastershop, desc: "Pedidos de dropshipping a través de Shopify", state: (S.apps || {}).mastershop && S.apps.mastershop.on ? ((S.apps.shopify || {}).on ? "on" : "warn") : "" },
+      { href: "#apps", id: "app-siigo", name: "Siigo", svg: APP_ICONS.siigo, color: APP_COLORS.siigo, desc: (S.apps || {}).siigo && S.apps.siigo.on ? "Facturación desde cada pedido" : "Facturación electrónica y clientes", state: (S.apps || {}).siigo && S.apps.siigo.on ? "on" : "" }]],
     ["Conectores", "Une House Chat con otras herramientas.", [
       { href: "#conectores", name: "Webhooks", icon: "integraciones", color: "#334155", desc: "Avisa a tu tienda, ERP o Google Sheets", state: "" },
       { href: "#conectores", name: "API", icon: "integraciones", color: "#1f3a5f", desc: "Crea contactos y pedidos desde otros sistemas", state: "" },
@@ -669,12 +674,85 @@ function viewIntegraciones(el) {
   ];
   const total = groups.reduce((n, g) => n + g[2].length, 0), conn = groups.reduce((n, g) => n + g[2].filter(t => t.state === "on").length, 0);
   el.innerHTML = `<div class="page">
-    <div class="page-head"><div><h1>Integraciones</h1><span class="sub">Canales, inteligencia artificial, automatización y conectores, en un solo lugar.</span></div>
+    <div class="page-head"><div><h1>Integraciones</h1><span class="sub">Canales, inteligencia artificial, automatización, aplicaciones y conectores, en un solo lugar.</span></div>
       <span class="spacer"></span><div class="hub-sum"><b>${conn}</b> de ${total} activas</div></div>
     ${groups.map(([t, d, tiles]) => `<section class="hub-g"><div class="hub-gh"><h2>${t}</h2><span>${d}</span></div><div class="itiles">${tiles.map(tile).join("")}</div></section>`).join("")}
     ${adm ? "" : '<p class="muted" style="font-size:12.5px">Solo la administradora puede cambiar las integraciones.</p>'}</div>`;
   $$("[data-anchor]", el).forEach(a => a.onclick = () => { S.chAnchor = a.dataset.anchor; });
 }
+// ======================= Aplicaciones: Shopify, Mastershop y Siigo =======================
+const APP_ICONS = {
+  shopify: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/></svg>',
+  mastershop: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/></svg>',
+  siigo: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>',
+};
+const APP_COLORS = { shopify: "#5e8e3e", mastershop: "#5b21b6", siigo: "#0077c8" };
+const appCall = (action, data = {}) => fb.call("apps", { action, ...data });
+function viewApps(el) {
+  const A = S.apps || {}, adm = isAdmin(), sh = A.shopify || {}, sg = A.siigo || {}, ms = A.mastershop || {};
+  const hookUrl = `${location.origin}/api/shopify`;
+  const head = (k, name, sub, on) => `<div class="chcard-h"><span class="itile-ic sm" style="--ic:${APP_COLORS[k]}">${APP_ICONS[k]}</span><div><b>${name}</b><small>${sub}</small></div><span class="pill ${on ? "green" : ""}">${on ? "Conectado" : "Sin conectar"}</span></div>`;
+  el.innerHTML = `<div class="page">${crumb("Aplicaciones")}<div class="page-head"><div><h1>Aplicaciones</h1><span class="sub">Tu tienda en línea y tu facturación, unidas a House Chat.</span></div></div>
+    <div class="chgrid apps">
+    <section class="chcard" id="app-shopify">${head("shopify", "Shopify", "Pedidos, clientes, carritos abandonados y productos", sh.on)}
+      ${sh.on ? `<div class="app-k"><div><b>${sh.orders || 0}</b>pedidos recibidos</div><div><b>${sh.products || 0}</b>productos importados</div><div><b>${sh.lastAt ? ago(sh.lastAt) : "—"}</b>último pedido</div></div>
+        <div class="chrow"><span>Tienda: <b>${esc(sh.shop)}</b></span><span class="spacer"></span>${adm && sh.hasToken ? '<button class="btn" type="button" id="shImp">Importar productos</button>' : ""}</div>` : ""}
+      <ul class="app-what"><li>Cada <b>pedido</b> de Shopify llega a Pedidos con su número, productos, dirección y estado de pago, y el cliente queda como Ganado.</li>
+        <li>Los <b>carritos abandonados</b> crean una tarea en Hoy con el enlace para recuperarlos.</li><li>Puedes <b>importar tus productos</b> al catálogo para que la asesora los cotice.</li></ul>
+      ${adm ? `<details class="app-steps" ${sh.on ? "" : "open"}><summary>${sh.on ? "Cambiar la conexión" : "Cómo conectarlo"}</summary><ol class="steps">
+          <li>En Shopify ve a <b>Configuración › Notificaciones › Webhooks</b> y pulsa <b>Crear webhook</b> cinco veces, uno por evento: <i>Creación de pedido</i>, <i>Pago de pedido</i>, <i>Actualización de pedido</i>, <i>Creación de cliente</i> y <i>Creación de pago (checkout)</i>. Formato <b>JSON</b> y esta URL:<div class="codebox"><code class="sel">${esc(hookUrl)}</code><button class="btn sm" type="button" data-copy="${esc(hookUrl)}">Copiar</button></div></li>
+          <li>Debajo de la lista, Shopify muestra "Tus webhooks se firmarán con…": copia esa clave y pégala aquí.</li>
+          <li>Opcional, para importar productos: en <b>Configuración › Apps › Desarrollar apps</b> crea una app con permiso <code>read_products</code> e instálala; copia el <b>token de acceso de la API de Admin</b>.</li></ol>
+        <form id="shf" class="chform"><div class="grid2"><div><label class="lb" for="shs">Dominio de la tienda</label><input class="in" id="shs" placeholder="casadorada.myshopify.com" value="${esc(sh.shop || "")}" required></div>
+          <div><label class="lb" for="shk">Clave de firma de webhooks</label><input class="in" id="shk" placeholder="${sh.on ? "Guardada · escribe para cambiarla" : "Pega la clave"}" autocomplete="off"></div>
+          <div class="full"><label class="lb" for="sht">Token de acceso de Admin (opcional)</label><input class="in" id="sht" placeholder="${sh.hasToken ? "Guardado · escribe para cambiarlo" : "shpat_…"}" autocomplete="off"></div></div>
+          <div class="chrow"><button class="btn primary">${sh.on ? "Guardar cambios" : "Conectar Shopify"}</button>${sh.on ? '<span class="spacer"></span><button class="btn danger" type="button" data-appoff="shopify">Desconectar</button>' : ""}</div></form></details>` : ""}
+    </section>
+    <section class="chcard" id="app-siigo">${head("siigo", "Siigo", "Facturación electrónica y clientes", sg.on)}
+      ${sg.on ? `<p>Usuario de la API: <b>${esc(sg.user)}</b>. En cada pedido verás el botón <b>Facturar en Siigo</b>.</p>` : ""}
+      <ul class="app-what"><li>Desde un <b>pedido</b> creas la <b>factura en Siigo</b> con un clic: se crea el cliente si no existe y se usa la referencia de cada producto.</li>
+        <li>El número de la factura queda guardado en el pedido.</li><li>Para facturar, el contacto debe tener <b>tipo y número de documento</b> (cédula o NIT) en su ficha.</li></ul>
+      ${adm ? `<details class="app-steps" ${sg.on ? "" : "open"}><summary>${sg.on ? "Cambiar la configuración" : "Cómo conectarlo"}</summary><ol class="steps">
+          <li>La API está incluida en los planes de Siigo Nube para empresas. En Siigo Nube, entra a <b>Alianzas › Mi credencial API</b> y copia el <b>usuario</b>, la <b>clave de acceso (access key)</b> y el <b>Partner-ID</b>.</li>
+          <li>En Siigo, busca los <b>identificadores</b> del tipo de comprobante de factura, de la forma de pago, del vendedor y del impuesto IVA. Tu contador o el soporte de Siigo te los pueden dar.</li>
+          <li>En <b>Productos</b>, escribe en "Referencia" el mismo código que tiene cada producto en Siigo.</li></ol>
+        <form id="sgf" class="chform"><div class="grid2">
+          <div><label class="lb" for="sgu">Usuario de la API</label><input class="in" id="sgu" value="${esc(sg.user || "")}" required></div>
+          <div><label class="lb" for="sga">Clave de acceso</label><input class="in" id="sga" placeholder="${sg.on ? "Guardada · escribe para cambiarla" : ""}" autocomplete="off"></div>
+          <div><label class="lb" for="sgp">Partner-ID</label><input class="in" id="sgp" value="${esc(sg.partnerId || "")}"></div>
+          <div><label class="lb" for="sgd">ID tipo de comprobante (factura)</label><input class="in tabnum" id="sgd" value="${esc(sg.documentId || "")}" required></div>
+          <div><label class="lb" for="sgy">ID forma de pago</label><input class="in tabnum" id="sgy" value="${esc(sg.paymentId || "")}" required></div>
+          <div><label class="lb" for="sgv">ID vendedor (opcional)</label><input class="in tabnum" id="sgv" value="${esc(sg.sellerId || "")}"></div>
+          <div><label class="lb" for="sgi">ID impuesto IVA (opcional)</label><input class="in tabnum" id="sgi" value="${esc(sg.ivaId || "")}"></div>
+          <div><label class="lb" for="sgr">IVA %</label><input class="in tabnum" id="sgr" type="number" value="${sg.ivaRate ?? 19}"></div>
+          <div><label class="lb" for="sgc">Código de producto por defecto</label><input class="in" id="sgc" value="${esc(sg.defaultCode || "")}" placeholder="Si un producto no tiene referencia"></div>
+          <div><label class="lb" for="sgcity">Ciudad por defecto (DANE)</label><input class="in tabnum" id="sgcity" value="${esc(sg.cityCode || "05001")}"></div></div>
+          <label class="switch sm"><input type="checkbox" id="sgin" ${sg.pricesIncludeIva !== false ? "checked" : ""}> <span>Mis precios ya incluyen IVA</span></label>
+          <label class="switch sm"><input type="checkbox" id="sgdian" ${sg.sendDian ? "checked" : ""}> <span>Enviar la factura a la DIAN y al correo del cliente al crearla</span></label>
+          <div class="chrow"><button class="btn primary">${sg.on ? "Guardar y probar" : "Conectar Siigo"}</button>${sg.on ? '<span class="spacer"></span><button class="btn danger" type="button" data-appoff="siigo">Desconectar</button>' : ""}</div></form></details>` : ""}
+    </section>
+    <section class="chcard" id="app-mastershop">${head("mastershop", "Mastershop", "Dropshipping y logística", ms.on && sh.on)}
+      <p>Mastershop no publica una API abierta: sincroniza sus pedidos con tu tienda <b>Shopify</b>, y por ahí llegan a House Chat.</p>
+      <ul class="app-what"><li>Conecta <b>Shopify</b> arriba y activa aquí Mastershop.</li><li>Los pedidos que Mastershop crea o actualiza en Shopify llegan a <b>Pedidos</b> con su cliente, y aparecen marcados como de Shopify.</li>
+        <li>¿Vendes con Mastershop sin Shopify? Pide a Mastershop un webhook de pedidos y conéctalo a la <a href="#conectores">API de House Chat</a> (por ejemplo, con Zapier o Make).</li></ul>
+      ${adm ? `<label class="switch sm"><input type="checkbox" id="msOn" ${ms.on ? "checked" : ""}> <span>Uso Mastershop con mi tienda Shopify</span></label>${ms.on && !sh.on ? '<p class="errc" style="font-size:12.5px;margin:6px 0 0">Falta conectar Shopify para recibir los pedidos.</p>' : ""}` : ""}
+    </section></div></div>`;
+  $$("[data-copy]", el).forEach(b => b.onclick = () => copy(b.dataset.copy));
+  const busy = (b, t) => { b.disabled = true; b.dataset.t = b.textContent; b.textContent = t; }, done = b => { b.disabled = false; b.textContent = b.dataset.t; };
+  if ($("#shf")) $("#shf").onsubmit = async e => { e.preventDefault(); const b = $("#shf .btn.primary"); busy(b, "Guardando…");
+    try { await appCall("saveShopify", { shop: $("#shs").value, secret: $("#shk").value, token: $("#sht").value }); toast("Shopify conectado"); } catch (er) { toast(errMsg(er)); } finally { done(b); } };
+  if ($("#shImp")) $("#shImp").onclick = async () => { const b = $("#shImp"); busy(b, "Importando…");
+    try { const r = await appCall("importShopify"); toast(`${r.products} productos importados de Shopify`); } catch (er) { toast(errMsg(er)); } finally { done(b); } };
+  if ($("#sgf")) $("#sgf").onsubmit = async e => { e.preventDefault(); const b = $("#sgf .btn.primary"); busy(b, "Probando conexión…");
+    try { await appCall("saveSiigo", { username: $("#sgu").value, accessKey: $("#sga").value, partnerId: $("#sgp").value, documentId: $("#sgd").value, paymentId: $("#sgy").value,
+      sellerId: $("#sgv").value, ivaId: $("#sgi").value, ivaRate: $("#sgr").value, defaultCode: $("#sgc").value, cityCode: $("#sgcity").value, stateCode: $("#sgcity").value.slice(0, 2),
+      pricesIncludeIva: $("#sgin").checked, sendDian: $("#sgdian").checked }); toast("Siigo conectado"); } catch (er) { toast(errMsg(er)); } finally { done(b); } };
+  if ($("#msOn")) $("#msOn").onchange = e => appCall("setMastershop", { on: e.target.checked }).then(() => toast(e.target.checked ? "Mastershop activado" : "Mastershop desactivado")).catch(er => toast(errMsg(er)));
+  $$("[data-appoff]", el).forEach(b => b.onclick = async () => { if (!await ask(`¿Desconectar ${b.dataset.appoff === "shopify" ? "Shopify" : "Siigo"}?`, "Desconectar")) return;
+    try { await appCall("disconnect", { app: b.dataset.appoff }); toast("Desconectado"); } catch (er) { toast(errMsg(er)); } });
+  if (S.chAnchor && $("#" + S.chAnchor)) { const t = $("#" + S.chAnchor); S.chAnchor = null; t.scrollIntoView({ block: "start" }); t.classList.add("flash"); }
+}
+
 function viewConectores(el) {
   const adm = isAdmin(), base = location.origin + "/api/v1";
   if (!adm) { el.innerHTML = `<div class="page">${crumb("Webhooks y API")}<div class="page-head"><h1>Webhooks y API</h1></div><p class="muted">Solo la administradora puede ver y configurar las integraciones.</p></div>`; return; }
@@ -1461,7 +1539,8 @@ function viewContactos(el) {
 
 const C_FIELDS = [
   ["Contacto", [["name", "Nombre"], ["phone", "WhatsApp", "tel"], ["email", "Correo", "email"], ["cargo", "Cargo"]]],
-  ["Empresa", [["company", "Hotel / empresa"], ["city", "Ciudad"], ["segment", "Segmento", SEGMENTS], ["type", "Tipo", ["Prospecto", "Cliente"]]]],
+  ["Empresa", [["company", "Hotel / empresa"], ["city", "Ciudad"], ["segment", "Segmento", SEGMENTS], ["type", "Tipo", ["Prospecto", "Cliente"]],
+    ["docType", "Tipo de documento", ["CC", "NIT", "CE"]], ["docId", "Cédula / NIT"], ["address", "Dirección", "wide"]]],
   ["Venta", [["pipeline", "Embudo", "pipes"], ["stage", "Etapa", "stages"], ["temperature", "Temperatura", TEMPS], ["potential", "Potencial", ["Alto", "Medio", "Bajo"]], ["level", "Nivel", ["3", "2", "1", "0", "-1"]],
     ["owner", "Responsable", "team"], ["reorderDays", "Recompra cada (días)", "num"], ["tags", "Etiquetas (separadas por coma)", "tags"], ["looking", "Qué busca", "wide"]]],
   ["Seguimiento", [["nextDate", "Próx. seguimiento", "date"], ["nextAction", "Qué hacer"], ["obs", "Observaciones", "textarea"]]],
@@ -1832,7 +1911,7 @@ function viewPedidos(el) {
   el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Pedidos</h1><span class="sub tabnum">${pend.length} en curso · ${money(pend.reduce((s, o) => s + (o.total || 0), 0))}</span></div>
     <div class="toolbar"><select class="in" id="of"><option value="">Todos</option>${[...O_STATUS, ...PAY_STATUS].map(s => `<option ${f === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Número</th><th>Cliente</th><th class="num">Total</th><th>Estado</th><th>Pago</th><th>Cotización</th><th>Creado</th></tr></thead><tbody>
-      ${list.map(o => `<tr data-id="${o.id}"><td class="mono">${esc(o.number)}</td><td>${esc(o.contactName)}</td><td class="num">${money(o.total)}</td><td>${statusPill(o.status)}</td><td>${statusPill(o.payment || "Pendiente")}</td><td class="mono">${esc(o.quoteNumber || "")}</td><td>${fmtDT(o.createdAt)}</td></tr>`).join("")}</tbody></table></div>`
+      ${list.map(o => `<tr data-id="${o.id}"><td class="mono">${esc(o.number)}${o.source === "Shopify" ? ' <span class="tag k-green">Shopify</span>' : o.source === "API" ? ' <span class="tag k-gray">API</span>' : ""}${o.siigoName ? ` <span class="tag k-blue">${esc(o.siigoName)}</span>` : ""}</td><td>${esc(o.contactName)}</td><td class="num">${money(o.total)}</td><td>${statusPill(o.status)}</td><td>${statusPill(o.payment || "Pendiente")}</td><td class="mono">${esc(o.quoteNumber || "")}</td><td>${fmtDT(o.createdAt)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty"><p>Todavía no hay pedidos.</p><p>Se crean desde una cotización aceptada: Cotizaciones › Aceptada › Convertir en pedido.</p></div>`}</div>`;
   $("#of").onchange = e => { S.oF = e.target.value; renderShell(); };
   $$("tbody tr", el).forEach(tr => tr.onclick = () => openOrder(tr.dataset.id));
@@ -1846,9 +1925,16 @@ function openOrder(id) {
       <div class="grid2"><div><label class="lb" for="os">Estado</label><select class="in" id="os">${O_STATUS.map(s => `<option ${o.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         <div><label class="lb" for="op">Pago</label><select class="in" id="op">${PAY_STATUS.map(s => `<option ${o.payment === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         <div class="full"><label class="lb" for="on">Notas (dirección, guía de envío…)</label><textarea class="in" id="on" rows="3">${esc(o.notes || "")}</textarea></div></div>
-      <small class="muted">Creado ${fmtDT(o.createdAt)} por ${esc(o.createdByName || "")} desde ${esc(o.quoteNumber || "")}</small></div>
-    <div class="mf"><button class="btn" type="button" id="oc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
+      <small class="muted">Creado ${fmtDT(o.createdAt)} por ${esc(o.createdByName || "")}${o.quoteNumber ? " desde " + esc(o.quoteNumber) : ""}${o.shopifyName ? " · pedido Shopify " + esc(o.shopifyName) : ""}</small>
+      ${o.siigoName || o.siigoId ? `<div class="app-badge"><span class="itile-ic sm" style="--ic:${APP_COLORS.siigo}">${APP_ICONS.siigo}</span> Facturado en Siigo: <b>${esc(o.siigoName || o.siigoId)}</b> · ${fmtDT(o.siigoAt)}</div>` : ""}</div>
+    <div class="mf">${(S.apps || {}).siigo && S.apps.siigo.on && !o.siigoId ? '<button class="btn" type="button" id="oSiigo">Facturar en Siigo</button><span class="spacer"></span>' : ""}<button class="btn" type="button" id="oc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
   $("#ox").onclick = $("#oc").onclick = () => m.close();
+  if ($("#oSiigo")) $("#oSiigo").onclick = async () => {
+    if (!await ask(`¿Crear la factura del pedido ${o.number} por ${money(o.total)} en Siigo?`, "Facturar")) return;
+    const b = $("#oSiigo"); if (b) { b.disabled = true; b.textContent = "Facturando…"; }
+    try { const r = await appCall("siigoInvoice", { orderId: id }); m.close(); toast(`Factura ${r.name || ""} creada en Siigo`); }
+    catch (er) { toast(errMsg(er)); if (b) { b.disabled = false; b.textContent = "Facturar en Siigo"; } }
+  };
   $("#of2").onsubmit = async e => { e.preventDefault(); await fb.update("orders/" + id, { status: $("#os").value, payment: $("#op").value, notes: $("#on").value.trim(), ...stamp() }); m.close(); toast("Pedido actualizado"); };
   m.showModal();
 }

@@ -9,6 +9,7 @@
 // - autoNuevoContacto, autoEtapa, autoMensaje, autoSinRespuesta, runCampaign: automatizaciones y campañas (ver automatizaciones.js)
 // - integrations, api, intCotizacion, intPedido: webhooks salientes y API con clave (ver integraciones.js)
 // - forms: formularios de captura públicos que crean contactos (ver formularios.js)
+// - shopifyWebhook, apps: Shopify (pedidos, clientes, carritos, productos) y Siigo (facturas) (ver apps.js)
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -352,6 +353,21 @@ const FORMS = require("./formularios")({ db, admin, phoneId, nextAssignee: () =>
 exports.forms = onRequest({ region: REGION }, async (req, res) => {
   try { await FORMS.handle(req, res); }
   catch (e) { console.error("forms", e); res.status(500).json({ error: "Error del servidor." }); }
+});
+
+// ---------- Aplicaciones: Shopify y Siigo ----------
+const APPS = require("./apps")({ db, admin, phoneId });
+exports.shopifyWebhook = onRequest({ region: REGION }, async (req, res) => {
+  if (req.method !== "POST") return res.sendStatus(405);
+  try { await APPS.shopifyWebhook(req, res); }
+  catch (e) { console.error("shopify", e); res.sendStatus(500); } // Shopify reintenta
+});
+exports.apps = onCall({ region: REGION, timeoutSeconds: 300 }, async req => {
+  const me = await requireMember(req);
+  const { action } = req.data || {};
+  if (action !== "siigoInvoice" && me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede configurar aplicaciones.");
+  try { return await APPS.manage(action, req.data || {}); }
+  catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
 
 exports.createTeamUser = onCall({ region: REGION }, async req => {
