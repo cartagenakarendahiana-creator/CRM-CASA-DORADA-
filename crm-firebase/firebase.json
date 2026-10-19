@@ -46,6 +46,13 @@
           "functionId": "forms",
           "region": "us-east1"
         }
+      },
+      {
+        "source": "/api/shopify",
+        "function": {
+          "functionId": "shopifyWebhook",
+          "region": "us-east1"
+        }
       }
     ]
   },

@@ -6,6 +6,7 @@ CRM de ventas por WhatsApp para Casa Dorada: dice a quién atender hoy, en qué 
 - **Conversaciones**: una sola bandeja para WhatsApp, Instagram, Messenger, Telegram y el chat web, con plantillas aprobadas cuando la ventana está cerrada y notas internas.
 - **Automatizaciones**: reglas de tipo "cuando pasa X, haz Y": repartir chats por turnos, seguimientos, etiquetas, mensajes por etapa o por palabra clave, y aviso cuando el cliente no responde.
 - **Campañas**: mensajes a un segmento, con plantilla de WhatsApp para quienes tienen la ventana cerrada, y resultados de enviados, respondieron y omitidos.
+- **Aplicaciones**: Shopify (pedidos, clientes, carritos abandonados e importación de productos), Siigo (factura desde cada pedido) y Mastershop (sus pedidos llegan a través de Shopify).
 - **Integraciones**: webhooks firmados hacia Zapier, Make, n8n, tu tienda o tu ERP, y una API con clave (`/api/v1/contacts`, `/notes`, `/orders`, `/products`).
 - **Varias líneas de WhatsApp**: cada número con nombre y responsable por defecto, y filtro por línea en Conversaciones.
 - **Base de conocimiento**: artículos que la asesora virtual usa para responder.
@@ -29,6 +30,7 @@ public/                 la aplicación (Firebase Hosting)
 functions/index.js      webhook y envío de WhatsApp, alta de usuarios
 functions/asesora.js    asesora virtual (Claude): herramientas y reglas de cuándo responde
 functions/automatizaciones.js  reglas automáticas y envío de campañas
+functions/apps.js           Shopify (webhook firmado /api/shopify) y Siigo (API de facturas)
 functions/formularios.js    formularios de captura públicos (API /api/form)
 functions/integraciones.js  webhooks salientes y API entrante con clave
 functions/canales.js    Telegram, Messenger, Instagram y chat web: entrada, envío y conexión
@@ -50,6 +52,7 @@ firestore.rules         quién puede leer y escribir
 | `automations` | reglas: trigger {type, stage, days, keywords, channel}, actions [...], runs |
 | `campaigns/{id}/recipients` | campaña (filtro, texto, plantilla, conteos) y el resultado por contacto |
 | `settings/pipelines` | embudos: list [{id, name, stages}] ("ventas" es el principal) |
+| `settings/apps`, `private/apps` | estado público y claves de Shopify y Siigo |
 | `forms` | formularios: campos, segmento, embudo, etapa, responsable, etiquetas, conteo |
 | `knowledge` | base de conocimiento de la asesora: title, content, on |
 | `private/integrations` | webhooks (url, eventos, secreto) y hash de la clave de la API |

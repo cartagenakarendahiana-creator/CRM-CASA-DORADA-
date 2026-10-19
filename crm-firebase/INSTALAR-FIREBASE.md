@@ -206,6 +206,12 @@ Funcionan apenas publiques las funciones. Para eso Google activa **Cloud Schedul
   - genera la clave de la API para que tu página o tu tienda creen contactos y pedidos en House Chat. Los ejemplos están en "Cómo usarla".
 - **Base de conocimiento.** En **Asesora virtual**, agrega artículos (envíos, garantía, cuidados, preguntas frecuentes) o súbelos desde un archivo .txt. La asesora los usa para responder.
 
+## Aplicaciones: Shopify, Siigo y Mastershop
+Todo se configura en **Integraciones › Aplicaciones**, y cada tarjeta trae los pasos.
+- **Shopify:** crea los webhooks en Shopify con la URL `https://crm-casa-dorada.web.app/api/shopify` y pega la clave de firma. Cada pedido llega a Pedidos, y los carritos abandonados crean una tarea en Hoy. Con un token de Admin (permiso `read_products`) puedes importar tus productos.
+- **Siigo:** necesitas la credencial de la API (usuario, clave de acceso y Partner-ID) y los identificadores del comprobante de factura, la forma de pago y el IVA. El contacto debe tener cédula o NIT en su ficha y cada producto su referencia de Siigo. Te recomendamos probar primero con una factura de prueba.
+- **Mastershop:** sus pedidos llegan a través de tu tienda Shopify. Conecta Shopify y activa Mastershop.
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash
