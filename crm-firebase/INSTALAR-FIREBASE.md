@@ -158,7 +158,7 @@ La asesora virtual responde los mensajes de WhatsApp las 24 horas con Claude, la
 2. Marca **Responder automáticamente** y pulsa **Guardar**.
 3. Prueba escribiendo desde otro celular al número de WhatsApp de la empresa.
 
-**Costo aproximado:** entre US$0,05 y US$0,15 por cada mensaje que responde. Depende de qué tan larga sea la conversación. 1.000 respuestas al mes cuestan más o menos entre US$50 y US$150.
+**Costo aproximado:** la asesora usa **Haiku 5.5**, el modelo rápido y económico de Claude: entre US$0,001 y US$0,003 por respuesta, así que 50.000 respuestas al mes cuestan entre US$50 y US$150. En **Asesora virtual › Modelo de IA** puedes cambiar a Sonnet 5.5 o Opus 5.5, que son más inteligentes y más caros.
 
 **Para apagarla:** desmarca **Responder automáticamente** en Configuración › Asesora virtual. Se apaga de inmediato.
 
