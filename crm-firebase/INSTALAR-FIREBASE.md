@@ -194,6 +194,11 @@ cd crm-firebase && firebase deploy --only functions,firestore,hosting
 
 Messenger e Instagram, igual que WhatsApp, solo dejan responder durante las 24 horas siguientes al último mensaje del cliente. Telegram y el chat web no tienen ese límite.
 
+## Automatizaciones y campañas
+Funcionan apenas publiques las funciones. Para eso Google activa **Cloud Scheduler**, que revisa cada hora a los clientes que no respondieron.
+- **Configuración › Automatizaciones**: elige una idea para empezar o crea tu regla con **Cuando** y **Entonces**. Cada vez que una regla actúa, deja una nota en la conversación.
+- **Ventas › Campañas**: elige a quién enviar, escribe el mensaje y, para WhatsApp, elige una plantilla aprobada para quienes llevan más de 24 h sin escribir. Al terminar, verás cuántos se enviaron, cuántos respondieron y cuántos se omitieron.
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash

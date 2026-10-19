@@ -70,6 +70,8 @@ const ICONS = {
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
+  automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
   canales: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.3 11l7.4-3.8M8.3 13l7.4 3.8"/>',
   asesora: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
@@ -104,7 +106,7 @@ const DEFAULT_TEMPLATES = [
 ];
 
 const S = {
-  user: null, me: null, contacts: [], quotes: [], orders: [], products: [], templates: [], team: [],
+  user: null, me: null, contacts: [], quotes: [], orders: [], products: [], templates: [], team: [], automations: [], campaigns: [],
   loaded: {}, view: "hoy", sel: null, convSel: null, convFilter: "todas", search: "", msgsUnsub: null, msgs: [], msgsFor: null,
   hoyMsgsUnsub: null, hoyMsgs: [], hoyMsgsFor: null, unsubs: [],
 };
@@ -197,6 +199,8 @@ function startData() {
   w("products", "products");
   w("templates", "templates");
   w("team", "users");
+  w("automations", "automations");
+  w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"], limit: 100 });
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
   window.addEventListener("hashchange", route);
@@ -218,9 +222,9 @@ const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["metricas", "Métricas"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
-  ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -252,7 +256,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -281,6 +285,254 @@ async function setAi(c, on) {
   await fb.update("contacts/" + c.id, { ...patch, ...stamp() });
   toast(on ? `${aiName()} vuelve a responder este chat` : `${aiName()} no responderá este chat hasta que la reactives`);
 }
+// ======================= Automatizaciones =======================
+const TRIGGERS = {
+  nuevo_contacto: "Llega un contacto nuevo",
+  etapa: "Un contacto pasa a la etapa…",
+  palabra: "El cliente escribe una palabra clave",
+  sin_respuesta: "El cliente no responde en… días",
+};
+const ACTIONS = {
+  asignar: "Asignar responsable", etapa: "Cambiar etapa", mensaje: "Enviar mensaje", seguimiento: "Programar seguimiento",
+  etiqueta: "Agregar etiqueta", temperatura: "Cambiar temperatura",
+};
+const RULE_IDEAS = [
+  { name: "Repartir los chats nuevos entre el equipo", trigger: { type: "nuevo_contacto" }, actions: [{ type: "asignar", owner: "rotar" }] },
+  { name: "Si no responde en 3 días, recordar escribirle", trigger: { type: "sin_respuesta", days: 3 }, actions: [{ type: "seguimiento", days: 0, text: "Escríbele de nuevo: no respondió en 3 días" }, { type: "temperatura", value: "❄️ Frío" }] },
+  { name: "Cotización enviada: seguimiento en 2 días", trigger: { type: "etapa", stage: "Cotización enviada" }, actions: [{ type: "seguimiento", days: 2, text: "Pregúntale si revisó la cotización" }] },
+  { name: "Venta ganada: mensaje de agradecimiento", trigger: { type: "etapa", stage: "Ganado" }, actions: [{ type: "mensaje", text: "¡Gracias por tu compra, {nombre}! 💛 Cualquier cosa que necesites, aquí estamos. — {empresa}" }] },
+  { name: "Pregunta por precio: marcar como interesado", trigger: { type: "palabra", keywords: ["precio", "cuánto vale", "cuanto cuesta", "cotización"] }, actions: [{ type: "etiqueta", tag: "Interesado" }, { type: "temperatura", value: "🔥 Caliente" }] },
+];
+function triggerText(t = {}) {
+  if (t.type === "etapa") return `Cuando un contacto pasa a <b>${esc(t.stage || "…")}</b>`;
+  if (t.type === "palabra") return `Cuando el cliente escribe <b>${esc((t.keywords || []).join(", ") || "…")}</b>`;
+  if (t.type === "sin_respuesta") return `Cuando el cliente no responde en <b>${t.days || 3} días</b>`;
+  return `Cuando llega un contacto nuevo${t.channel ? " por <b>" + esc(CHN[t.channel].label) + "</b>" : ""}`;
+}
+function actionText(a = {}) {
+  return ({
+    asignar: () => a.owner === "rotar" ? "asignar por turnos al equipo" : "asignar a " + esc(a.owner || "…"),
+    etapa: () => "mover a " + esc(a.stage || "…"),
+    mensaje: () => `enviar “${esc((a.text || "").slice(0, 60))}${(a.text || "").length > 60 ? "…" : ""}”${a.template && a.template.name ? " (o plantilla " + esc(a.template.name) + ")" : ""}`,
+    seguimiento: () => `seguimiento ${Number(a.days) ? "en " + a.days + " días" : "hoy"}: ${esc(a.text || "")}`,
+    etiqueta: () => "etiquetar " + esc(a.tag || "…"),
+    temperatura: () => "temperatura " + esc(a.value || "…"),
+  }[a.type] || (() => a.type))();
+}
+function viewAutomatizaciones(el) {
+  const adm = isAdmin(), list = (S.automations || []).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Automatizaciones</h1><span class="sub">Cuando pasa algo, House Chat hace el trabajo repetitivo por ti.</span><span class="spacer"></span>
+      ${adm ? '<button class="btn primary" id="newRule">+ Nueva automatización</button>' : ""}</div>
+    ${list.length ? `<div class="rules">${list.map(r => `<div class="rule ${r.on ? "" : "off"}" data-r="${r.id}">
+        <div class="rule-h"><b>${esc(r.name || "Sin nombre")}</b><span class="spacer"></span>
+          ${adm ? `<label class="tgl" title="${r.on ? "Activa" : "Apagada"}"><input type="checkbox" data-on="${r.id}" ${r.on ? "checked" : ""}><span></span></label>` : `<span class="pill ${r.on ? "green" : ""}">${r.on ? "Activa" : "Apagada"}</span>`}</div>
+        <div class="rule-flow"><span class="when">${icon("automatizaciones")}${triggerText(r.trigger)}</span>
+          ${(r.actions || []).map(a => `<span class="then">→ ${actionText(a)}</span>`).join("")}</div>
+        <div class="rule-f muted">${r.runs ? `Se ha ejecutado ${r.runs} ${r.runs === 1 ? "vez" : "veces"} · última ${whenLabel(r.lastRunAt)}` : "Aún no se ha ejecutado"}
+          ${adm ? `<span class="spacer"></span><button class="link" data-edit="${r.id}">Editar</button>` : ""}</div></div>`).join("")}</div>`
+      : `<div class="empty"><p><b>Aún no tienes automatizaciones.</b></p><p>Empieza con una de estas ideas:</p></div>`}
+    ${adm ? `<h2 class="sec-t">Ideas para empezar</h2><div class="ideas">${RULE_IDEAS.map((r, i) => `<button class="idea" data-idea="${i}"><b>${esc(r.name)}</b><span>${triggerText(r.trigger)} ${r.actions.map(a => "→ " + actionText(a)).join(" ")}</span></button>`).join("")}</div>` : ""}
+  </div>`;
+  if ($("#newRule")) $("#newRule").onclick = () => openRule(null);
+  $$("[data-edit]", el).forEach(b => b.onclick = () => openRule(b.dataset.edit));
+  $$("[data-idea]", el).forEach(b => b.onclick = () => openRule(null, JSON.parse(JSON.stringify(RULE_IDEAS[b.dataset.idea]))));
+  $$("[data-on]", el).forEach(i => i.onchange = () => fb.update("automations/" + i.dataset.on, { on: i.checked, ...stamp() }).then(() => toast(i.checked ? "Activada" : "Apagada")));
+}
+function openRule(id, seed) {
+  const r = id ? JSON.parse(JSON.stringify(byId(S.automations, id))) : (seed || { name: "", trigger: { type: "nuevo_contacto" }, actions: [{ type: "asignar", owner: "rotar" }] });
+  r.on = id ? r.on : true;
+  const m = $("#modal"), team = S.team.filter(u => u.active !== false).map(u => u.name), waTpls = S.templates.filter(t => t.waName);
+  const sel = (key, opts, val, ph = "") => `<select class="in" data-f="${key}">${ph ? `<option value="">${ph}</option>` : ""}${opts.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(val ?? "") === String(v) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
+  const actFields = (a, i) => {
+    const f = {
+      asignar: () => sel(`a${i}.owner`, [["rotar", "Por turnos entre asesores"], ...team], a.owner),
+      etapa: () => sel(`a${i}.stage`, STAGES, a.stage),
+      mensaje: () => `<textarea class="in" data-f="a${i}.text" rows="2" placeholder="Hola {nombre}…">${esc(a.text || "")}</textarea>
+        ${sel(`a${i}.tpl`, waTpls.map(t => [t.id, "Plantilla WhatsApp: " + t.name]), (waTpls.find(t => a.template && t.waName === a.template.name) || {}).id, "Si la ventana de WhatsApp está cerrada: no enviar")}
+        <small class="muted">Variables: {nombre} {empresa} {asesor} {producto} {busca}</small>`,
+      seguimiento: () => `<input class="in" type="number" min="0" data-f="a${i}.days" value="${a.days ?? 1}" style="max-width:90px" aria-label="Días"><input class="in" data-f="a${i}.text" value="${esc(a.text || "")}" placeholder="Qué hacer">`,
+      etiqueta: () => `<input class="in" data-f="a${i}.tag" value="${esc(a.tag || "")}" placeholder="Ej: Interesado">`,
+      temperatura: () => sel(`a${i}.value`, TEMPS, a.value),
+    }[a.type];
+    return f ? f() : "";
+  };
+  const draw = () => {
+    const t = r.trigger;
+    m.innerHTML = `<form id="rf"><div class="mh"><h2>${id ? "Editar automatización" : "Nueva automatización"}</h2><button class="iconbtn" type="button" id="rx" aria-label="Cerrar">✕</button></div>
+      <div class="mb">
+        <div><label class="lb" for="rn">Nombre</label><input class="in" id="rn" value="${esc(r.name || "")}" required placeholder="Ej: Repartir chats nuevos"></div>
+        <fieldset class="fs"><legend>Cuando</legend><div class="rule-row">${sel("t.type", Object.entries(TRIGGERS), t.type)}
+          ${t.type === "etapa" ? sel("t.stage", STAGES, t.stage) : ""}
+          ${t.type === "palabra" ? `<input class="in" data-f="t.keywords" value="${esc((t.keywords || []).join(", "))}" placeholder="precio, cotización, envío">` : ""}
+          ${t.type === "sin_respuesta" ? `<input class="in" type="number" min="1" data-f="t.days" value="${t.days || 3}" style="max-width:90px"><span class="muted">días desde tu último mensaje</span>` : ""}
+          ${t.type === "nuevo_contacto" ? sel("t.channel", Object.keys(CHN).map(k => [k, CHN[k].label]), t.channel, "Por cualquier canal") : ""}</div></fieldset>
+        <fieldset class="fs"><legend>Entonces</legend><div class="acts">${r.actions.map((a, i) => `<div class="act"><span class="n">${i + 1}</span>
+          <div class="act-b">${sel(`a${i}.type`, Object.entries(ACTIONS), a.type)}${actFields(a, i)}</div>
+          <button class="iconbtn" type="button" data-del="${i}" aria-label="Quitar">✕</button></div>`).join("")}</div>
+          <button class="btn sm" type="button" id="addAct">+ Agregar acción</button></fieldset>
+        <label class="switch sm"><input type="checkbox" id="ron" ${r.on ? "checked" : ""}> <span>Activa</span></label>
+      </div>
+      <div class="mf">${id ? '<button class="btn danger" type="button" id="rdel">Eliminar</button><span class="spacer"></span>' : ""}<button class="btn" type="button" id="rc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
+    $("#rx").onclick = $("#rc").onclick = () => m.close();
+    $$("[data-f]", m).forEach(i => i.onchange = () => { read(); if (/^t\.type$|^a\d+\.type$/.test(i.dataset.f)) setTimeout(draw); });
+    $$("[data-del]", m).forEach(b => b.onclick = () => { read(); r.actions.splice(+b.dataset.del, 1); setTimeout(draw); });
+    $("#addAct").onclick = () => { read(); r.actions.push({ type: "seguimiento", days: 1, text: "" }); setTimeout(draw); };
+    if ($("#rdel")) $("#rdel").onclick = async () => { if (!await ask("¿Eliminar esta automatización?", "Eliminar")) return; await fb.remove("automations/" + id); m.close(); toast("Eliminada"); };
+    $("#rf").onsubmit = async e => {
+      e.preventDefault(); read();
+      if (!r.actions.length) return toast("Agrega al menos una acción.");
+      if (r.trigger.type === "palabra" && !(r.trigger.keywords || []).length) return toast("Escribe al menos una palabra clave.");
+      const data = { name: r.name.trim() || "Automatización", on: r.on, trigger: r.trigger, actions: r.actions, ...stamp() };
+      try {
+        if (id) await fb.update("automations/" + id, data);
+        else await fb.set("automations/" + fb.newId("automations"), { ...data, createdAt: Date.now(), runs: 0 }, false);
+        m.close(); toast("Automatización guardada");
+      } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+    };
+  };
+  const read = () => {
+    if ($("#rn")) r.name = $("#rn").value; if ($("#ron")) r.on = $("#ron").checked;
+    // Primero los tipos: si cambió el tipo, se descartan los campos del tipo anterior
+    const changed = new Set();
+    $$("[data-f]", m).forEach(i => { const [k, f] = i.dataset.f.split("."); if (f !== "type") return;
+      if (k === "t" && i.value !== r.trigger.type) { r.trigger = { type: i.value }; changed.add("t"); }
+      else if (k !== "t" && r.actions[+k.slice(1)] && i.value !== r.actions[+k.slice(1)].type) { r.actions[+k.slice(1)] = { type: i.value }; changed.add(k); } });
+    $$("[data-f]", m).forEach(i => {
+      const [k, f] = i.dataset.f.split("."), v = i.value;
+      if (f === "type" || changed.has(k)) return;
+      if (k === "t") {
+        if (f === "type") return;
+        else if (f === "keywords") r.trigger.keywords = v.split(",").map(x => x.trim()).filter(Boolean);
+        else if (f === "days") r.trigger.days = Number(v) || 3;
+        else if (f !== "type") { if (v) r.trigger[f] = v; else delete r.trigger[f]; }
+      } else {
+        const a = r.actions[+k.slice(1)]; if (!a) return;
+        if (f === "days") a.days = Number(v) || 0;
+        else if (f === "tpl") { const t = byId(S.templates, v); if (t) a.template = { name: t.waName, lang: t.waLang || "es", params: (t.waParams || []).map(p => "{" + p + "}") }; else delete a.template; }
+        else if (f !== "type") a[f] = v;
+      }
+    });
+  };
+  draw(); m.showModal();
+}
+
+// ======================= Campañas =======================
+const DAYMS = 864e5;
+function campMatch(c, f = {}) {
+  if (c.archived || c.optOut) return false;
+  if (f.segment && c.segment !== f.segment) return false;
+  if (f.stage && (c.stage || "Nuevo") !== f.stage) return false;
+  if (f.type && c.type !== f.type) return false;
+  if (f.temperature && c.temperature !== f.temperature) return false;
+  if (f.owner && c.owner !== f.owner) return false;
+  if (f.channel && chOf(c) !== f.channel) return false;
+  if (f.tag && !(c.tags || []).includes(f.tag)) return false;
+  if (f.quietDays) { const last = Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0); if (Date.now() - last < f.quietDays * DAYMS) return false; }
+  return true;
+}
+function campReach(list, camp) {
+  const r = { total: list.length, now: 0, tpl: 0, no: 0, byCh: {} };
+  for (const c of list) {
+    const ch = chOf(c); r.byCh[ch] = (r.byCh[ch] || 0) + 1;
+    const open = winInfo(c).open;
+    if (!canSend(c)) r.no++;
+    else if (open && camp.text) r.now++;
+    else if (ch === "whatsapp" && camp.template && camp.template.name) r.tpl++;
+    else r.no++;
+  }
+  return r;
+}
+function campStats(cp) {
+  const k = cp.counts || {}, since = cp.startedAt || 0;
+  const replied = cp.startedAt ? S.contacts.filter(c => c.lastCampaign === cp.id && (c.lastInboundAt || 0) > since).length : 0;
+  return { ...k, replied };
+}
+const reachHtml = r => `<b>${r.total}</b> contactos · <span class="ok">${r.now} reciben el texto</span>${r.tpl ? ` · <span class="ok">${r.tpl} reciben la plantilla</span>` : ""}${r.no ? ` · <span class="no">${r.no} no se pueden contactar ahora</span>` : ""}
+  <div class="reach-ch">${Object.entries(r.byCh).map(([k, n]) => `${chIcon(k)} ${n}`).join(" ")}</div>`;
+function viewCampanas(el) {
+  const adm = isAdmin(), list = S.campaigns || [];
+  const st = s => ({ borrador: '<span class="pill">Borrador</span>', enviando: '<span class="pill amber">Enviando…</span>', enviada: '<span class="pill green">Enviada</span>' }[s] || "");
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Campañas</h1><span class="sub">Mensajes a un grupo de clientes, con resultados.</span><span class="spacer"></span>
+      ${adm ? '<button class="btn primary" id="newCamp">+ Nueva campaña</button>' : ""}</div>
+    ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Campaña</th><th>Estado</th><th>Fecha</th><th class="num">Destinatarios</th><th class="num">Enviados</th><th class="num">Respondieron</th><th class="num">Omitidos / fallidos</th></tr></thead><tbody>
+      ${list.map(cp => { const s = campStats(cp); return `<tr data-cp="${cp.id}"><td><b>${esc(cp.name)}</b></td><td>${st(cp.status)}</td><td>${cp.sentAt ? fmtDT(cp.sentAt) : cp.createdAt ? fmtDT(cp.createdAt) : ""}</td>
+        <td class="num">${s.total ?? "—"}</td><td class="num">${s.sent ?? "—"}</td><td class="num">${cp.startedAt ? `${s.replied}${s.sent ? ` <small class="muted">(${Math.round(100 * s.replied / s.sent)}%)</small>` : ""}` : "—"}</td><td class="num">${s.total != null ? (s.skipped || 0) + " / " + (s.failed || 0) : "—"}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty"><p><b>Aún no hay campañas.</b></p><p>Por ejemplo: avisar a los hoteles que tienes sábanas nuevas, o recordarle a los clientes que hace 90 días no compran.</p></div>`}
+    <p class="muted" style="font-size:12.5px;margin-top:14px">WhatsApp solo permite escribir libremente a quien te escribió en las últimas 24 h; a los demás se les envía una <b>plantilla aprobada por Meta</b>. Messenger e Instagram no permiten mensajes promocionales fuera de esas 24 h. Telegram y el chat web no tienen ese límite.</p></div>`;
+  if ($("#newCamp")) $("#newCamp").onclick = () => openCampaign(null);
+  $$("[data-cp]", el).forEach(tr => tr.onclick = () => openCampaign(tr.dataset.cp));
+}
+function openCampaign(id) {
+  const base = id ? byId(S.campaigns, id) : null;
+  const cp = base ? JSON.parse(JSON.stringify(base)) : { name: "", filter: {}, text: "", template: null, status: "borrador" };
+  const m = $("#modal"), adm = isAdmin(), locked = cp.status !== "borrador";
+  const waTpls = S.templates.filter(t => t.waName), team = S.team.filter(u => u.active !== false).map(u => u.name);
+  const tags = [...new Set(S.contacts.flatMap(c => c.tags || []))].sort();
+  const sel = (k, opts, ph) => `<select class="in" data-cf="${k}" ${locked ? "disabled" : ""}><option value="">${ph}</option>${opts.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(cp.filter[k] ?? "") === String(v) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
+  let unsub = null;
+  const draw = () => {
+    const list = S.contacts.filter(c => campMatch(c, cp.filter)), reach = campReach(list, cp);
+    m.innerHTML = `<form id="cpf"><div class="mh"><h2>${id ? esc(cp.name) : "Nueva campaña"}</h2><button class="iconbtn" type="button" id="cpx" aria-label="Cerrar">✕</button></div>
+      <div class="mb">
+        <div><label class="lb" for="cpn">Nombre</label><input class="in" id="cpn" value="${esc(cp.name)}" required placeholder="Ej: Sábanas nuevas para hoteles" ${locked ? "disabled" : ""}></div>
+        <fieldset class="fs"><legend>A quién</legend><div class="grid2">
+          ${sel("segment", SEGMENTS, "Todos los segmentos")}${sel("stage", STAGES, "Todas las etapas")}${sel("type", ["Prospecto", "Cliente"], "Prospectos y clientes")}
+          ${sel("temperature", TEMPS, "Cualquier temperatura")}${sel("owner", team, "Cualquier responsable")}${sel("channel", Object.keys(CHN).map(k => [k, CHN[k].label]), "Todos los canales")}
+          ${sel("tag", tags, "Cualquier etiqueta")}
+          <div><input class="in" type="number" min="0" data-cf="quietDays" value="${cp.filter.quietDays || ""}" placeholder="Sin hablar hace… días" ${locked ? "disabled" : ""}></div></div></fieldset>
+        <div class="reach" id="reach">${reachHtml(reach)}</div>
+        <fieldset class="fs"><legend>Mensaje</legend>
+          <textarea class="in" id="cpt" rows="4" placeholder="Hola {nombre}, te cuento que llegaron…" ${locked ? "disabled" : ""}>${esc(cp.text || "")}</textarea>
+          <small class="muted">Variables: {nombre} {empresa} {asesor} {producto} {busca}</small>
+          <div style="margin-top:10px"><label class="lb" for="cptpl">Plantilla de WhatsApp para quienes tienen la ventana cerrada</label>
+          <select class="in" id="cptpl" ${locked ? "disabled" : ""}><option value="">No enviar a quienes tienen la ventana cerrada</option>${waTpls.map(t => `<option value="${t.id}" ${cp.template && cp.template.name === t.waName ? "selected" : ""}>${esc(t.name)} (${esc(t.waName)})</option>`).join("")}</select>
+          ${waTpls.length ? "" : '<small class="muted">No tienes plantillas con "Nombre en Meta". Configúralas en Plantillas.</small>'}</div></fieldset>
+        ${locked ? `<fieldset class="fs"><legend>Resultados</legend><div class="camp-k">${(() => { const s = campStats(cp); return `<div><b>${s.sent || 0}</b>enviados</div><div><b>${s.replied}</b>respondieron</div><div><b>${s.skipped || 0}</b>omitidos</div><div><b>${s.failed || 0}</b>fallidos</div>`; })()}</div>
+          <div class="table-wrap" style="max-height:260px;margin-top:10px"><table class="t"><thead><tr><th>Contacto</th><th>Canal</th><th>Estado</th><th>Detalle</th></tr></thead><tbody id="cprec"><tr><td colspan="4" class="muted">Cargando…</td></tr></tbody></table></div></fieldset>` : ""}
+      </div>
+      <div class="mf">${id && !locked && adm ? '<button class="btn danger" type="button" id="cpdel">Eliminar</button><span class="spacer"></span>' : ""}
+        <button class="btn" type="button" id="cpc">Cerrar</button>
+        ${!locked && adm ? `<button class="btn" type="submit">Guardar borrador</button><button class="btn primary" type="button" id="cpsend" ${reach.now + reach.tpl ? "" : "disabled"}>${icon("send")}Enviar a ${reach.now + reach.tpl}</button>` : ""}</div></form>`;
+    $("#cpx").onclick = $("#cpc").onclick = () => m.close();
+    const upd = () => { read(); const r = campReach(S.contacts.filter(c => campMatch(c, cp.filter)), cp); $("#reach").innerHTML = reachHtml(r);
+      if ($("#cpsend")) { $("#cpsend").disabled = !(r.now + r.tpl); $("#cpsend").innerHTML = `${icon("send")}Enviar a ${r.now + r.tpl}`; } };
+    $$("[data-cf]", m).forEach(i => i.onchange = upd);
+    if ($("#cpt")) $("#cpt").oninput = upd;
+    if ($("#cptpl")) $("#cptpl").onchange = upd;
+    if ($("#cpdel")) $("#cpdel").onclick = async () => { if (!await ask("¿Eliminar esta campaña?", "Eliminar")) return; await fb.remove("campaigns/" + id); m.close(); };
+    if ($("#cpsend")) $("#cpsend").onclick = async () => {
+      read(); if (!cp.name.trim()) return toast("Ponle un nombre a la campaña.");
+      const r = campReach(S.contacts.filter(c => campMatch(c, cp.filter)), cp);
+      if (!await ask(`Se enviará a ${r.now + r.tpl} contactos${r.no ? ` (${r.no} se omiten)` : ""}. ¿Enviar ahora?`, "Enviar")) return;
+      const cid = await save();
+      toast("Enviando campaña… puedes seguir trabajando");
+      m.close();
+      fb.call("runCampaign", { id: cid }).then(k => toast(`Campaña enviada: ${k.sent} enviados${k.skipped ? `, ${k.skipped} omitidos` : ""}${k.failed ? `, ${k.failed} fallidos` : ""}`))
+        .catch(er => toast("La campaña no se pudo enviar: " + errMsg(er)));
+    };
+    if (locked && id) {
+      unsub && unsub();
+      unsub = fb.watch(`campaigns/${id}/recipients`, rows => { const b = $("#cprec"); if (!b) return;
+        b.innerHTML = rows.map(x => `<tr><td>${esc(x.name || x.id)}</td><td>${x.channel ? chIcon(x.channel) : ""}</td><td>${esc(x.status || "")}</td><td class="muted">${esc(x.reason || "")}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">Sin registros</td></tr>'; });
+    }
+    $("#cpf").onsubmit = async e => { e.preventDefault(); read(); await save(); m.close(); toast("Borrador guardado"); };
+  };
+  const read = () => {
+    if (locked) return;
+    cp.name = $("#cpn").value; cp.text = $("#cpt").value.trim();
+    $$("[data-cf]", m).forEach(i => { const v = i.value; if (v === "") delete cp.filter[i.dataset.cf]; else cp.filter[i.dataset.cf] = i.dataset.cf === "quietDays" ? Number(v) : v; });
+    const t = byId(S.templates, $("#cptpl").value);
+    cp.template = t ? { name: t.waName, lang: t.waLang || "es", params: (t.waParams || []).map(p => "{" + p + "}") } : null;
+  };
+  const save = async () => {
+    const data = { name: cp.name.trim() || "Campaña", filter: cp.filter, text: cp.text, template: cp.template, status: "borrador", ...stamp() };
+    if (id) { await fb.update("campaigns/" + id, data); return id; }
+    const nid = fb.newId("campaigns"); await fb.set("campaigns/" + nid, { ...data, createdAt: Date.now(), createdBy: S.me.name }, false); id = nid; return nid;
+  };
+  m.addEventListener("close", () => { unsub && unsub(); }, { once: true });
+  draw(); m.showModal();
+}
+
 // ======================= Canales =======================
 function viewCanales(el) {
   const ch = S.ch || {}, adm = isAdmin(), pid = firebaseConfig.projectId || "TU-PROYECTO";
@@ -899,7 +1151,7 @@ const C_FIELDS = [
   ["Contacto", [["name", "Nombre"], ["phone", "WhatsApp", "tel"], ["email", "Correo", "email"], ["cargo", "Cargo"]]],
   ["Empresa", [["company", "Hotel / empresa"], ["city", "Ciudad"], ["segment", "Segmento", SEGMENTS], ["type", "Tipo", ["Prospecto", "Cliente"]]]],
   ["Venta", [["stage", "Etapa", STAGES], ["temperature", "Temperatura", TEMPS], ["potential", "Potencial", ["Alto", "Medio", "Bajo"]], ["level", "Nivel", ["3", "2", "1", "0", "-1"]],
-    ["owner", "Responsable", "team"], ["reorderDays", "Recompra cada (días)", "num"], ["looking", "Qué busca", "wide"]]],
+    ["owner", "Responsable", "team"], ["reorderDays", "Recompra cada (días)", "num"], ["tags", "Etiquetas (separadas por coma)", "tags"], ["looking", "Qué busca", "wide"]]],
   ["Seguimiento", [["nextDate", "Próx. seguimiento", "date"], ["nextAction", "Qué hacer"], ["obs", "Observaciones", "textarea"]]],
 ];
 function openContact(id) {
@@ -907,7 +1159,7 @@ function openContact(id) {
   if (id && !c) return toast("Ese contacto ya no existe.");
   const m = $("#modal");
   const field = ([k, label, t]) => {
-    const v = c[k] ?? "";
+    const v = t === "tags" ? (c[k] || []).join(", ") : c[k] ?? "";
     if (Array.isArray(t) || t === "team") {
       const opts = t === "team" ? S.team.filter(u => u.active !== false).map(u => u.name) : t;
       return `<div><label class="lb" for="cf_${k}">${label}</label><select class="in" id="cf_${k}" data-k="${k}"><option value="">—</option>${[...new Set([...opts, ...(v && !opts.includes(String(v)) ? [String(v)] : [])])].map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
@@ -944,6 +1196,7 @@ function openContact(id) {
     e.preventDefault();
     const data = {};
     $$("[data-k]", m).forEach(i => data[i.dataset.k] = i.value.trim());
+    data.tags = [...new Set((data.tags || "").split(",").map(t => t.trim()).filter(Boolean))];
     if (!data.name && !data.company) return toast("Escribe al menos el nombre o la empresa.");
     const pid = phoneId(data.phone);
     const dup = pid && S.contacts.find(x => x.id !== id && phoneId(x.phone) === pid);

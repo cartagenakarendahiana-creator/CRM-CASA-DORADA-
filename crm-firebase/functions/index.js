@@ -6,9 +6,11 @@
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
 // - sendMessage: envía texto por el canal del contacto (WhatsApp, Telegram, Messenger, Instagram o chat web)
 // - telegramWebhook, webchat, connectTelegram, connectMeta, disconnectChannel: otros canales (ver canales.js)
+// - autoNuevoContacto, autoEtapa, autoMensaje, autoSinRespuesta, runCampaign: automatizaciones y campañas (ver automatizaciones.js)
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 
@@ -259,6 +261,50 @@ exports.disconnectChannel = onCall({ region: REGION }, async req => {
   } else if (ch !== "web") throw new HttpsError("invalid-argument", "Canal desconocido.");
   await db.doc("settings/channels").set({ [ch]: { on: false } }, { merge: true });
   return { ok: true };
+});
+
+// ---------- Automatizaciones y campañas ----------
+// Envío común: plantilla de WhatsApp fuera de la ventana, o texto por el canal del contacto
+async function autoSend({ cref, contact, text, template, byName, campaign }) {
+  const ch = contact.lastChannel || (contact.phone ? "whatsapp" : "web");
+  const extra = campaign ? { lastCampaign: campaign } : {};
+  if (template && template.name && ch === "whatsapp" && !CH.windowOpen(contact, ch)) {
+    const to = phoneId(contact.phone);
+    if (!to) throw new Error("Sin número de WhatsApp.");
+    const params = (template.params || []).map(p => ({ type: "text", text: String(p || "-") }));
+    await waSend(cref, { messaging_product: "whatsapp", to, type: "template", template: { name: template.name, language: { code: template.lang || "es" },
+      ...(params.length ? { components: [{ type: "body", parameters: params }] } : {}) } }, { text: text || "[Plantilla " + template.name + "]", type: "template", by: "auto", byName, ...(campaign ? { campaign } : {}) }, extra);
+    return;
+  }
+  if (!text) throw new Error("No hay texto para este canal.");
+  if (!CH.windowOpen(contact, ch)) throw new Error("Ventana de 24 h cerrada.");
+  await CH.deliver({ cref, contact, text, channel: ch, msg: { by: "auto", byName, ...(campaign ? { campaign } : {}) }, extra, sendWhatsApp: waText(contact) });
+}
+const AUTO = require("./automatizaciones")({ db, admin, send: autoSend });
+const AUTO_OPTS = { region: REGION, secrets: [WA_TOKEN] };
+
+exports.autoNuevoContacto = onDocumentCreated({ document: "contacts/{cid}", ...AUTO_OPTS }, async event => {
+  const c = event.data && event.data.data();
+  if (c) console.log("auto nuevo", event.params.cid, await AUTO.onNewContact(event.params.cid, c));
+});
+exports.autoEtapa = onDocumentUpdated({ document: "contacts/{cid}", ...AUTO_OPTS }, async event => {
+  const b = event.data.before.data() || {}, a = event.data.after.data() || {};
+  if ((b.stage || "Nuevo") !== (a.stage || "Nuevo")) console.log("auto etapa", event.params.cid, await AUTO.onStageChange(event.params.cid, b, a));
+});
+exports.autoMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", ...AUTO_OPTS }, async event => {
+  const m = event.data && event.data.data();
+  if (m && m.dir === "in") await AUTO.onInbound(event.params.cid, m);
+});
+exports.autoSinRespuesta = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 540 }, async () => {
+  console.log("auto sin respuesta", await AUTO.sweepNoReply());
+});
+exports.runCampaign = onCall({ ...AUTO_OPTS, timeoutSeconds: 540, memory: "512MiB" }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede enviar campañas.");
+  const id = String((req.data || {}).id || "");
+  if (!id) throw new HttpsError("invalid-argument", "Falta la campaña.");
+  try { return await AUTO.runCampaign(id, me.name || ""); }
+  catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
 
 exports.createTeamUser = onCall({ region: REGION }, async req => {
