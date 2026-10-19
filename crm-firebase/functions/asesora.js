@@ -3,7 +3,9 @@
 // pasa a una persona los cierres de pedido, negociaciones y quejas.
 const Anthropic = require("@anthropic-ai/sdk");
 
-const MODEL = "claude-opus-5-5";
+// Modelo de la asesora: Haiku 5.5 por defecto (rápido y económico); se puede cambiar en Asesora virtual
+const MODELS = { haiku: "claude-haiku-5-5", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
+const DEFAULT_MODEL = "haiku";
 const MAX_ROUNDS = 6;       // vueltas de herramientas por mensaje
 const HISTORY = 40;         // mensajes de contexto
 const DEBOUNCE_MS = 7000;   // espera por si el cliente manda varios mensajes seguidos
@@ -194,12 +196,11 @@ async function think({ apiKey, cfg, contact, history, tools }) {
     { type: "text", text: contactText(contact) },
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const r = await client.beta.messages.create({
-      model: MODEL, max_tokens: 8000, system, messages, tools: TOOLS,
-      output_config: { effort: "medium" },
-      // Si Claude declina por seguridad, la API reintenta con el modelo de respaldo recomendado
-      betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
-    });
+    const key = MODELS[cfg.model] ? cfg.model : DEFAULT_MODEL;
+    const params = { model: MODELS[key], max_tokens: 8000, system, messages, tools: TOOLS, output_config: { effort: "medium" } };
+    // Haiku 5.5 no tiene modelo de respaldo; en Sonnet y Opus, si declina por seguridad, la API reintenta con el respaldo recomendado
+    const r = key === "haiku" ? await client.messages.create(params)
+      : await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" });
     if (r.stop_reason === "refusal") return { refusal: true };
     if (r.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: r.content }); continue; }
     const uses = r.content.filter(b => b.type === "tool_use");
@@ -280,4 +281,4 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => n
   return text && text !== "[SIN RESPUESTA]" ? "respondido" : "sin-texto";
 }
 
-module.exports = { handleInbound, toMessages, TOOLS, systemPrompt };
+module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS };
