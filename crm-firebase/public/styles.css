@@ -795,3 +795,4 @@ input[type=color].in{height:36px;padding:3px}
 .fcard-k b{display:block;font-size:17px;color:var(--ink)}
 .fflds{display:grid;gap:8px}.ffld{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .ffld.cus .in{flex:1;min-width:140px}
+.older{align-self:center;border:0;background:var(--wa-in);color:var(--accent);font-size:12.5px;padding:6px 14px;border-radius:999px;box-shadow:0 1px .5px rgba(11,20,26,.13);margin:4px 0 8px;cursor:pointer}

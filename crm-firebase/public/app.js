@@ -204,15 +204,15 @@ function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
     e => toast("No se pudo leer " + name + ": " + errMsg(e))));
   w("contacts", "contacts");
-  w("quotes", "quotes", { orderBy: ["createdAt", "desc"], limit: 500 });
-  w("orders", "orders", { orderBy: ["createdAt", "desc"], limit: 500 });
+  w("quotes", "quotes", { orderBy: ["createdAt", "desc"] });
+  w("orders", "orders", { orderBy: ["createdAt", "desc"] });
   w("products", "products");
   w("templates", "templates");
   w("team", "users");
   w("automations", "automations");
   w("knowledge", "knowledge");
   w("forms", "forms");
-  w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"], limit: 100 });
+  w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"] });
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
   S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
@@ -1155,9 +1155,12 @@ async function addNote(c, text) {
 // ======================= Vista: Conversaciones =======================
 function watchConv(cid) {
   if (S.msgsFor === cid) return;
-  S.msgsUnsub && S.msgsUnsub(); S.msgs = []; S.msgsFor = cid;
+  const same = cid && S.msgLimitFor === cid; // al cargar anteriores no se borra lo que ya se ve
+  S.msgsUnsub && S.msgsUnsub(); if (!same) S.msgs = []; S.msgsFor = cid;
   if (!cid) return;
-  S.msgsUnsub = fb.watch(`contacts/${cid}/messages`, list => { S.msgs = list.reverse(); if (S.view === "conv") scheduleRender(); }, { orderBy: ["ts", "desc"], limit: 200 });
+  if (S.msgLimitFor !== cid) { S.msgLimit = 150; S.msgLimitFor = cid; }
+  const lim = S.msgLimit;
+  S.msgsUnsub = fb.watch(`contacts/${cid}/messages`, list => { S.msgsMore = list.length >= lim; S.msgs = list.reverse(); if (S.view === "conv") scheduleRender(); }, { orderBy: ["ts", "desc"], limit: lim });
   const c = byId(S.contacts, cid);
   if (c && c.unread) fb.update("contacts/" + cid, { unread: 0 }).catch(() => { });
 }
@@ -1190,7 +1193,7 @@ function viewConv(el) {
         <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${chIcon(chOf(c), "inl")} ${CHN[chOf(c)].label}${chOf(c) === "whatsapp" && c.waLine && lines.find(l => l.id === c.waLine) ? " · " + esc(lines.find(l => l.id === c.waLine).name) : ""}${c.phone ? " · " : ""}${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
         ${w.nolimit ? "" : `<span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span>`}</div>
       ${aiBar(c)}
-      <div class="msgs" id="msgs">${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
+      <div class="msgs" id="msgs">${S.msgsMore ? '<button class="older" id="older">Cargar mensajes anteriores</button>' : ""}${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
       <div class="composer">
         ${canSend(c) && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
         ${canSend(c) && !w.open && chOf(c) === "whatsapp" ? `<div class="row"><select class="in" id="ctpl">${waTpls.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("") || "<option value=''>No hay plantillas aprobadas</option>"}</select><button class="btn primary" id="ctplsend" ${waTpls.length ? "" : "disabled"}>Enviar plantilla</button></div>
@@ -1208,7 +1211,9 @@ function viewConv(el) {
   if ($("#convL")) $("#convL").onchange = e => { S.convLine = e.target.value; renderShell(); };
   $$("[data-c]", el).forEach(b => b.onclick = () => go("conv", b.dataset.c));
   if (!c) return;
-  const box = $("#msgs"); box.scrollTop = box.scrollHeight;
+  const box = $("#msgs");
+  if (S.keepScroll != null) { box.scrollTop = box.scrollHeight - S.keepScroll; S.keepScroll = null; } else box.scrollTop = box.scrollHeight;
+  if ($("#older")) $("#older").onclick = () => { S.keepScroll = box.scrollHeight - box.scrollTop; S.msgLimit += 300; S.msgsFor = null; watchConv(c.id); };
   $("#cback").onclick = () => { S.convSel = null; go("conv"); };
   if ($("#csend")) $("#csend").onclick = async () => { const t = $("#ctext").value.trim(); if (!t) return; $("#csend").disabled = true; await sendText(c, t); $("#ctext").value = ""; };
   if ($("#ctext") && $("#csend")) $("#ctext").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#csend").click(); } };
@@ -1392,7 +1397,7 @@ function viewContactos(el) {
       return terms.every(t => h.includes(t) || (/^\d{3,}$/.test(t) && d.includes(t))); });
   }
   list.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-  const shown = list.slice(0, 300);
+  const shown = list.slice(0, S.conShow || 300);
   el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Contactos</h1><span class="sub tabnum">${list.length} de ${S.contacts.length}</span>${f.form ? `<button class="pill" id="clrForm">Formulario: ${esc((byId(S.forms, f.form) || {}).name || "")} ✕</button>` : ""}<span class="spacer"></span>
       <button class="btn primary" id="newC">+ Nuevo contacto</button></div>
     <div class="toolbar"><input class="in" id="cq" placeholder="Buscar nombre, hotel, teléfono, ciudad…" value="${esc(S.search)}">
@@ -1403,9 +1408,10 @@ function viewContactos(el) {
     ${S.contacts.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Nombre</th><th>Hotel / empresa</th><th>Segmento</th><th>Etapa</th><th>Temperatura</th><th>WhatsApp</th><th>Responsable</th><th>Próx. seguimiento</th></tr></thead>
       <tbody>${shown.map(c => `<tr data-id="${c.id}"><td><b>${esc(c.name || "—")}</b></td><td>${esc(c.company || "")}</td><td>${esc(c.segment || "")}</td><td>${esc(c.stage || "")}</td><td>${esc(c.temperature || "")}</td>
         <td class="tabnum">${esc(c.phone || "")}</td><td>${esc(c.owner || "")}</td><td class="tabnum" style="${c.nextDate && c.nextDate < todayIso() ? "color:var(--red);font-weight:600" : ""}">${fmtDate(c.nextDate)}</td></tr>`).join("")}</tbody></table></div>
-      ${list.length > 300 ? `<p class="muted">Mostrando 300: afina la búsqueda.</p>` : ""}`
+      ${list.length > shown.length ? `<div style="text-align:center;margin:12px"><button class="btn" id="conMore">Ver ${Math.min(500, list.length - shown.length)} más</button> <span class="muted">· mostrando ${shown.length} de ${list.length}</span></div>` : ""}`
       : `<div class="empty"><p><b>Todavía no hay contactos.</b></p><p>Impórtalos desde tu Excel CasaDorada_CRM o créalos uno por uno.</p><button class="btn primary" onclick="location.hash='importar'">Importar Excel</button></div>`}</div>`;
-  $("#cq").oninput = e => { S.search = e.target.value; renderShell(); };
+  $("#cq").oninput = e => { S.search = e.target.value; S.conShow = 300; renderShell(); };
+  if ($("#conMore")) $("#conMore").onclick = () => { S.conShow = (S.conShow || 300) + 500; renderShell(); };
   if ($("#clrForm")) $("#clrForm").onclick = () => { S.conF = { ...f, form: "" }; renderShell(); };
   [["f1", "seg"], ["f2", "stage"], ["f3", "type"], ["f4", "owner"]].forEach(([id, k]) => $("#" + id).onchange = e => { S.conF = { ...f, [k]: e.target.value }; renderShell(); });
   $("#newC").onclick = () => openContact(null);
