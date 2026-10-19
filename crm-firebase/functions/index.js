@@ -7,6 +7,7 @@
 // - sendMessage: envía texto por el canal del contacto (WhatsApp, Telegram, Messenger, Instagram o chat web)
 // - telegramWebhook, webchat, connectTelegram, connectMeta, disconnectChannel: otros canales (ver canales.js)
 // - autoNuevoContacto, autoEtapa, autoMensaje, autoSinRespuesta, runCampaign: automatizaciones y campañas (ver automatizaciones.js)
+// - integrations, api, intCotizacion, intPedido: webhooks salientes y API con clave (ver integraciones.js)
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -85,15 +86,24 @@ async function handleWebhook(body) {
       const v = ch.value || {};
       const names = {};
       (v.contacts || []).forEach(c => { names[c.wa_id] = c.profile && c.profile.name; });
-      for (const m of v.messages || []) await saveInbound(m, names[m.from]);
+      const line = v.metadata && v.metadata.phone_number_id; // con varias líneas, a cuál número escribió
+      for (const m of v.messages || []) await saveInbound(m, names[m.from], line);
       for (const s of v.statuses || []) await saveStatus(s);
     }
   }
 }
 exports._handleWebhook = handleWebhook; // para pruebas
 
-async function saveInbound(m, profileName) {
+// Líneas de WhatsApp configuradas en Canales: [{ id: phone_number_id, name, number, owner }]
+let linesCache = null, linesAt = 0;
+async function waLines() {
+  if (linesCache && Date.now() - linesAt < 60000) return linesCache;
+  linesCache = (((await db.doc("settings/channels").get()).data() || {}).waLines) || []; linesAt = Date.now();
+  return linesCache;
+}
+async function saveInbound(m, profileName, line) {
   const pid = phoneId(m.from), cid = "wa_" + pid;
+  const lineCfg = line ? (await waLines()).find(l => String(l.id) === String(line)) : null;
   const ts = Number(m.timestamp) * 1000 || Date.now();
   const text = textOf(m);
   const cref = db.doc("contacts/" + cid);
@@ -103,11 +113,12 @@ async function saveInbound(m, profileName) {
     if (msnap.exists) return; // Meta puede reenviar el mismo mensaje
     const patch = { phone: "+" + pid, lastInboundAt: ts, lastMessage: text.slice(0, 200), lastMessageDir: "in", lastChannel: "whatsapp", channels: { whatsapp: pid },
       unread: admin.firestore.FieldValue.increment(1), updatedAt: Date.now(), updatedBy: "WhatsApp" };
+    if (line) patch.waLine = String(line);
     if (!snap.exists) Object.assign(patch, { name: profileName || "", segment: "WhatsApp", type: "Prospecto", stage: "Nuevo",
-      createdAt: ts, stageAt: ts, source: "WhatsApp" });
+      createdAt: ts, stageAt: ts, source: "WhatsApp" + (lineCfg && lineCfg.name ? " · " + lineCfg.name : "") }, lineCfg && lineCfg.owner ? { owner: lineCfg.owner } : {});
     else if (!snap.get("name") && profileName) patch.name = profileName;
     t.set(cref, patch, { merge: true });
-    t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp" });
+    t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}) });
   });
 }
 
@@ -134,7 +145,7 @@ exports.sendWhatsApp = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req
   if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
   const to = phoneId(c.get("phone"));
   if (!to) throw new HttpsError("failed-precondition", "El contacto no tiene WhatsApp.");
-  const phoneNumberId = WA_PHONE_ID.value();
+  const phoneNumberId = c.get("waLine") || WA_PHONE_ID.value();
   if (!phoneNumberId) throw new HttpsError("failed-precondition", "Falta configurar WA_PHONE_ID.");
 
   let payload, shown;
@@ -155,15 +166,16 @@ exports.sendWhatsApp = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req
   const pauseH = ai.exists ? Number(ai.get("pauseHours")) || 12 : 12;
   try {
     const id = await waSend(cref, payload, { text: shown, type: text ? "text" : "template", by: req.auth.uid, byName: me.name || "" },
-      { unread: 0, aiPausedUntil: Date.now() + pauseH * 3600 * 1000 });
+      { unread: 0, aiPausedUntil: Date.now() + pauseH * 3600 * 1000 }, phoneNumberId);
     return { id };
   } catch (e) { throw new HttpsError("internal", e.message); }
 });
 
 // Envía por la API de WhatsApp y devuelve el id del mensaje
-async function waPost(payload) {
-  if (!WA_PHONE_ID.value()) throw new Error("WhatsApp no está conectado (falta WA_PHONE_ID).");
-  const r = await fetch(`${GRAPH}/${WA_PHONE_ID.value()}/messages`, {
+async function waPost(payload, line) {
+  const from = line || WA_PHONE_ID.value();
+  if (!from) throw new Error("WhatsApp no está conectado (falta WA_PHONE_ID).");
+  const r = await fetch(`${GRAPH}/${from}/messages`, {
     method: "POST", headers: { Authorization: "Bearer " + WA_TOKEN.value(), "Content-Type": "application/json" }, body: JSON.stringify(payload),
   });
   const out = await r.json().catch(() => ({}));
@@ -173,11 +185,11 @@ async function waPost(payload) {
 const waText = contact => async body => {
   const to = phoneId(contact.phone);
   if (!to) throw new Error("El contacto no tiene WhatsApp.");
-  return waPost({ messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } });
+  return waPost({ messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } }, contact.waLine);
 };
 // Envía por la API de WhatsApp y registra el mensaje saliente en el contacto
-async function waSend(cref, payload, msg, extra = {}) {
-  const id = await waPost(payload);
+async function waSend(cref, payload, msg, extra = {}, line) {
+  const id = await waPost(payload, line);
   const now = Date.now();
   await cref.collection("messages").doc(id || db.collection("x").doc().id).set({ dir: "out", ts: now, channel: "whatsapp", ...msg }, { merge: true }); // merge: el estado puede haber llegado antes
   await cref.set({ lastOutboundAt: now, lastOutboundBy: msg.byName, lastMessage: msg.text.slice(0, 200), lastMessageDir: "out", updatedAt: now, updatedBy: msg.byName, ...extra }, { merge: true });
@@ -189,7 +201,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   timeoutSeconds: 300, memory: "512MiB" }, async event => {
   const m = event.data && event.data.data();
   if (!m || m.dir !== "in") return;
-  if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value()) return;
+  if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line) return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(),
     send: ({ cref, contact, text, byName }) => CH.deliver({ cref, contact, text, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
@@ -273,7 +285,7 @@ async function autoSend({ cref, contact, text, template, byName, campaign }) {
     if (!to) throw new Error("Sin número de WhatsApp.");
     const params = (template.params || []).map(p => ({ type: "text", text: String(p || "-") }));
     await waSend(cref, { messaging_product: "whatsapp", to, type: "template", template: { name: template.name, language: { code: template.lang || "es" },
-      ...(params.length ? { components: [{ type: "body", parameters: params }] } : {}) } }, { text: text || "[Plantilla " + template.name + "]", type: "template", by: "auto", byName, ...(campaign ? { campaign } : {}) }, extra);
+      ...(params.length ? { components: [{ type: "body", parameters: params }] } : {}) } }, { text: text || "[Plantilla " + template.name + "]", type: "template", by: "auto", byName, ...(campaign ? { campaign } : {}) }, extra, contact.waLine);
     return;
   }
   if (!text) throw new Error("No hay texto para este canal.");
@@ -281,19 +293,26 @@ async function autoSend({ cref, contact, text, template, byName, campaign }) {
   await CH.deliver({ cref, contact, text, channel: ch, msg: { by: "auto", byName, ...(campaign ? { campaign } : {}) }, extra, sendWhatsApp: waText(contact) });
 }
 const AUTO = require("./automatizaciones")({ db, admin, send: autoSend });
+const INT = require("./integraciones")({ db, admin, phoneId });
 const AUTO_OPTS = { region: REGION, secrets: [WA_TOKEN] };
 
 exports.autoNuevoContacto = onDocumentCreated({ document: "contacts/{cid}", ...AUTO_OPTS }, async event => {
   const c = event.data && event.data.data();
-  if (c) console.log("auto nuevo", event.params.cid, await AUTO.onNewContact(event.params.cid, c));
+  if (!c) return;
+  console.log("auto nuevo", event.params.cid, await AUTO.onNewContact(event.params.cid, c));
+  if (!c.sourceSheet) await INT.emit("contacto.creado", INT.contactOut(event.params.cid, c));
 });
 exports.autoEtapa = onDocumentUpdated({ document: "contacts/{cid}", ...AUTO_OPTS }, async event => {
   const b = event.data.before.data() || {}, a = event.data.after.data() || {};
-  if ((b.stage || "Nuevo") !== (a.stage || "Nuevo")) console.log("auto etapa", event.params.cid, await AUTO.onStageChange(event.params.cid, b, a));
+  if ((b.stage || "Nuevo") === (a.stage || "Nuevo")) return;
+  console.log("auto etapa", event.params.cid, await AUTO.onStageChange(event.params.cid, b, a));
+  await INT.emit("etapa.cambiada", { ...INT.contactOut(event.params.cid, a), previousStage: b.stage || "Nuevo" });
 });
 exports.autoMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", ...AUTO_OPTS }, async event => {
   const m = event.data && event.data.data();
-  if (m && m.dir === "in") await AUTO.onInbound(event.params.cid, m);
+  if (!m || m.dir !== "in") return;
+  await AUTO.onInbound(event.params.cid, m);
+  await INT.emit("mensaje.recibido", { contactId: event.params.cid, text: m.text, channel: m.channel || "whatsapp", ts: m.ts });
 });
 exports.autoSinRespuesta = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 540 }, async () => {
   console.log("auto sin respuesta", await AUTO.sweepNoReply());
@@ -305,6 +324,26 @@ exports.runCampaign = onCall({ ...AUTO_OPTS, timeoutSeconds: 540, memory: "512Mi
   if (!id) throw new HttpsError("invalid-argument", "Falta la campaña.");
   try { return await AUTO.runCampaign(id, me.name || ""); }
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
+});
+
+// ---------- Integraciones ----------
+exports.intCotizacion = onDocumentCreated({ document: "quotes/{id}", region: REGION }, async event => {
+  const q = event.data && event.data.data();
+  if (q) await INT.emit("cotizacion.creada", { id: event.params.id, number: q.number, contactId: q.contactId, contactName: q.contactName, items: q.items, total: q.total, status: q.status });
+});
+exports.intPedido = onDocumentCreated({ document: "orders/{id}", region: REGION }, async event => {
+  const o = event.data && event.data.data();
+  if (o) await INT.emit("pedido.creado", { id: event.params.id, number: o.number, contactId: o.contactId, contactName: o.contactName, items: o.items, total: o.total, status: o.status });
+});
+exports.integrations = onCall({ region: REGION }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede configurar integraciones.");
+  try { return await INT.manage((req.data || {}).action, req.data || {}); }
+  catch (e) { throw new HttpsError("failed-precondition", e.message); }
+});
+exports.api = onRequest({ region: REGION }, async (req, res) => {
+  try { await INT.api(req, res); }
+  catch (e) { console.error("api", e); res.status(500).json({ error: "Error del servidor." }); }
 });
 
 exports.createTeamUser = onCall({ region: REGION }, async req => {

@@ -199,6 +199,13 @@ Funcionan apenas publiques las funciones. Para eso Google activa **Cloud Schedul
 - **Configuración › Automatizaciones**: elige una idea para empezar o crea tu regla con **Cuando** y **Entonces**. Cada vez que una regla actúa, deja una nota en la conversación.
 - **Ventas › Campañas**: elige a quién enviar, escribe el mensaje y, para WhatsApp, elige una plantilla aprobada para quienes llevan más de 24 h sin escribir. Al terminar, verás cuántos se enviaron, cuántos respondieron y cuántos se omitieron.
 
+## Varias líneas, integraciones y base de conocimiento
+- **Varias líneas de WhatsApp.** En **Canales › WhatsApp › Líneas**, agrega cada número de tu cuenta de WhatsApp Business con un nombre, su identificador (Phone number ID) y, si quieres, un responsable por defecto. Todos usan el mismo token y el mismo webhook. Cada chat se responde desde la línea por la que escribió el cliente.
+- **Integraciones.** En **Configuración › Integraciones**:
+  - agrega webhooks para avisarle a Zapier, Make, n8n o tu tienda cuando llega un contacto, un mensaje, un cambio de etapa, una cotización o un pedido;
+  - genera la clave de la API para que tu página o tu tienda creen contactos y pedidos en House Chat. Los ejemplos están en "Cómo usarla".
+- **Base de conocimiento.** En **Asesora virtual**, agrega artículos (envíos, garantía, cuidados, preguntas frecuentes) o súbelos desde un archivo .txt. La asesora los usa para responder.
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash
