@@ -164,6 +164,36 @@ La asesora virtual responde los mensajes de WhatsApp las 24 horas con Claude, la
 
 ---
 
+## Otros canales: chat web, Telegram, Messenger e Instagram
+
+Todos llegan a **Conversaciones** y la asesora virtual responde en todos. Se conectan desde el CRM en **Configuración › Canales**; no hace falta usar Cloud Shell.
+
+Primero, publica una vez las funciones nuevas:
+```bash
+cd ~/CRM-CASA-DORADA- && git pull
+cd crm-firebase && firebase deploy --only functions,firestore,hosting
+```
+
+### Chat web (el más rápido)
+1. En **Canales › Chat web**, marca **Mostrar el chat en mi página web**, ajusta el título, el saludo y el color, y pulsa **Guardar**.
+2. Pulsa **Probar el chat** para verlo funcionando.
+3. Copia la línea `<script …>` y pégala en tu página web antes de `</body>`. Si tu página es de Wix, Shopify o WordPress, va en la sección de "código personalizado" o "scripts del pie de página".
+
+### Telegram (5 minutos)
+1. En Telegram, abre **@BotFather** y escribe `/newbot`.
+2. Ponle el nombre de la empresa y un usuario que termine en `bot`.
+3. Copia el token que te da y pégalo en **Canales › Telegram**. Luego pulsa **Conectar**.
+4. Comparte el enlace `t.me/tu_bot` con tus clientes.
+
+### Messenger e Instagram
+1. Necesitas la misma app de Meta de WhatsApp (fase 2).
+2. Agrega los productos **Messenger** e **Instagram**.
+3. En cada uno, configura el webhook con la URL de WhatsApp (`…/whatsappWebhook`) y tu palabra de verificación, y suscribe **messages**.
+4. Genera un **token de acceso de la página** con los permisos `pages_messaging` e `instagram_manage_messages`. Pégalo en **Canales › Messenger** y pulsa **Conectar**.
+5. Para Instagram, la cuenta debe ser profesional y estar vinculada a la página. En la app de Instagram activa **Configuración › Mensajes › Permitir acceso a los mensajes**.
+
+Messenger e Instagram, igual que WhatsApp, solo dejan responder durante las 24 horas siguientes al último mensaje del cliente. Telegram y el chat web no tienen ese límite.
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash

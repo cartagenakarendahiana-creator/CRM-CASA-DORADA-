@@ -3,7 +3,8 @@
 CRM de ventas por WhatsApp para Casa Dorada: dice a quién atender hoy, en qué orden y con qué mensaje.
 
 - **Hoy**: lista "Necesita tu intervención", ordenada por la ventana de 24 h de WhatsApp. Cada cliente muestra qué busca, el producto elegido, el paso para cerrar la venta, un mensaje sugerido y "Ya terminó".
-- **Conversaciones**: chats de WhatsApp en tiempo real, con plantillas aprobadas cuando la ventana está cerrada y notas internas.
+- **Conversaciones**: una sola bandeja para WhatsApp, Instagram, Messenger, Telegram y el chat web, con plantillas aprobadas cuando la ventana está cerrada y notas internas.
+- **Canales**: se conectan desde el CRM; el chat web se pega en cualquier página con una línea (`widget.js`).
 - **Embudo**: tablero por etapas, en el que se arrastran las tarjetas.
 - **Contactos**: ficha completa, historial e importación de `CasaDorada_CRM.xlsx`.
 - **Cotizaciones** (COT-0001…) con precio al detal y al por mayor, que se convierten en **Pedidos** (PED-0001…).
@@ -21,6 +22,8 @@ public/                 la aplicación (Firebase Hosting)
   firebase-config.js    configuración de tu proyecto
 functions/index.js      webhook y envío de WhatsApp, alta de usuarios
 functions/asesora.js    asesora virtual (Claude): herramientas y reglas de cuándo responde
+functions/canales.js    Telegram, Messenger, Instagram y chat web: entrada, envío y conexión
+public/widget.js        burbuja de chat para pegar en la página web de la empresa
 firestore.rules         quién puede leer y escribir
 ```
 
@@ -34,3 +37,5 @@ firestore.rules         quién puede leer y escribir
 | `quotes`, `orders` | cotizaciones y pedidos, numerados con `counters/` |
 | `products`, `templates` | catálogo y plantillas |
 | `settings/asesora` | asesora virtual: enabled, name, instructions, pauseHours |
+| `settings/channels` | estado público de cada canal (conectado, nombre del bot, colores del chat web) |
+| `private/channels` | tokens de Telegram y de la página de Meta; solo los leen las funciones |
