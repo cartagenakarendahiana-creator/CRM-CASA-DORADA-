@@ -233,11 +233,14 @@ const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 
 // ======================= Estructura =======================
 const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
+// Páginas que viven dentro de otra sección del menú
+const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones" };
+const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
   ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["formularios", "Formularios"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
-  ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["integraciones", "Integraciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -251,8 +254,8 @@ function renderShell() {
         <div class="brand"><img class="brand-logo" src="logo.svg" alt=""><div><b>${APP_NAME}</b><small>CRM · ${esc(EMPRESA)}</small></div></div>
         <label class="side-search">${icon("buscar")}<input id="gsearch" placeholder="Buscar contacto" value="${esc(S.search)}" autocomplete="off"></label>
       </div>
-      <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => k === S.view) ? "" : items.map(([k, t]) =>
-        `<button data-go="${k}" class="${S.view === k ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
+      <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => navOn(k)) ? "" : items.map(([k, t]) =>
+        `<button data-go="${k}" class="${navOn(k) ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
       <div class="side-user"><button class="acc-btn" id="myAcc" title="Mi cuenta: cambiar contraseña"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div></button>
         <button class="iconbtn" id="logout" title="Salir" aria-label="Salir">${icon("salir")}</button></div>
@@ -269,7 +272,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -638,9 +641,43 @@ function openForm(id) {
 }
 
 // ======================= Integraciones =======================
+// ======================= Integraciones: centro organizado por categorías =======================
+const crumb = t => `<nav class="crumb"><a href="#integraciones">Integraciones</a><span>›</span><b>${esc(t)}</b></nav>`;
 function viewIntegraciones(el) {
+  const ch = S.ch || {}, adm = isAdmin();
+  const on = k => k === "whatsapp" ? WHATSAPP_ENABLED : !!(ch[k] && ch[k].on);
+  const lines = (ch.waLines || []).length;
+  const tile = t => `<a class="itile" href="${t.href}"${t.id ? ` data-anchor="${t.id}"` : ""}>
+      <span class="itile-ic" style="--ic:${t.color}">${t.svg || icon(t.icon)}</span>
+      <span class="itile-b"><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></span>
+      <span class="itile-s ${t.state === "on" ? "on" : t.state === "warn" ? "warn" : ""}">${t.state === "on" ? "Conectado" : t.state === "warn" ? "Pendiente" : "Disponible"}</span></a>`;
+  const chTile = k => ({ href: "#canales", id: "ch-" + k, name: CHN[k].label, color: CHN[k].color, svg: `<svg viewBox="0 0 24 24">${CHN[k].svg.replace(/(fill|stroke)="#fff"/g, `$1="${CHN[k].color}"`).replace(/fill="currentColor"/g, 'fill="#fff"')}</svg>`,
+    desc: { whatsapp: lines ? `${lines} líneas configuradas` : "API oficial de Meta, varias líneas", instagram: "Mensajes directos de tu cuenta profesional", messenger: "Mensajes de tu página de Facebook",
+      telegram: ch.telegram && ch.telegram.on ? "@" + ch.telegram.username : "Bot con el nombre de tu empresa", web: "Burbuja de chat para tu página web" }[k], state: on(k) ? "on" : "" });
+  const ai = S.ai || {}, autos = (S.automations || []).filter(a => a.on).length, forms = (S.forms || []).filter(f => f.on !== false).length;
+  const groups = [
+    ["Canales de mensajería", "Todos llegan a una sola bandeja de Conversaciones.", ["whatsapp", "instagram", "messenger", "telegram", "web"].map(chTile)],
+    ["Inteligencia artificial", "Atención automática las 24 horas.", [{ href: "#asesora", name: "Asesora virtual", icon: "asesora", color: "#7c4dff", desc: `${ai.name || "Sofía"} · ${({ haiku: "Haiku 5.5", sonnet: "Sonnet 5.5", opus: "Opus 5.5" })[ai.model || "haiku"]} · ${(S.knowledge || []).length} ${(S.knowledge || []).length === 1 ? "artículo" : "artículos"} de conocimiento`, state: ai.enabled ? "on" : "" }]],
+    ["Captura y automatización", "Consigue clientes y ahorra trabajo repetitivo.", [
+      { href: "#formularios", name: "Formularios", icon: "formularios", color: "#0ea5a4", desc: forms ? `${forms} ${forms === 1 ? "formulario activo" : "formularios activos"}` : "Para tu web, Instagram o un QR", state: forms ? "on" : "" },
+      { href: "#automatizaciones", name: "Automatizaciones", icon: "automatizaciones", color: "#f59e0b", desc: autos ? `${autos} ${autos === 1 ? "regla activa" : "reglas activas"}` : "Cuando pasa algo, House Chat actúa", state: autos ? "on" : "" },
+      { href: "#campanas", name: "Campañas", icon: "campanas", color: "#ef4444", desc: (S.campaigns || []).length ? `${(S.campaigns || []).length} ${(S.campaigns || []).length === 1 ? "campaña" : "campañas"} · mensajes por segmento` : "Mensajes a un grupo de clientes", state: (S.campaigns || []).length ? "on" : "" }]],
+    ["Conectores", "Une House Chat con otras herramientas.", [
+      { href: "#conectores", name: "Webhooks", icon: "integraciones", color: "#334155", desc: "Avisa a tu tienda, ERP o Google Sheets", state: "" },
+      { href: "#conectores", name: "API", icon: "integraciones", color: "#1f3a5f", desc: "Crea contactos y pedidos desde otros sistemas", state: "" },
+      { href: "#conectores", name: "Zapier · Make · n8n", icon: "integraciones", color: "#ff4f00", desc: "Más de 5.000 apps mediante webhooks", state: "" }]],
+  ];
+  const total = groups.reduce((n, g) => n + g[2].length, 0), conn = groups.reduce((n, g) => n + g[2].filter(t => t.state === "on").length, 0);
+  el.innerHTML = `<div class="page">
+    <div class="page-head"><div><h1>Integraciones</h1><span class="sub">Canales, inteligencia artificial, automatización y conectores, en un solo lugar.</span></div>
+      <span class="spacer"></span><div class="hub-sum"><b>${conn}</b> de ${total} activas</div></div>
+    ${groups.map(([t, d, tiles]) => `<section class="hub-g"><div class="hub-gh"><h2>${t}</h2><span>${d}</span></div><div class="itiles">${tiles.map(tile).join("")}</div></section>`).join("")}
+    ${adm ? "" : '<p class="muted" style="font-size:12.5px">Solo la administradora puede cambiar las integraciones.</p>'}</div>`;
+  $$("[data-anchor]", el).forEach(a => a.onclick = () => { S.chAnchor = a.dataset.anchor; });
+}
+function viewConectores(el) {
   const adm = isAdmin(), base = location.origin + "/api/v1";
-  if (!adm) { el.innerHTML = `<div class="page"><div class="page-head"><h1>Integraciones</h1></div><p class="muted">Solo la administradora puede ver y configurar las integraciones.</p></div>`; return; }
+  if (!adm) { el.innerHTML = `<div class="page">${crumb("Webhooks y API")}<div class="page-head"><h1>Webhooks y API</h1></div><p class="muted">Solo la administradora puede ver y configurar las integraciones.</p></div>`; return; }
   const I = S.integ;
   if (!I && !S.integLoading) {
     S.integLoading = true;
@@ -648,7 +685,7 @@ function viewIntegraciones(el) {
   }
   const ev = (I && I.events) || {};
   const ok = st => /^2\d\d$/.test(String(st));
-  el.innerHTML = `<div class="page"><div class="page-head"><h1>Integraciones</h1><span class="sub">Conecta House Chat con tu tienda, tu ERP, Zapier, Make o n8n.</span></div>
+  el.innerHTML = `<div class="page">${crumb("Webhooks y API")}<div class="page-head"><div><h1>Webhooks y API</h1><span class="sub">Conecta House Chat con tu tienda, tu ERP, Zapier, Make o n8n.</span></div></div>
     ${!I ? '<div class="empty">Cargando…</div>' : I.error ? `<div class="card" style="padding:14px 16px"><b>No se pudo cargar.</b><p class="muted" style="margin:6px 0 0">${esc(I.error)}. Si aún no publicas las funciones nuevas, en Cloud Shell: <code>firebase deploy --only functions</code></p></div>` : `
     <div class="chgrid">
       <section class="chcard"><div class="chcard-h">${icon("integraciones")}<div><b>Webhooks: avisar a otros sistemas</b><small>House Chat envía un POST con JSON cuando pasa algo</small></div></div>
@@ -711,10 +748,10 @@ function viewCanales(el) {
   const embed = `<script src="${location.origin}/widget.js" defer><\/script>`;
   const web = ch.web || {};
   const st = on => `<span class="pill ${on ? "green" : ""}">${on ? "Conectado" : "Sin conectar"}</span>`;
-  const card = (k, on, body) => `<section class="chcard"><div class="chcard-h">${chIcon(k, "lg")}<div><b>${CHN[k].label}</b><small>${{
+  const card = (k, on, body) => `<section class="chcard" id="ch-${k}"><div class="chcard-h">${chIcon(k, "lg")}<div><b>${CHN[k].label}</b><small>${{
     whatsapp: "Tu número de ventas por la API oficial de Meta", instagram: "Mensajes directos de tu cuenta de Instagram de empresa",
     messenger: "Mensajes de tu página de Facebook", telegram: "Un bot de Telegram con el nombre de tu empresa", web: "Una burbuja de chat en tu página web" }[k]}</small></div>${st(on)}</div>${body}</section>`;
-  el.innerHTML = `<div class="page"><div class="page-head"><h1>Canales</h1><span class="sub">Todo llega a <b>Conversaciones</b> y la asesora virtual puede responder en todos.</span></div>
+  el.innerHTML = `<div class="page">${crumb("Canales de mensajería")}<div class="page-head"><div><h1>Canales de mensajería</h1><span class="sub">Todo llega a <b>Conversaciones</b> y la asesora virtual puede responder en todos.</span></div></div>
     <div class="chgrid">
     ${card("whatsapp", WHATSAPP_ENABLED, `<p class="muted">Se conecta con la app de Meta (WhatsApp Cloud API). Sigue la <b>fase 2</b> de la guía de instalación; cuando termines, cambia <code>WHATSAPP_ENABLED</code> a <code>true</code> en <code>firebase-config.js</code>.</p>
       <p class="muted">Webhook para Meta: <code class="sel">${esc(hook)}</code></p>
@@ -742,6 +779,7 @@ function viewCanales(el) {
     ${card("instagram", !!(ch.instagram && ch.instagram.on), ch.instagram && ch.instagram.on ? `<p>Conectado junto con Messenger.</p>`
       : `<p class="muted">Se conecta junto con Messenger, con el mismo token de la página. Tu cuenta de Instagram debe ser <b>profesional</b> y estar vinculada a la página de Facebook, y en Instagram activa <b>Configuración › Mensajes › Permitir acceso a los mensajes</b>.</p>`)}
     </div></div>`;
+  if (S.chAnchor && $("#" + S.chAnchor)) { const t = $("#" + S.chAnchor); S.chAnchor = null; t.scrollIntoView({ block: "start" }); t.classList.add("flash"); }
   if ($("#linef")) $("#linef").onsubmit = async e => {
     e.preventDefault();
     const line = { id: $("#lid").value.replace(/\D/g, ""), name: $("#lnm").value.trim(), number: $("#lnum").value.trim(), owner: $("#low").value };
