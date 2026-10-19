@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formulario</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<style>
+  :root{--c:#0f7a4c;--ink:#1c2733;--muted:#6b7887;--line:#dfe5ec;--bg:#f4f6f9}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);font-size:15px;line-height:1.45}
+  body.embed{background:transparent}
+  main{max-width:520px;margin:0 auto;padding:28px 18px}
+  body.embed main{padding:4px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(16,30,54,.08);overflow:hidden}
+  .top{background:var(--c);color:#fff;padding:22px 24px}
+  .top h1{margin:0;font-size:21px;letter-spacing:-.01em}.top p{margin:6px 0 0;opacity:.9;font-size:14px}
+  form{padding:20px 24px 24px;display:grid;gap:14px}
+  label{display:grid;gap:5px;font-size:13px;font-weight:600}
+  label>small{display:inline;margin-left:4px}
+  label small{font-weight:400;color:var(--muted)}
+  input,textarea,select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:11px 12px;width:100%;background:#fff;color:var(--ink)}
+  input:focus,textarea:focus,select:focus{outline:2px solid var(--c);outline-offset:0;border-color:transparent}
+  textarea{min-height:90px;resize:vertical}
+  button{font:inherit;border:0;border-radius:10px;padding:13px;background:var(--c);color:#fff;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.6;cursor:wait}
+  .err{color:#c62828;font-size:13px;margin:0;min-height:1em}
+  .ok{padding:40px 24px;text-align:center}.ok b{display:block;font-size:19px;margin-bottom:6px}.ok .ic{font-size:40px}
+  .hp{position:absolute;left:-9999px}
+  .brand{text-align:center;color:#9aa6b2;font-size:11px;margin-top:10px}
+</style>
+</head>
+<body>
+<main><div class="card" id="card"><div class="ok">Cargando…</div></div><div class="brand">House Chat</div></main>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), id = q.get("id") || "", API = "/api/form";
+  if (q.get("embed")) document.body.classList.add("embed");
+  var card = document.getElementById("card");
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function resize() { try { parent.postMessage({ houseChatForm: id, height: document.documentElement.scrollHeight }, "*"); } catch (e) {} }
+  function fieldHtml(f) {
+    var req = f.required ? " required" : "", lab = '<label><span>' + esc(f.label) + (f.required ? "" : " <small>(opcional)</small>") + '</span>';
+    if (f.type === "textarea") return lab + '<textarea name="' + esc(f.key) + '"' + req + '></textarea></label>';
+    if (f.type === "select") return lab + '<select name="' + esc(f.key) + '"' + req + '><option value="">Elige…</option>' + (f.options || []).map(function (o) { return "<option>" + esc(o) + "</option>"; }).join("") + "</select></label>";
+    var type = f.key === "email" ? "email" : f.key === "phone" ? "tel" : "text";
+    return lab + '<input name="' + esc(f.key) + '" type="' + type + '"' + (f.key === "phone" ? ' inputmode="tel" autocomplete="tel"' : f.key === "name" ? ' autocomplete="name"' : f.key === "email" ? ' autocomplete="email"' : "") + req + ' maxlength="300"></label>';
+  }
+  fetch(API + "?id=" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (f) {
+    if (f.error) { card.innerHTML = '<div class="ok"><b>' + esc(f.error) + "</b></div>"; resize(); return; }
+    document.title = f.title;
+    document.documentElement.style.setProperty("--c", f.color || "#0f7a4c");
+    card.innerHTML = '<div class="top"><h1>' + esc(f.title) + "</h1>" + (f.intro ? "<p>" + esc(f.intro) + "</p>" : "") + "</div>" +
+      '<form novalidate>' + f.fields.map(fieldHtml).join("") + '<input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">' +
+      '<p class="err" role="alert"></p><button>' + esc(f.button) + "</button></form>";
+    var form = card.querySelector("form"), err = card.querySelector(".err"), btn = card.querySelector("button");
+    form.onsubmit = function (e) {
+      e.preventDefault(); err.textContent = "";
+      if (!form.checkValidity()) { var bad = form.querySelector(":invalid"); err.textContent = "Revisa: " + bad.closest("label").firstChild.firstChild.textContent.trim(); bad.focus(); return; }
+      var values = {}; f.fields.forEach(function (x) { values[x.key] = form.elements[x.key].value; });
+      btn.disabled = true; btn.textContent = "Enviando…";
+      fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id, values: values, website: form.elements.website.value, page: document.referrer || location.href }) })
+        .then(function (r) { return r.json(); }).then(function (d) {
+          if (d.error) { err.textContent = d.error; btn.disabled = false; btn.textContent = f.button; resize(); return; }
+          card.innerHTML = '<div class="ok"><div class="ic">✅</div><b>' + esc(d.thanks || f.thanks) + "</b></div>"; resize();
+        }).catch(function () { err.textContent = "No se pudo enviar. Revisa tu conexión."; btn.disabled = false; btn.textContent = f.button; });
+    };
+    resize();
+  }).catch(function () { card.innerHTML = '<div class="ok"><b>No se pudo cargar el formulario.</b></div>'; });
+  addEventListener("resize", resize);
+})();
+</script>
+</body>
+</html>

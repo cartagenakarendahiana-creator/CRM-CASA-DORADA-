@@ -72,6 +72,7 @@ const ICONS = {
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
+  formularios: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   integraciones: '<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>',
   canales: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.3 11l7.4-3.8M8.3 13l7.4 3.8"/>',
   asesora: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
@@ -84,6 +85,14 @@ const icon = k => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICO
 
 // ======================= Modelo =======================
 const STAGES = ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Negociación", "Ganado", "Perdido"];
+// Embudos: "ventas" es el de siempre; la administradora puede crear más, cada uno con sus etapas (siempre terminan en Ganado y Perdido)
+const DEFAULT_PIPE = { id: "ventas", name: "Ventas", stages: STAGES };
+const pipes = () => { const l = (S.pipes && S.pipes.length ? S.pipes : [DEFAULT_PIPE]); return l.some(p => p.id === "ventas") ? l : [DEFAULT_PIPE, ...l]; };
+const pipeOf = c => pipes().find(p => p.id === ((c && c.pipeline) || "ventas")) || pipes()[0];
+const stagesOf = c => pipeOf(c).stages;
+const allStages = () => [...new Set(pipes().flatMap(p => p.stages))];
+const ST_COLORS = ["#8cb8ff", "#5fcde4", "#f5c84c", "#ff9f5a", "#b48cff", "#f78fb3", "#7bd389", "#a0aec0"];
+const stColor = (st, i) => st === "Ganado" ? "#3dbb73" : st === "Perdido" ? "#ff6b6b" : ST_COLORS[i % ST_COLORS.length];
 const SEGMENTS = ["Hoteles", "Servicio", "Distribución", "Dotación", "WhatsApp", "Otro"];
 const TEMPS = ["🔥 Caliente", "🌤 Tibio", "❄️ Frío"];
 const Q_STATUS = ["Borrador", "Enviada", "Aceptada", "Rechazada", "Convertida"];
@@ -107,7 +116,7 @@ const DEFAULT_TEMPLATES = [
 ];
 
 const S = {
-  user: null, me: null, contacts: [], quotes: [], orders: [], products: [], templates: [], team: [], automations: [], campaigns: [], knowledge: [],
+  user: null, me: null, contacts: [], quotes: [], orders: [], products: [], templates: [], team: [], automations: [], campaigns: [], knowledge: [], forms: [],
   loaded: {}, view: "hoy", sel: null, convSel: null, convFilter: "todas", search: "", msgsUnsub: null, msgs: [], msgsFor: null,
   hoyMsgsUnsub: null, hoyMsgs: [], hoyMsgsFor: null, unsubs: [],
 };
@@ -202,9 +211,11 @@ function startData() {
   w("team", "users");
   w("automations", "automations");
   w("knowledge", "knowledge");
+  w("forms", "forms");
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"], limit: 100 });
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
+  S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
   window.addEventListener("hashchange", route);
   route();
   setInterval(() => { if (S.view === "hoy" && !document.hidden) scheduleRender(); }, 60000);
@@ -224,7 +235,7 @@ const go = (v, id) => { location.hash = v + (id ? "/" + id : ""); };
 const navClosed = g => { try { return localStorage.getItem("crm-nav-" + g) === "1"; } catch { return false; } };
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["metricas", "Métricas"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["formularios", "Formularios"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["integraciones", "Integraciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -258,7 +269,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -348,7 +359,7 @@ function openRule(id, seed) {
   const actFields = (a, i) => {
     const f = {
       asignar: () => sel(`a${i}.owner`, [["rotar", "Por turnos entre asesores"], ...team], a.owner),
-      etapa: () => sel(`a${i}.stage`, STAGES, a.stage),
+      etapa: () => sel(`a${i}.stage`, allStages(), a.stage),
       mensaje: () => `<textarea class="in" data-f="a${i}.text" rows="2" placeholder="Hola {nombre}…">${esc(a.text || "")}</textarea>
         ${sel(`a${i}.tpl`, waTpls.map(t => [t.id, "Plantilla WhatsApp: " + t.name]), (waTpls.find(t => a.template && t.waName === a.template.name) || {}).id, "Si la ventana de WhatsApp está cerrada: no enviar")}
         <small class="muted">Variables: {nombre} {empresa} {asesor} {producto} {busca}</small>`,
@@ -364,7 +375,7 @@ function openRule(id, seed) {
       <div class="mb">
         <div><label class="lb" for="rn">Nombre</label><input class="in" id="rn" value="${esc(r.name || "")}" required placeholder="Ej: Repartir chats nuevos"></div>
         <fieldset class="fs"><legend>Cuando</legend><div class="rule-row">${sel("t.type", Object.entries(TRIGGERS), t.type)}
-          ${t.type === "etapa" ? sel("t.stage", STAGES, t.stage) : ""}
+          ${t.type === "etapa" ? sel("t.stage", allStages(), t.stage) : ""}
           ${t.type === "palabra" ? `<input class="in" data-f="t.keywords" value="${esc((t.keywords || []).join(", "))}" placeholder="precio, cotización, envío">` : ""}
           ${t.type === "sin_respuesta" ? `<input class="in" type="number" min="1" data-f="t.days" value="${t.days || 3}" style="max-width:90px"><span class="muted">días desde tu último mensaje</span>` : ""}
           ${t.type === "nuevo_contacto" ? sel("t.channel", Object.keys(CHN).map(k => [k, CHN[k].label]), t.channel, "Por cualquier canal") : ""}</div></fieldset>
@@ -478,7 +489,7 @@ function openCampaign(id) {
       <div class="mb">
         <div><label class="lb" for="cpn">Nombre</label><input class="in" id="cpn" value="${esc(cp.name)}" required placeholder="Ej: Sábanas nuevas para hoteles" ${locked ? "disabled" : ""}></div>
         <fieldset class="fs"><legend>A quién</legend><div class="grid2">
-          ${sel("segment", SEGMENTS, "Todos los segmentos")}${sel("stage", STAGES, "Todas las etapas")}${sel("type", ["Prospecto", "Cliente"], "Prospectos y clientes")}
+          ${sel("segment", SEGMENTS, "Todos los segmentos")}${pipes().length > 1 ? sel("pipeline", pipes().map(p => [p.id, "Embudo " + p.name]), "Todos los embudos") : ""}${sel("stage", allStages(), "Todas las etapas")}${sel("type", ["Prospecto", "Cliente"], "Prospectos y clientes")}
           ${sel("temperature", TEMPS, "Cualquier temperatura")}${sel("owner", team, "Cualquier responsable")}${sel("channel", Object.keys(CHN).map(k => [k, CHN[k].label]), "Todos los canales")}
           ${sel("tag", tags, "Cualquier etiqueta")}
           <div><input class="in" type="number" min="0" data-cf="quietDays" value="${cp.filter.quietDays || ""}" placeholder="Sin hablar hace… días" ${locked ? "disabled" : ""}></div></div></fieldset>
@@ -532,6 +543,97 @@ function openCampaign(id) {
     const nid = fb.newId("campaigns"); await fb.set("campaigns/" + nid, { ...data, createdAt: Date.now(), createdBy: S.me.name }, false); id = nid; return nid;
   };
   m.addEventListener("close", () => { unsub && unsub(); }, { once: true });
+  draw(); m.showModal();
+}
+
+// ======================= Formularios de captura =======================
+const FORM_BASE = [["name", "Nombre"], ["phone", "Celular / WhatsApp"], ["email", "Correo"], ["company", "Hotel / empresa"], ["city", "Ciudad"]];
+const formUrl = f => `${location.origin}/f.html?id=${f.id}`;
+const formEmbed = f => `<iframe src="${formUrl(f)}&embed=1" id="hc-${f.id}" style="width:100%;max-width:560px;border:0;height:640px" title="${(f.title || f.name || "Formulario").replace(/"/g, "")}"></iframe>\n<script>addEventListener("message",function(e){if(e.data&&e.data.houseChatForm==="${f.id}")document.getElementById("hc-${f.id}").style.height=e.data.height+"px"})<\/script>`;
+function viewFormularios(el) {
+  const adm = isAdmin(), list = (S.forms || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const leads = id => S.contacts.filter(c => c.formId === id);
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Formularios</h1><span class="sub">Captura clientes desde tu página web, Instagram o un código QR.</span><span class="spacer"></span>
+      ${adm ? '<button class="btn primary" id="newForm">+ Nuevo formulario</button>' : ""}</div>
+    ${list.length ? `<div class="forms">${list.map(f => { const l = leads(f.id), week = l.filter(c => (c.lastFormAt || 0) > Date.now() - 7 * DAY).length; return `<div class="fcard ${f.on === false ? "off" : ""}">
+        <div class="fcard-h"><b>${esc(f.name)}</b><span class="spacer"></span>${f.on === false ? '<span class="pill">Apagado</span>' : '<span class="pill green">Activo</span>'}</div>
+        <div class="fcard-k"><div><b>${l.length}</b>contactos</div><div><b>${week}</b>esta semana</div><div><b>${f.count || 0}</b>envíos</div></div>
+        <div class="muted" style="font-size:12.5px">${esc(f.segment || "Formulario")} · ${esc((pipes().find(p => p.id === (f.pipeline || "ventas")) || DEFAULT_PIPE).name)} › ${esc(f.stage || "Nuevo")}${f.owner ? " · " + (f.owner === "rotar" ? "por turnos" : esc(f.owner)) : ""}</div>
+        <div class="chrow"><a class="btn sm" href="${formUrl(f)}" target="_blank" rel="noopener">Abrir</a><button class="btn sm" data-flink="${f.id}">Copiar enlace</button><button class="btn sm" data-femb="${f.id}">Copiar código para tu web</button>
+          ${l.length ? `<button class="btn sm" data-fleads="${f.id}">Ver contactos</button>` : ""}${adm ? `<span class="spacer"></span><button class="link" data-fedit="${f.id}">Editar</button>` : ""}</div></div>`; }).join("")}</div>`
+      : `<div class="empty"><p><b>Aún no tienes formularios.</b></p><p>Crea uno para que los clientes dejen sus datos en tu página web o desde el enlace de tu Instagram. Cada envío crea el contacto, lo pone en el embudo y le asigna responsable.</p></div>`}</div>`;
+  if ($("#newForm")) $("#newForm").onclick = () => openForm(null);
+  $$("[data-fedit]", el).forEach(b => b.onclick = () => openForm(b.dataset.fedit));
+  $$("[data-flink]", el).forEach(b => b.onclick = () => copy(formUrl(byId(S.forms, b.dataset.flink))));
+  $$("[data-femb]", el).forEach(b => b.onclick = () => copy(formEmbed(byId(S.forms, b.dataset.femb))));
+  $$("[data-fleads]", el).forEach(b => b.onclick = () => { S.search = ""; S.conF = { form: b.dataset.fleads }; go("contactos"); });
+}
+function openForm(id) {
+  const base = id ? byId(S.forms, id) : null;
+  const f = base ? JSON.parse(JSON.stringify(base)) : { name: "", title: "Cotiza tu dotación", intro: "Déjanos tus datos y un asesor te escribe por WhatsApp.", button: "Quiero que me contacten",
+    thanks: "¡Gracias! Te escribimos muy pronto por WhatsApp.", color: "#0f7a4c", segment: "Hoteles", pipeline: "ventas", stage: "Nuevo", owner: "rotar", tags: ["Formulario"], on: true,
+    fields: [{ key: "name", label: "Nombre", required: true }, { key: "phone", label: "Celular / WhatsApp", required: true }, { key: "company", label: "Hotel / empresa" }, { key: "city", label: "Ciudad" },
+      { key: "q1", label: "¿Qué necesitas?", type: "textarea" }] };
+  const m = $("#modal"), team = S.team.filter(u => u.active !== false).map(u => u.name);
+  const draw = () => {
+    const pipe = pipes().find(p => p.id === f.pipeline) || pipes()[0];
+    const has = k => f.fields.find(x => x.key === k);
+    const custom = f.fields.filter(x => !FORM_BASE.some(([k]) => k === x.key));
+    m.innerHTML = `<form id="ff"><div class="mh"><h2>${id ? esc(f.name) : "Nuevo formulario"}</h2><button class="iconbtn" type="button" id="fx" aria-label="Cerrar">✕</button></div>
+      <div class="mb">
+        <div class="grid2"><div><label class="lb" for="fn">Nombre interno</label><input class="in" id="fn" value="${esc(f.name)}" required placeholder="Ej: Página web · Hoteles"></div>
+          <div><label class="lb" for="fco">Color</label><input class="in" id="fco" type="color" value="${esc(f.color)}"></div>
+          <div class="full"><label class="lb" for="ft">Título que ve el cliente</label><input class="in" id="ft" value="${esc(f.title)}"></div>
+          <div class="full"><label class="lb" for="fi">Texto de introducción</label><input class="in" id="fi" value="${esc(f.intro)}"></div></div>
+        <fieldset class="fs"><legend>Campos</legend><div class="fflds">
+          ${FORM_BASE.map(([k, l]) => `<div class="ffld"><label class="switch sm"><input type="checkbox" data-fb="${k}" ${has(k) ? "checked" : ""}> <span>${l}</span></label>
+            <label class="muted" style="font-size:12px"><input type="checkbox" data-fr="${k}" ${has(k) && has(k).required ? "checked" : ""}> obligatorio</label></div>`).join("")}
+          ${custom.map(x => { const i = f.fields.indexOf(x); return `<div class="ffld cus"><input class="in" data-cl="${i}" value="${esc(x.label)}" placeholder="Pregunta">
+            <select class="in" data-ct="${i}"><option value="text" ${x.type !== "textarea" && x.type !== "select" ? "selected" : ""}>Respuesta corta</option><option value="textarea" ${x.type === "textarea" ? "selected" : ""}>Respuesta larga</option><option value="select" ${x.type === "select" ? "selected" : ""}>Lista de opciones</option></select>
+            ${x.type === "select" ? `<input class="in" data-co="${i}" value="${esc((x.options || []).join(", "))}" placeholder="Opciones separadas por coma">` : ""}
+            <label class="muted" style="font-size:12px"><input type="checkbox" data-cr="${i}" ${x.required ? "checked" : ""}> obligatorio</label><button class="iconbtn" type="button" data-cdel="${i}" aria-label="Quitar">✕</button></div>`; }).join("")}
+          <button class="btn sm" type="button" id="fadd">+ Agregar pregunta</button></div></fieldset>
+        <fieldset class="fs"><legend>Qué pasa con cada envío</legend><div class="grid2">
+          <div><label class="lb" for="fsg">Segmento</label><select class="in" id="fsg">${SEGMENTS.map(x => `<option ${f.segment === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+          <div><label class="lb" for="fow">Responsable</label><select class="in" id="fow"><option value="">Sin asignar</option><option value="rotar" ${f.owner === "rotar" ? "selected" : ""}>Por turnos entre asesores</option>${team.map(t => `<option ${f.owner === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
+          ${pipes().length > 1 ? `<div><label class="lb" for="fpi">Embudo</label><select class="in" id="fpi">${pipes().map(p => `<option value="${p.id}" ${p.id === pipe.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>` : ""}
+          <div><label class="lb" for="fst">Etapa</label><select class="in" id="fst">${pipe.stages.filter(x => x !== "Ganado" && x !== "Perdido").map(x => `<option ${f.stage === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>
+          <div><label class="lb" for="ftg">Etiquetas</label><input class="in" id="ftg" value="${esc((f.tags || []).join(", "))}"></div>
+          <div><label class="lb" for="fbt">Texto del botón</label><input class="in" id="fbt" value="${esc(f.button)}"></div>
+          <div class="full"><label class="lb" for="fth">Mensaje de gracias</label><input class="in" id="fth" value="${esc(f.thanks)}"></div></div>
+          <small class="muted">Cada envío crea el contacto (o actualiza el que ya existe con ese celular), deja una nota con las respuestas y una tarea en Hoy para contactarlo. También dispara tus automatizaciones de "contacto nuevo".</small></fieldset>
+        <label class="switch sm"><input type="checkbox" id="fon" ${f.on !== false ? "checked" : ""}> <span>Formulario activo</span></label>
+      </div>
+      <div class="mf">${id ? '<button class="btn danger" type="button" id="fdel">Eliminar</button><span class="spacer"></span>' : ""}<button class="btn" type="button" id="fc">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+    $("#fx").onclick = $("#fc").onclick = () => m.close();
+    $("#fadd").onclick = () => { read(); f.fields.push({ key: "q" + Date.now().toString(36), label: "", type: "text" }); setTimeout(draw); };
+    $$("[data-cdel]", m).forEach(b => b.onclick = () => { read(); f.fields.splice(+b.dataset.cdel, 1); setTimeout(draw); });
+    $$("[data-ct]", m).forEach(s2 => s2.onchange = () => { read(); setTimeout(draw); });
+    if ($("#fpi")) $("#fpi").onchange = () => { read(); const p = pipes().find(x => x.id === f.pipeline); f.stage = p.stages[0]; setTimeout(draw); };
+    if ($("#fdel")) $("#fdel").onclick = async () => { if (!await ask("¿Eliminar este formulario? El enlace dejará de funcionar.", "Eliminar")) return; await fb.remove("forms/" + id); m.close(); };
+    $("#ff").onsubmit = async e => {
+      e.preventDefault(); read();
+      if (!f.fields.some(x => ["name", "phone", "email"].includes(x.key))) return toast("Incluye al menos Nombre, Celular o Correo.");
+      if (f.fields.some(x => !x.label)) return toast("Escribe el texto de cada pregunta.");
+      const data = { ...f, ...stamp() }; delete data.id; delete data.count; delete data.rate; delete data.lastAt;
+      try {
+        if (id) await fb.update("forms/" + id, data);
+        else { const nid = fb.newId("forms"); await fb.set("forms/" + nid, { ...data, createdAt: Date.now(), count: 0 }, false); }
+        m.close(); toast("Formulario guardado");
+      } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+    };
+  };
+  const read = () => {
+    f.name = $("#fn").value.trim(); f.color = $("#fco").value; f.title = $("#ft").value.trim(); f.intro = $("#fi").value.trim();
+    // campos base en orden fijo, luego las preguntas propias
+    const custom = f.fields.filter(x => !FORM_BASE.some(([k]) => k === x.key)).map(x => { const i = f.fields.indexOf(x);
+      return { key: x.key, label: $(`[data-cl="${i}"]`).value.trim(), type: $(`[data-ct="${i}"]`).value, required: $(`[data-cr="${i}"]`).checked,
+        ...($(`[data-co="${i}"]`) ? { options: $(`[data-co="${i}"]`).value.split(",").map(o => o.trim()).filter(Boolean) } : x.options ? { options: x.options } : {}) }; });
+    const baseF = FORM_BASE.filter(([k]) => $(`[data-fb="${k}"]`).checked).map(([k, l]) => ({ key: k, label: (f.fields.find(x => x.key === k) || {}).label || l, required: $(`[data-fr="${k}"]`).checked }));
+    f.fields = [...baseF, ...custom];
+    f.segment = $("#fsg").value; f.owner = $("#fow").value; if ($("#fpi")) f.pipeline = $("#fpi").value; f.stage = $("#fst").value;
+    f.tags = $("#ftg").value.split(",").map(t => t.trim()).filter(Boolean); f.button = $("#fbt").value.trim() || "Enviar"; f.thanks = $("#fth").value.trim(); f.on = $("#fon").checked;
+  };
   draw(); m.showModal();
 }
 
@@ -1118,7 +1220,7 @@ function viewConv(el) {
 }
 function contactSummary(c) {
   const qs = S.quotes.filter(q => q.contactId === c.id).slice(0, 5);
-  return `<div><p class="eyebrow">Etapa</p><select class="in" id="sStage">${STAGES.map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+  return `<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option ${c.owner === u.name ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Qué busca</p><div class="inline-edit" id="sLook">${esc(c.looking || "—")}</div></div>
     <div><p class="eyebrow">Producto elegido</p><div>${c.chosenProduct ? esc(c.chosenProduct.name) + " · " + money(c.chosenProduct.price) : "—"}</div><button class="btn sm" id="sProd" style="margin-top:6px">Elegir</button></div>
@@ -1157,36 +1259,79 @@ async function moveStage(c, stage) {
 function stageSheet(c) {
   const m = $("#modal"), cur = c.stage || "Nuevo";
   m.innerHTML = `<div class="mh"><h2>${esc(contactName(c))}</h2><button class="iconbtn" id="sx" aria-label="Cerrar">✕</button></div>
-    <div class="mb"><p class="eyebrow" style="margin:0">Mover a la etapa</p>
-      <div class="stage-pick">${STAGES.map(st => `<button class="btn ${st === cur ? "on" : ""}" data-st="${st}">${st === cur ? "✓ " : ""}${st}</button>`).join("")}</div>
+    <div class="mb">${pipes().length > 1 ? `<div><label class="lb" for="spipe">Embudo</label><select class="in" id="spipe">${pipes().map(p => `<option value="${p.id}" ${p.id === pipeOf(c).id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>` : ""}
+      <p class="eyebrow" style="margin:0">Mover a la etapa</p>
+      <div class="stage-pick">${stagesOf(c).map(st => `<button class="btn ${st === cur ? "on" : ""}" data-st="${st}">${st === cur ? "✓ " : ""}${st}</button>`).join("")}</div>
       ${c.company && c.name ? `<p class="muted" style="margin:0">${esc(c.company)}</p>` : ""}${c.lostReason && cur === "Perdido" ? `<p class="muted" style="margin:0">Motivo: ${esc(c.lostReason)}</p>` : ""}</div>
     <div class="mf"><button class="btn" id="sconv">Conversación</button><button class="btn primary" id="scard">Ver ficha</button></div>`;
   $("#sx").onclick = () => m.close();
   $("#scard").onclick = () => { m.close(); openContact(c.id); };
   $("#sconv").onclick = () => { m.close(); go("conv", c.id); };
   $$("[data-st]", m).forEach(b => b.onclick = () => { m.close(); moveStage(c, b.dataset.st); });
+  if ($("#spipe")) $("#spipe").onchange = async e => { const p = pipes().find(x => x.id === e.target.value); m.close();
+    await fb.update("contacts/" + c.id, { pipeline: p.id, stage: p.stages[0], stageAt: Date.now(), ...stamp() }); toast(`${contactName(c)} → embudo ${p.name}`); };
   m.showModal();
+}
+function openPipes() {
+  const list = JSON.parse(JSON.stringify(pipes())), m = $("#modal");
+  const draw = () => {
+    m.innerHTML = `<form id="pf"><div class="mh"><h2>Embudos y etapas</h2><button class="iconbtn" type="button" id="px" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><p class="muted" style="margin:0">Crea un embudo por cada tipo de venta (por ejemplo: Hoteles, Mayoristas, Tienda en línea). Escribe una etapa por línea. <b>Ganado</b> y <b>Perdido</b> se agregan solas al final.</p>
+      ${list.map((p, i) => `<fieldset class="fs"><legend>${esc(p.name || "Nuevo embudo")}</legend><div class="grid2">
+        <div><label class="lb">Nombre</label><input class="in" data-pn="${i}" value="${esc(p.name)}" required ${p.id === "ventas" ? "" : ""}></div>
+        <div class="full"><label class="lb">Etapas</label><textarea class="in" data-ps="${i}" rows="${Math.max(4, p.stages.length - 1)}">${esc(p.stages.filter(s => s !== "Ganado" && s !== "Perdido").join("\n"))}</textarea></div></div>
+        ${p.id !== "ventas" ? `<button class="btn sm danger" type="button" data-pdel="${i}">Eliminar embudo</button>` : '<small class="muted">Embudo principal: no se puede eliminar.</small>'}</fieldset>`).join("")}
+      <button class="btn" type="button" id="padd">+ Nuevo embudo</button></div>
+      <div class="mf"><button class="btn" type="button" id="pc">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+    const read = () => list.forEach((p, i) => { p.name = $(`[data-pn="${i}"]`).value.trim(); p.stages = [...new Set($(`[data-ps="${i}"]`).value.split("\n").map(x => x.trim()).filter(x => x && x !== "Ganado" && x !== "Perdido")), "Ganado", "Perdido"]; });
+    $("#px").onclick = $("#pc").onclick = () => m.close();
+    $("#padd").onclick = () => { read(); list.push({ id: "p" + Date.now().toString(36), name: "", stages: ["Nuevo", "Contactado", "Propuesta", "Ganado", "Perdido"] }); setTimeout(draw); };
+    $$("[data-pdel]", m).forEach(b => b.onclick = async () => { read(); const p = list[+b.dataset.pdel], n = S.contacts.filter(c => c.pipeline === p.id).length;
+      if (!await ask(`¿Eliminar el embudo ${p.name}?${n ? ` Sus ${n} contactos pasan al embudo Ventas.` : ""}`, "Eliminar")) return draw();
+      list.splice(+b.dataset.pdel, 1); p._moved = true; S._pipeDeleted = [...(S._pipeDeleted || []), p.id]; setTimeout(draw); });
+    $("#pf").onsubmit = async e => {
+      e.preventDefault(); read();
+      if (list.some(p => !p.name)) return toast("Ponle nombre a cada embudo.");
+      if (list.some(p => p.stages.length < 3)) return toast("Cada embudo necesita al menos una etapa además de Ganado y Perdido.");
+      try {
+        await fb.set("settings/pipelines", { list: list.map(({ id, name, stages }) => ({ id, name, stages })), ...stamp() });
+        const gone = S._pipeDeleted || []; S._pipeDeleted = [];
+        const moved = S.contacts.filter(c => gone.includes(c.pipeline));
+        if (moved.length) await fb.batch(moved.map(c => ({ path: "contacts/" + c.id, data: { pipeline: "ventas", stage: "Nuevo", stageAt: Date.now() }, merge: true })));
+        // contactos cuya etapa ya no existe en su embudo: a la primera etapa
+        const fix = S.contacts.filter(c => !gone.includes(c.pipeline)).map(c => [c, list.find(p => p.id === (c.pipeline || "ventas"))]).filter(([c, p]) => p && c.stage && !p.stages.includes(c.stage));
+        if (fix.length && await ask(`${fix.length} contactos están en etapas que borraste. ¿Pasarlos a la primera etapa de su embudo?`, "Sí, pasarlos", "Dejarlos así"))
+          await fb.batch(fix.map(([c, p]) => ({ path: "contacts/" + c.id, data: { stage: p.stages[0], stageAt: Date.now() }, merge: true })));
+        m.close(); toast("Embudos guardados");
+      } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+    };
+  };
+  draw(); m.showModal();
 }
 function viewEmbudo(el) {
   const f = S.embF || {}, q = norm(f.q || ""), more = S.embMore || (S.embMore = {});
   const base = S.contacts.filter(c => !c.archived);
-  const segCount = sg => base.filter(c => !sg || c.segment === sg).length;
-  let list = base.filter(c => (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner));
+  const segCount = sg => base.filter(c => (!sg || c.segment === sg) && pipeOf(c).id === ((pipes().find(p => p.id === f.pipe) || pipes()[0]).id)).length;
+  const pipe = pipes().find(p => p.id === f.pipe) || pipes()[0];
+  let list = base.filter(c => pipeOf(c).id === pipe.id && (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner));
   if (q) list = list.filter(c => norm([c.name, c.company, c.phone, c.city, c.chosenProduct && c.chosenProduct.name].join(" ")).includes(q));
   const qv = {}; S.quotes.forEach(x => { if (["Enviada", "Aceptada", "Borrador"].includes(x.status)) qv[x.contactId] = (qv[x.contactId] || 0) + (x.total || 0); });
-  const stages = f.showLost ? STAGES : STAGES.filter(st => st !== "Perdido");
+  const stages = f.showLost ? pipe.stages : pipe.stages.filter(st => st !== "Perdido");
   // Conserva el desplazamiento del tablero cuando se redibuja por cambios en vivo
   const ob = $(".board"), keep = ob ? { x: ob.scrollLeft, y: Object.fromEntries($$(".col").map(cl => [cl.dataset.stage, $(".col-body", cl).scrollTop])) } : null;
   el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Embudo</h1>
-      <span class="sub">Toca una tarjeta para moverla de etapa${matchMedia("(pointer:fine)").matches ? " o arrástrala con el mouse" : ""}</span></div>
+      <span class="sub">Toca una tarjeta para moverla de etapa${matchMedia("(pointer:fine)").matches ? " o arrástrala con el mouse" : ""}</span><span class="spacer"></span>
+      ${isAdmin() ? '<button class="btn" id="pipesBtn">Embudos y etapas</button>' : ""}</div>
+    ${pipes().length > 1 ? `<div class="pipe-tabs">${pipes().map(p => `<button class="${p.id === pipe.id ? "on" : ""}" data-pipe="${p.id}">${esc(p.name)} <small>${base.filter(c => pipeOf(c).id === p.id).length}</small></button>`).join("")}</div>` : ""}
     <div class="seg-tabs">${["", ...SEGMENTS].filter(sg => !sg || segCount(sg)).map(sg => `<button class="${(f.seg || "") === sg ? "on" : ""}" data-seg="${sg}">${sg || "Todos"} <small class="tabnum">${segCount(sg)}</small></button>`).join("")}</div>
     <div class="toolbar"><input class="in" id="eq" placeholder="Buscar en el embudo" value="${esc(f.q || "")}">
       <select class="in" id="ef2"><option value="">Todos los responsables</option>${[...new Set(S.contacts.map(c => c.owner).filter(Boolean))].map(o => `<option ${f.owner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
       <label class="pill"><input type="checkbox" id="ef3" ${f.showLost ? "checked" : ""}> Ver perdidos</label></div>
-    <div class="board">${stages.map(st => {
-      const cards = list.filter(c => (c.stage || "Nuevo") === st).sort((a, b) => (b.stageAt || b.updatedAt || 0) - (a.stageAt || a.updatedAt || 0));
+    <div class="board">${stages.map((st, si) => {
+      const first = pipe.stages[0];
+      const cards = list.filter(c => (c.stage && pipe.stages.includes(c.stage) ? c.stage : first) === st).sort((a, b) => (b.stageAt || b.updatedAt || 0) - (a.stageAt || a.updatedAt || 0));
       const total = cards.reduce((a, c) => a + (qv[c.id] || 0), 0), lim = more[st] || 40;
-      return `<div class="col" data-stage="${st}"><div class="col-head"><b>${st}</b><small class="tabnum">${cards.length}${total ? " · " + money(total) : ""}</small></div>
+      return `<div class="col" data-stage="${esc(st)}" style="--st:${stColor(st, pipe.stages.indexOf(st))}"><div class="col-head"><b>${st}</b><small class="tabnum">${cards.length}${total ? " · " + money(total) : ""}</small></div>
         <div class="col-body">${cards.slice(0, lim).map(c => `<div class="deal" data-id="${c.id}" tabindex="0" role="button" aria-label="${esc(contactName(c))}, ${st}">
           <span class="nm">${esc(contactName(c))}</span>${c.company && c.name ? `<span class="muted" style="font-size:13px">${esc(c.company)}</span>` : ""}
           ${c.chosenProduct ? `<span style="font-size:13px">${esc(c.chosenProduct.name)}</span>` : ""}
@@ -1198,6 +1343,8 @@ function viewEmbudo(el) {
   const board = $(".board", el);
   if (keep) { board.scrollLeft = keep.x; $$(".col", el).forEach(cl => { const y = keep.y[cl.dataset.stage]; if (y) $(".col-body", cl).scrollTop = y; }); }
   $$("[data-seg]", el).forEach(b => b.onclick = () => { S.embF = { ...f, seg: b.dataset.seg }; S.embMore = {}; renderShell(); });
+  $$("[data-pipe]", el).forEach(b => b.onclick = () => { S.embF = { ...f, pipe: b.dataset.pipe, seg: "" }; S.embMore = {}; renderShell(); });
+  if ($("#pipesBtn")) $("#pipesBtn").onclick = openPipes;
   $("#eq").oninput = e => { S.embF = { ...f, q: e.target.value }; renderShell(); };
   $("#ef2").onchange = e => { S.embF = { ...f, owner: e.target.value }; renderShell(); };
   $("#ef3").onchange = e => { S.embF = { ...f, showLost: e.target.checked }; renderShell(); };
@@ -1238,7 +1385,7 @@ function viewEmbudo(el) {
 // ======================= Vista: Contactos =======================
 function viewContactos(el) {
   const f = S.conF || {}, q = norm(S.search);
-  let list = S.contacts.filter(c => (!f.seg || c.segment === f.seg) && (!f.stage || c.stage === f.stage) && (!f.owner || c.owner === f.owner) && (!f.type || c.type === f.type));
+  let list = S.contacts.filter(c => (!f.seg || c.segment === f.seg) && (!f.stage || c.stage === f.stage) && (!f.owner || c.owner === f.owner) && (!f.type || c.type === f.type) && (!f.form || c.formId === f.form));
   if (q) {
     const terms = q.split(/\s+/);
     list = list.filter(c => { const h = norm([c.name, c.company, c.phone, c.city, c.email, c.cargo, c.looking, c.obs].join(" ")), d = h.replace(/\D/g, "");
@@ -1246,11 +1393,11 @@ function viewContactos(el) {
   }
   list.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
   const shown = list.slice(0, 300);
-  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Contactos</h1><span class="sub tabnum">${list.length} de ${S.contacts.length}</span><span class="spacer"></span>
+  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Contactos</h1><span class="sub tabnum">${list.length} de ${S.contacts.length}</span>${f.form ? `<button class="pill" id="clrForm">Formulario: ${esc((byId(S.forms, f.form) || {}).name || "")} ✕</button>` : ""}<span class="spacer"></span>
       <button class="btn primary" id="newC">+ Nuevo contacto</button></div>
     <div class="toolbar"><input class="in" id="cq" placeholder="Buscar nombre, hotel, teléfono, ciudad…" value="${esc(S.search)}">
       <select class="in" id="f1"><option value="">Segmento</option>${SEGMENTS.map(s => `<option ${f.seg === s ? "selected" : ""}>${s}</option>`).join("")}</select>
-      <select class="in" id="f2"><option value="">Etapa</option>${STAGES.map(s => `<option ${f.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select>
+      <select class="in" id="f2"><option value="">Etapa</option>${allStages().map(s => `<option ${f.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select>
       <select class="in" id="f3"><option value="">Tipo</option>${["Prospecto", "Cliente"].map(s => `<option ${f.type === s ? "selected" : ""}>${s}</option>`).join("")}</select>
       <select class="in" id="f4"><option value="">Responsable</option>${[...new Set(S.contacts.map(c => c.owner).filter(Boolean))].map(o => `<option ${f.owner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>
     ${S.contacts.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Nombre</th><th>Hotel / empresa</th><th>Segmento</th><th>Etapa</th><th>Temperatura</th><th>WhatsApp</th><th>Responsable</th><th>Próx. seguimiento</th></tr></thead>
@@ -1259,6 +1406,7 @@ function viewContactos(el) {
       ${list.length > 300 ? `<p class="muted">Mostrando 300: afina la búsqueda.</p>` : ""}`
       : `<div class="empty"><p><b>Todavía no hay contactos.</b></p><p>Impórtalos desde tu Excel CasaDorada_CRM o créalos uno por uno.</p><button class="btn primary" onclick="location.hash='importar'">Importar Excel</button></div>`}</div>`;
   $("#cq").oninput = e => { S.search = e.target.value; renderShell(); };
+  if ($("#clrForm")) $("#clrForm").onclick = () => { S.conF = { ...f, form: "" }; renderShell(); };
   [["f1", "seg"], ["f2", "stage"], ["f3", "type"], ["f4", "owner"]].forEach(([id, k]) => $("#" + id).onchange = e => { S.conF = { ...f, [k]: e.target.value }; renderShell(); });
   $("#newC").onclick = () => openContact(null);
   $$("tbody tr", el).forEach(tr => tr.onclick = () => openContact(tr.dataset.id));
@@ -1267,7 +1415,7 @@ function viewContactos(el) {
 const C_FIELDS = [
   ["Contacto", [["name", "Nombre"], ["phone", "WhatsApp", "tel"], ["email", "Correo", "email"], ["cargo", "Cargo"]]],
   ["Empresa", [["company", "Hotel / empresa"], ["city", "Ciudad"], ["segment", "Segmento", SEGMENTS], ["type", "Tipo", ["Prospecto", "Cliente"]]]],
-  ["Venta", [["stage", "Etapa", STAGES], ["temperature", "Temperatura", TEMPS], ["potential", "Potencial", ["Alto", "Medio", "Bajo"]], ["level", "Nivel", ["3", "2", "1", "0", "-1"]],
+  ["Venta", [["pipeline", "Embudo", "pipes"], ["stage", "Etapa", "stages"], ["temperature", "Temperatura", TEMPS], ["potential", "Potencial", ["Alto", "Medio", "Bajo"]], ["level", "Nivel", ["3", "2", "1", "0", "-1"]],
     ["owner", "Responsable", "team"], ["reorderDays", "Recompra cada (días)", "num"], ["tags", "Etiquetas (separadas por coma)", "tags"], ["looking", "Qué busca", "wide"]]],
   ["Seguimiento", [["nextDate", "Próx. seguimiento", "date"], ["nextAction", "Qué hacer"], ["obs", "Observaciones", "textarea"]]],
 ];
@@ -1277,8 +1425,12 @@ function openContact(id) {
   const m = $("#modal");
   const field = ([k, label, t]) => {
     const v = t === "tags" ? (c[k] || []).join(", ") : c[k] ?? "";
-    if (Array.isArray(t) || t === "team") {
-      const opts = t === "team" ? S.team.filter(u => u.active !== false).map(u => u.name) : t;
+    if (t === "pipes") {
+      if (pipes().length < 2) return "";
+      return `<div><label class="lb" for="cf_${k}">${label}</label><select class="in" id="cf_${k}" data-k="${k}">${pipes().map(p => `<option value="${p.id}" ${pipeOf(c).id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>`;
+    }
+    if (Array.isArray(t) || t === "team" || t === "stages") {
+      const opts = t === "team" ? S.team.filter(u => u.active !== false).map(u => u.name) : t === "stages" ? stagesOf(c) : t;
       return `<div><label class="lb" for="cf_${k}">${label}</label><select class="in" id="cf_${k}" data-k="${k}"><option value="">—</option>${[...new Set([...opts, ...(v && !opts.includes(String(v)) ? [String(v)] : [])])].map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
     }
     if (t === "textarea") return `<div class="full"><label class="lb" for="cf_${k}">${label}</label><textarea class="in" id="cf_${k}" data-k="${k}" rows="3">${esc(v)}</textarea></div>`;
@@ -1545,7 +1697,7 @@ function viewMetricas(el) {
   const by = (list, keyFn) => { const g = {}; list.forEach(x => { const k = keyFn(x) || "Sin asignar"; (g[k] = g[k] || { k, v: 0, n: 0 }); g[k].v += x.total || 0; g[k].n++; }); return Object.values(g).sort((p, q) => q.v - p.v); };
   const prod = {}; orders.forEach(o => (o.items || []).forEach(i => { const k = i.name || "—"; (prod[k] = prod[k] || { k, v: 0, n: 0 }); prod[k].v += (i.qty || 0) * (i.price || 0); prod[k].n += Number(i.qty) || 0; }));
   const prodRows = Object.values(prod).sort((p, q) => q.v - p.v).slice(0, 10);
-  const stageRows = STAGES.map(st => ({ k: st, v: S.contacts.filter(c => !c.archived && (c.stage || "Nuevo") === st).length }));
+  const stageRows = allStages().map(st => ({ k: st, v: S.contacts.filter(c => !c.archived && (c.stage || "Nuevo") === st).length }));
   const qStatus = Q_STATUS.map(st => ({ k: st, v: quotes.filter(q => q.status === st).length })).filter(r => r.v);
   el.innerHTML = `<div class="page" style="max-width:1200px"><div class="page-head"><h1>Métricas</h1><span class="spacer"></span>
       <div class="seg" role="group" aria-label="Periodo">${Object.entries(RANGES).map(([k, t]) => `<button class="${k === rk ? "on" : ""}" data-r="${k}">${t}</button>`).join("")}</div></div>
@@ -1556,6 +1708,9 @@ function viewMetricas(el) {
       <div class="tile"><small>Conversión a pedido</small><b>${pct(conv.length, sent.length)}</b><span>${conv.length} de ${sent.length} enviadas</span></div>
       <div class="tile"><small>En negociación hoy</small><b class="mono">${money(pipeline)}</b><span>cotizaciones enviadas y aceptadas</span></div>
       <div class="tile"><small>Contactos nuevos</small><b>${newC}</b><span>sin contar los importados</span></div>
+      ${(() => { const m0 = new Date(); m0.setDate(1); m0.setHours(0, 0, 0, 0); const n = S.contacts.filter(c => (c.lastInboundAt || 0) >= m0.getTime()).length;
+        return `<div class="tile"><small>Conversaciones este mes</small><b>${n.toLocaleString("es-CO")}</b><span>clientes que escribieron · sin límite</span></div>`; })()}
+      ${(() => { const n = S.contacts.filter(c => c.formId && (c.lastFormAt || 0) > Date.now() - 30 * DAY).length; return n ? `<div class="tile"><small>Formularios</small><b>${n}</b><span>contactos en los últimos 30 días</span></div>` : ""; })()}
     </div>
     <section class="mcard"><h3>Ventas por mes <small class="muted">últimos 12 meses</small></h3>
       <div class="vbars" role="img" aria-label="Ventas por mes en los últimos 12 meses">${months.map(m => `<div class="vb" data-tip="${esc(m.k)} ${m.y}: ${esc(money(m.v))} · ${m.n} ${m.n === 1 ? "pedido" : "pedidos"}">

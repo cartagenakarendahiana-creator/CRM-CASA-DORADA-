@@ -116,7 +116,7 @@ module.exports = function integraciones({ db, admin, fetchFn = (...a) => fetch(.
       if (data.email) data.email = String(data.email).trim().toLowerCase();
       if (data.tags && !Array.isArray(data.tags)) data.tags = String(data.tags).split(",").map(t => t.trim()).filter(Boolean);
       let cid = data.phone ? "wa_" + phoneId(data.phone) : null;
-      if (!cid && data.email) { const s = await db.collection("contacts").where("email", "==", data.email).limit(1).get(); if (!s.empty) cid = s.docs[0].id; }
+      if (!cid && data.email) { const s = await db.collection("contacts").where("email", "==", data.email).limit(1).get(); if (s.docs.length) cid = s.docs[0].id; }
       const ref = cid ? db.doc("contacts/" + cid) : db.collection("contacts").doc();
       const ex = await ref.get();
       const patch = { ...data, updatedAt: now, updatedBy: "API" };

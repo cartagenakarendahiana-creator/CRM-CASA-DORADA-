@@ -10,7 +10,8 @@ CRM de ventas por WhatsApp para Casa Dorada: dice a quién atender hoy, en qué 
 - **Varias líneas de WhatsApp**: cada número con nombre y responsable por defecto, y filtro por línea en Conversaciones.
 - **Base de conocimiento**: artículos que la asesora virtual usa para responder.
 - **Canales**: se conectan desde el CRM; el chat web se pega en cualquier página con una línea (`widget.js`).
-- **Embudo**: tablero por etapas, en el que se arrastran las tarjetas.
+- **Embudos**: tableros por etapas, uno por cada tipo de venta, con etapas personalizadas (siempre terminan en Ganado y Perdido).
+- **Formularios de captura**: páginas públicas (`f.html?id=…`) o incrustadas en tu web que crean el contacto, lo ponen en el embudo y le asignan responsable.
 - **Contactos**: ficha completa, historial e importación de `CasaDorada_CRM.xlsx`.
 - **Cotizaciones** (COT-0001…) con precio al detal y al por mayor, que se convierten en **Pedidos** (PED-0001…).
 - **Productos**, **Plantillas** de mensajes por situación y **Equipo** con usuario por persona.
@@ -28,6 +29,7 @@ public/                 la aplicación (Firebase Hosting)
 functions/index.js      webhook y envío de WhatsApp, alta de usuarios
 functions/asesora.js    asesora virtual (Claude): herramientas y reglas de cuándo responde
 functions/automatizaciones.js  reglas automáticas y envío de campañas
+functions/formularios.js    formularios de captura públicos (API /api/form)
 functions/integraciones.js  webhooks salientes y API entrante con clave
 functions/canales.js    Telegram, Messenger, Instagram y chat web: entrada, envío y conexión
 public/widget.js        burbuja de chat para pegar en la página web de la empresa
@@ -47,6 +49,8 @@ firestore.rules         quién puede leer y escribir
 | `settings/channels` | estado público de cada canal (conectado, nombre del bot, colores del chat web) |
 | `automations` | reglas: trigger {type, stage, days, keywords, channel}, actions [...], runs |
 | `campaigns/{id}/recipients` | campaña (filtro, texto, plantilla, conteos) y el resultado por contacto |
+| `settings/pipelines` | embudos: list [{id, name, stages}] ("ventas" es el principal) |
+| `forms` | formularios: campos, segmento, embudo, etapa, responsable, etiquetas, conteo |
 | `knowledge` | base de conocimiento de la asesora: title, content, on |
 | `private/integrations` | webhooks (url, eventos, secreto) y hash de la clave de la API |
 | `private/channels` | tokens de Telegram y de la página de Meta; solo los leen las funciones |

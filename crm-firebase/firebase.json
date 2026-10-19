@@ -39,6 +39,13 @@
           "functionId": "api",
           "region": "us-east1"
         }
+      },
+      {
+        "source": "/api/form",
+        "function": {
+          "functionId": "forms",
+          "region": "us-east1"
+        }
       }
     ]
   },
