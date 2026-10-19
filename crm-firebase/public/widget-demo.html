@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prueba del chat web</title>
+<style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#f6f3ec;color:#2b2620}
+main{max-width:720px;margin:0 auto;padding:48px 20px}h1{font-size:28px;margin:0 0 8px}p{line-height:1.6;color:#5b5348}
+code{background:#fff;border:1px solid #e5ddd0;border-radius:6px;padding:2px 6px;font-size:13px}</style></head>
+<body><main><h1>Así se verá el chat en tu página</h1>
+<p>Esta es una página de prueba. Abajo a la derecha está el botón del chat: escribe un mensaje y aparecerá en <b>Conversaciones</b> dentro de House Chat.</p>
+<p>Para ponerlo en tu página web, pega esta línea antes de <code>&lt;/body&gt;</code>:</p>
+<p><code id="code"></code></p></main>
+<script>document.getElementById("code").textContent = '<script src="' + location.origin + '/widget.js" defer><\/script>';</script>
+<script src="widget.js" defer></script></body></html>

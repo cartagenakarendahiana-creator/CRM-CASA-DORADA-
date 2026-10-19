@@ -31,5 +31,7 @@ service cloud.firestore {
     match /templates/{id} { allow read: if member(); allow write: if isAdmin(); }
     // Configuración de la asesora virtual (la lee la función con permisos de servidor)
     match /settings/{id} { allow read: if member(); allow write: if isAdmin(); }
+    // Tokens de los canales: solo las funciones del servidor los leen
+    match /private/{id} { allow read, write: if false; }
   }
 }

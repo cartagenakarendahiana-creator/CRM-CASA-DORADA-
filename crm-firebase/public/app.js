@@ -1,5 +1,5 @@
 import { fb } from "./fb.js";
-import { WHATSAPP_ENABLED, EMPRESA } from "./firebase-config.js";
+import { WHATSAPP_ENABLED, EMPRESA, firebaseConfig, REGION } from "./firebase-config.js";
 
 // ======================= Utilidades =======================
 const $ = (s, el = document) => el.querySelector(s);
@@ -70,6 +70,7 @@ const ICONS = {
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
+  canales: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.3 11l7.4-3.8M8.3 13l7.4 3.8"/>',
   asesora: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
@@ -108,8 +109,22 @@ const S = {
   hoyMsgsUnsub: null, hoyMsgs: [], hoyMsgsFor: null, unsubs: [],
 };
 const byId = (list, id) => list.find(x => x.id === id);
-const contactName = c => c ? (c.name || c.company || "+" + (c.phone || "")) : "";
+// Canales: WhatsApp, Instagram, Messenger, Telegram y chat web
+const CHN = {
+  whatsapp: { label: "WhatsApp", color: "#25d366", window: true, svg: '<path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z" fill="currentColor"/><path d="M9 8.5c.2-.4.5-.5.8-.5h.5c.2 0 .4.1.5.4l.7 1.6c.1.2 0 .5-.1.6l-.5.6c.6 1.1 1.5 2 2.6 2.6l.6-.5c.2-.1.4-.2.6-.1l1.6.7c.3.1.4.3.4.5v.5c0 .3-.1.6-.5.8-.6.3-1.4.4-2.2.1a8.6 8.6 0 0 1-4.6-4.6c-.3-.8-.2-1.6.1-2.2z" fill="#fff"/>' },
+  instagram: { label: "Instagram", color: "#e1306c", window: true, svg: '<rect x="3" y="3" width="18" height="18" rx="5" fill="currentColor"/><circle cx="12" cy="12" r="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="17.3" cy="6.7" r="1.2" fill="#fff"/>' },
+  messenger: { label: "Messenger", color: "#0084ff", window: true, svg: '<path d="M12 3C7 3 3 6.7 3 11.3c0 2.6 1.3 4.9 3.3 6.4V21l3-1.7c.8.2 1.7.3 2.7.3 5 0 9-3.7 9-8.3S17 3 12 3z" fill="currentColor"/><path d="M6.8 13.6l3-4.6 2.3 2 3.1-2-3 4.6-2.3-2z" fill="#fff"/>' },
+  telegram: { label: "Telegram", color: "#29a9eb", window: false, svg: '<circle cx="12" cy="12" r="9.5" fill="currentColor"/><path d="M6.5 11.7l9.6-3.8c.5-.2.9.1.7.8l-1.6 7.6c-.1.5-.5.7-1 .4l-2.5-1.9-1.2 1.2c-.1.1-.3.2-.5.2l.2-2.6 4.6-4.2c.2-.2 0-.3-.3-.1l-5.7 3.6-2.4-.8c-.6-.2-.6-.6.1-.9z" fill="#fff"/>' },
+  web: { label: "Chat web", color: "#64748b", window: false, svg: '<circle cx="12" cy="12" r="9.5" fill="currentColor"/><path d="M2.5 12h19M12 2.5c2.6 2.6 3.8 6 3.8 9.5S14.6 18.9 12 21.5M12 2.5C9.4 5.1 8.2 8.5 8.2 12s1.2 6.9 3.8 9.5" stroke="#fff" stroke-width="1.4" fill="none"/>' },
+};
+const chOf = c => (c && c.lastChannel) || (c && c.phone ? "whatsapp" : "web");
+const chIcon = (ch, cls = "") => `<svg class="chi ${cls}" viewBox="0 0 24 24" style="color:${CHN[ch] ? CHN[ch].color : "#999"}" aria-label="${CHN[ch] ? CHN[ch].label : ch}"><title>${CHN[ch] ? CHN[ch].label : ch}</title>${CHN[ch] ? CHN[ch].svg : ""}</svg>`;
+// ¿Se le puede escribir a este contacto desde el CRM por su canal?
+const canSend = c => { const ch = chOf(c); return ch === "whatsapp" ? WHATSAPP_ENABLED : !!(S.ch && S.ch[ch] && S.ch[ch].on); };
+const anyChannel = () => WHATSAPP_ENABLED || ["telegram", "messenger", "instagram", "web"].some(k => S.ch && S.ch[k] && S.ch[k].on);
+const contactName = c => c ? (c.name || c.company || (c.phone ? "+" + c.phone : "Visitante de " + (CHN[chOf(c)] || CHN.web).label)) : "";
 const winInfo = c => {
+  if (c && CHN[chOf(c)] && !CHN[chOf(c)].window) return { open: true, closesAt: null, nolimit: true };
   const last = c && c.lastInboundAt;
   if (!last) return { open: false, closesAt: null, never: true };
   const closesAt = last + 24 * H;
@@ -183,6 +198,7 @@ function startData() {
   w("templates", "templates");
   w("team", "users");
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
+  S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
   window.addEventListener("hashchange", route);
   route();
   setInterval(() => { if (S.view === "hoy" && !document.hidden) scheduleRender(); }, 60000);
@@ -204,7 +220,7 @@ const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
   ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
-  ["Configuración", [["asesora", "Asesora virtual"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -226,7 +242,7 @@ function renderShell() {
     </aside>
     <main class="main">
       <div class="topbar-mobile"><button class="iconbtn" id="menuBtn" aria-label="Menú">${icon("menu")}</button><img class="brand-logo sm" src="logo.svg" alt=""><b class="brand-name">${APP_NAME}</b></div>
-      ${!WHATSAPP_ENABLED ? `<div class="banner"><span>WhatsApp todavía no está conectado: los mensajes se abren en tu WhatsApp y los registras aquí.</span></div>` : ""}
+      ${!anyChannel() ? `<div class="banner"><span>Aún no hay canales conectados: los mensajes se abren en tu WhatsApp y los registras aquí. ${isAdmin() ? '<a href="#canales">Conectar canales</a>' : ""}</span></div>` : ""}
       <div class="view" id="view"></div>
     </main></div>`;
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
@@ -236,7 +252,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -253,7 +269,7 @@ function aiState(c) {
   return { on: true, txt: `${aiName()} responde este chat`, cls: "green" };
 }
 function aiBar(c) {
-  if (!WHATSAPP_ENABLED || !S.ai || !S.ai.enabled) return "";
+  if (!canSend(c) || !S.ai || !S.ai.enabled) return "";
   const st = aiState(c);
   return `<div class="aibar">${icon("asesora")}<span class="pill ${st.cls}">${esc(st.txt)}</span>
     ${c.aiError && c.aiError.at > (c.lastOutboundAt || 0) ? `<span class="muted" title="${esc(c.aiError.message || "")}">⚠ no pudo responder el último mensaje</span>` : ""}
@@ -265,6 +281,70 @@ async function setAi(c, on) {
   await fb.update("contacts/" + c.id, { ...patch, ...stamp() });
   toast(on ? `${aiName()} vuelve a responder este chat` : `${aiName()} no responderá este chat hasta que la reactives`);
 }
+// ======================= Canales =======================
+function viewCanales(el) {
+  const ch = S.ch || {}, adm = isAdmin(), pid = firebaseConfig.projectId || "TU-PROYECTO";
+  const hook = `https://${REGION}-${pid}.cloudfunctions.net/whatsappWebhook`;
+  const embed = `<script src="${location.origin}/widget.js" defer><\/script>`;
+  const web = ch.web || {};
+  const st = on => `<span class="pill ${on ? "green" : ""}">${on ? "Conectado" : "Sin conectar"}</span>`;
+  const card = (k, on, body) => `<section class="chcard"><div class="chcard-h">${chIcon(k, "lg")}<div><b>${CHN[k].label}</b><small>${{
+    whatsapp: "Tu número de ventas por la API oficial de Meta", instagram: "Mensajes directos de tu cuenta de Instagram de empresa",
+    messenger: "Mensajes de tu página de Facebook", telegram: "Un bot de Telegram con el nombre de tu empresa", web: "Una burbuja de chat en tu página web" }[k]}</small></div>${st(on)}</div>${body}</section>`;
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Canales</h1><span class="sub">Todo llega a <b>Conversaciones</b> y la asesora virtual puede responder en todos.</span></div>
+    <div class="chgrid">
+    ${card("whatsapp", WHATSAPP_ENABLED, `<p class="muted">Se conecta con la app de Meta (WhatsApp Cloud API). Sigue la <b>fase 2</b> de la guía de instalación; cuando termines, cambia <code>WHATSAPP_ENABLED</code> a <code>true</code> en <code>firebase-config.js</code>.</p>
+      <p class="muted">Webhook para Meta: <code class="sel">${esc(hook)}</code></p>`)}
+    ${card("web", !!web.on, adm ? `<form id="webf" class="chform">
+      <label class="switch"><input type="checkbox" id="won" ${web.on ? "checked" : ""}> <span>Mostrar el chat en mi página web</span></label>
+      <div class="grid2"><div><label class="lb" for="wt">Título</label><input class="in" id="wt" value="${esc(web.title || EMPRESA)}"></div>
+        <div><label class="lb" for="wc">Color</label><input class="in" id="wc" type="color" value="${esc(web.color || "#0f7a4c")}"></div>
+        <div class="full"><label class="lb" for="wg">Saludo</label><input class="in" id="wg" value="${esc(web.greeting || "¡Hola! 👋 ¿En qué te podemos ayudar?")}"></div></div>
+      <label class="switch sm"><input type="checkbox" id="wa" ${web.askName !== false ? "checked" : ""}> <span>Pedir nombre y celular antes de chatear</span></label>
+      <div class="chrow"><button class="btn primary">Guardar</button><a class="btn" href="widget-demo.html" target="_blank" rel="noopener">Probar el chat</a></div></form>
+      <label class="lb" style="margin-top:12px">Pega esto en tu página web, antes de &lt;/body&gt;</label><div class="codebox"><code id="embed">${esc(embed)}</code><button class="btn sm" id="cpEmbed">Copiar</button></div>`
+      : `<p class="muted">Solo la administradora puede configurarlo.</p>`)}
+    ${card("telegram", !!(ch.telegram && ch.telegram.on), ch.telegram && ch.telegram.on
+      ? `<p>Conectado como <a href="https://t.me/${esc(ch.telegram.username)}" target="_blank" rel="noopener">@${esc(ch.telegram.username)}</a>. Comparte ese enlace con tus clientes.</p>${adm ? '<button class="btn danger" data-off="telegram">Desconectar</button>' : ""}`
+      : adm ? `<ol class="steps"><li>En Telegram, abre <b>@BotFather</b> y escribe <code>/newbot</code>.</li><li>Ponle el nombre <b>${esc(EMPRESA)}</b> y un usuario que termine en <code>bot</code> (por ejemplo <code>casadorada_bot</code>).</li><li>Copia el <b>token</b> que te da y pégalo aquí:</li></ol>
+        <form id="tgf" class="chrow"><input class="in" id="tgt" placeholder="123456789:ABCdef…" autocomplete="off"><button class="btn primary">Conectar</button></form>` : `<p class="muted">Pídele a la administradora que lo conecte.</p>`)}
+    ${card("messenger", !!(ch.messenger && ch.messenger.on), ch.messenger && ch.messenger.on
+      ? `<p>Conectado a la página <b>${esc(ch.messenger.pageName || "")}</b>.</p>${adm ? '<button class="btn danger" data-off="messenger">Desconectar Messenger e Instagram</button>' : ""}`
+      : adm ? metaSteps(hook) : `<p class="muted">Pídele a la administradora que lo conecte.</p>`)}
+    ${card("instagram", !!(ch.instagram && ch.instagram.on), ch.instagram && ch.instagram.on ? `<p>Conectado junto con Messenger.</p>`
+      : `<p class="muted">Se conecta junto con Messenger, con el mismo token de la página. Tu cuenta de Instagram debe ser <b>profesional</b> y estar vinculada a la página de Facebook, y en Instagram activa <b>Configuración › Mensajes › Permitir acceso a los mensajes</b>.</p>`)}
+    </div></div>`;
+  if ($("#cpEmbed")) $("#cpEmbed").onclick = () => copy(embed.replace("<\\/", "</"));
+  if ($("#webf")) $("#webf").onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await fb.set("settings/channels", { web: { on: $("#won").checked, title: $("#wt").value.trim() || EMPRESA, greeting: $("#wg").value.trim(), color: $("#wc").value, askName: $("#wa").checked, at: Date.now() } });
+      toast($("#won").checked ? "Chat web activo" : "Chat web apagado");
+    } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+  };
+  if ($("#tgf")) $("#tgf").onsubmit = async e => {
+    e.preventDefault(); const b = $("#tgf button"); b.disabled = true; b.textContent = "Conectando…";
+    try { const r = await fb.call("connectTelegram", { token: $("#tgt").value.trim() }); toast("Telegram conectado: @" + r.username); }
+    catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Conectar"; }
+  };
+  if ($("#mf")) $("#mf").onsubmit = async e => {
+    e.preventDefault(); const b = $("#mf button"); b.disabled = true; b.textContent = "Conectando…";
+    try { const r = await fb.call("connectMeta", { pageToken: $("#mpt").value.trim(), igId: $("#mig").value.trim() }); toast(`Conectado a ${r.pageName}${r.instagram ? " e Instagram" : ""}`); }
+    catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Conectar"; }
+  };
+  $$("[data-off]", el).forEach(b => b.onclick = async () => {
+    if (!await ask(`¿Desconectar ${CHN[b.dataset.off].label}? Dejarán de llegar mensajes por ese canal.`, "Desconectar")) return;
+    try { await fb.call("disconnectChannel", { channel: b.dataset.off }); toast("Desconectado"); } catch (er) { toast(errMsg(er)); }
+  });
+}
+function metaSteps(hook) {
+  return `<ol class="steps"><li>En <b>developers.facebook.com</b>, en tu app de Meta (la misma de WhatsApp), agrega los productos <b>Messenger</b> e <b>Instagram</b>.</li>
+    <li>En cada uno, configura el webhook con esta URL y tu palabra de verificación (WA_VERIFY_TOKEN), y suscribe el campo <b>messages</b>:<br><code class="sel">${esc(hook)}</code></li>
+    <li>Genera un <b>token de acceso de la página</b> (permisos <code>pages_messaging</code> e <code>instagram_manage_messages</code>) y pégalo aquí:</li></ol>
+    <form id="mf" class="chform"><input class="in" id="mpt" placeholder="Token de acceso de la página (EAAG…)" autocomplete="off">
+    <input class="in" id="mig" placeholder="ID de Instagram (opcional, se detecta solo)" autocomplete="off"><div class="chrow"><button class="btn primary">Conectar</button></div></form>`;
+}
+
 function viewAsesora(el) {
   const a = S.ai || {}, adm = isAdmin();
   const waiting = S.contacts.filter(c => c.aiHandoff).sort((x, y) => y.aiHandoff.at - x.aiHandoff.at);
@@ -273,7 +353,7 @@ function viewAsesora(el) {
   const drafts = S.quotes.filter(q => q.aiCreated && q.status === "Borrador").length;
   el.innerHTML = `<div class="page"><div class="page-head"><h1>Asesora virtual</h1><span class="spacer"></span>
       <span class="pill ${a.enabled ? "green" : ""}">${a.enabled ? "Activa" : "Apagada"}</span></div>
-    ${WHATSAPP_ENABLED ? "" : `<div class="card" style="margin-bottom:16px"><b>Necesita WhatsApp conectado.</b><p class="muted" style="margin:6px 0 0">La asesora responde los mensajes que llegan por la API de WhatsApp (fase 2 de la guía). Puedes dejarla configurada desde ya.</p></div>`}
+    ${anyChannel() ? "" : `<div class="card" style="margin-bottom:16px;padding:12px 16px"><b>Necesita al menos un canal conectado.</b><p class="muted" style="margin:6px 0 0">La asesora responde lo que llega por WhatsApp, Instagram, Messenger, Telegram o el chat web. Conéctalos en <a href="#canales">Canales</a>; puedes dejarla configurada desde ya.</p></div>`}
     <div class="kpis" style="margin-bottom:16px;width:fit-content"><div><b>${today}</b>chats respondidos hoy</div><div><b>${waiting.length}</b>esperando a una persona</div><div><b>${drafts}</b>cotizaciones por revisar</div></div>
     <form id="aif" class="card ai-form">
       <label class="switch"><input type="checkbox" id="aen" ${a.enabled ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Responder automáticamente los mensajes de WhatsApp, las 24 horas</span></label>
@@ -379,7 +459,7 @@ function allTasks() {
   list.sort((a, b) => {
     if ((a.task.rank < 0) !== (b.task.rank < 0)) return a.task.rank < 0 ? -1 : 1; // chats que la asesora virtual pasó a una persona
     if (a.win.open !== b.win.open) return a.win.open ? -1 : 1;
-    if (a.win.open) return a.win.closesAt - b.win.closesAt;
+    if (a.win.open) return (a.win.closesAt || Infinity) - (b.win.closesAt || Infinity) || (b.c.lastInboundAt || 0) - (a.c.lastInboundAt || 0);
     return a.task.rank - b.task.rank || lvl(b.c) - lvl(a.c) || (b.c.lastInboundAt || 0) - (a.c.lastInboundAt || 0);
   });
   return list;
@@ -405,10 +485,10 @@ function viewHoy(el) {
   const openItems = items.filter(i => i.win.open), closedItems = items.filter(i => !i.win.open);
   const row = i => { const k = KIND[i.task.kind] || KIND.seguimiento, left = i.win.open ? i.win.closesAt - Date.now() : 0;
     return `<button class="hrow ${i.c.id === S.sel ? "on" : ""}" data-sel="${i.c.id}">
-      <span class="avatar c" style="${avColor(contactName(i.c))}">${esc((contactName(i.c) || "?")[0].toUpperCase())}</span>
+      <span class="av-wrap"><span class="avatar c" style="${avColor(contactName(i.c))}">${esc((contactName(i.c) || "?")[0].toUpperCase())}</span>${chIcon(chOf(i.c), "badge")}</span>
       <span class="hr-main">
         <span class="hr-top"><span class="hr-name">${esc(contactName(i.c))}</span>
-          <span class="hr-time ${i.win.open && left < 3 * 3600e3 ? "urgent" : ""}">${i.win.open ? "cierra en " + shortLeft(left) : i.c.lastInboundAt ? "hace " + ago(i.c.lastInboundAt) : ""}</span></span>
+          <span class="hr-time ${i.win.open && !i.win.nolimit && left < 3 * 3600e3 ? "urgent" : ""}">${i.win.open && !i.win.nolimit ? "cierra en " + shortLeft(left) : i.c.lastInboundAt ? "hace " + ago(i.c.lastInboundAt) : ""}</span></span>
         ${i.c.company && i.c.name ? `<span class="hr-co">${esc(i.c.company)}</span>` : ""}
         <span class="hr-task"><span class="tag ${k.cls}">${k.label}</span><span class="hr-title">${i.task.kind === "responder" && i.c.lastMessage ? "“" + esc(i.c.lastMessage) + "”" : monoNums(esc(i.task.title))}</span>${i.more ? `<span class="hr-more">+${i.more}</span>` : ""}</span>
       </span></button>`; };
@@ -455,14 +535,14 @@ function renderHoyDetail(el, it) {
   const tpl = tplFor(task.kind) || tplFor("seguimiento");
   const msg = fillTpl(tpl.text, c, task.q ? { cotizacion: task.q.number, total: money(task.q.total) }
     : task.ri ? { ultimo: task.ri.items || "tu último pedido", dias: String(Math.round((Date.now() - task.ri.last) / DAY)) } : {});
-  const winTxt = win.open ? `Ventana abierta · cierra ${whenLabel(win.closesAt)}` : win.never ? "Aún no te escribe por WhatsApp · primer mensaje con plantilla"
+  const winTxt = win.nolimit ? `${CHN[chOf(c)].label} · sin límite de 24 h` : win.open ? `Ventana abierta · cierra ${whenLabel(win.closesAt)}` : win.never ? "Aún no te escribe por WhatsApp · primer mensaje con plantilla"
     : `Ventana cerrada hace ${ago(win.closesAt)} · solo plantilla`;
   const k = KIND[task.kind] || KIND.seguimiento;
   const since = c.sourceSheet ? (c.type === "Cliente" ? "Cliente" : "Prospecto") + " del Excel" : (c.type === "Cliente" ? "Cliente" : "Contacto") + " desde " + fmtDMY(c.createdAt || Date.now());
   el.innerHTML = `<button class="btn sm back" id="back">← Volver</button>
     <div class="hd-head">
       <span class="avatar c lg" style="${avColor(contactName(c))}">${esc((contactName(c) || "?")[0].toUpperCase())}</span>
-      <div class="hd-id"><h2>${esc(contactName(c))}</h2>
+      <div class="hd-id"><h2>${esc(contactName(c))} ${chIcon(chOf(c), "h")}</h2>
         <div class="hd-meta"><span class="mono">${esc(phoneId(c.phone) || c.phone || "sin teléfono")}</span>${c.company && c.name ? `<span>${esc(c.company)}</span>` : ""}<span>${esc(since)}</span>${c.stage ? `<span class="tag k-stage">${esc(c.stage)}</span>` : ""}</div></div>
       <div class="hd-actions"><button class="btn" id="openContact">Ver ficha</button><button class="btn primary" id="openConv">${icon("conv")}Abrir conversación</button></div>
     </div>
@@ -477,8 +557,8 @@ function renderHoyDetail(el, it) {
       <div class="sugg"><span class="fl">Mensaje sugerido · ${esc(tpl.name)}</span>
         <div class="sugg-chat"><div class="bubble out tail"><span class="btx" id="sugg">${esc(msg)}</span></div></div></div>
       <div class="next-actions">
-        ${WHATSAPP_ENABLED && win.open ? `<button class="btn primary" id="sendMsg">${icon("send")}Enviar por WhatsApp</button>` : ""}
-        ${!WHATSAPP_ENABLED && waLink(c.phone) ? `<a class="btn wa" href="${waLink(c.phone, msg)}" target="_blank" rel="noopener" id="waOpen">${icon("send")}Abrir en WhatsApp</a>` : ""}
+        ${canSend(c) && win.open ? `<button class="btn primary" id="sendMsg">${icon("send")}Enviar por ${CHN[chOf(c)].label}</button>` : ""}
+        ${!canSend(c) && chOf(c) === "whatsapp" && waLink(c.phone) ? `<a class="btn wa" href="${waLink(c.phone, msg)}" target="_blank" rel="noopener" id="waOpen">${icon("send")}Abrir en WhatsApp</a>` : ""}
         <button class="btn" id="copyMsg">Copiar</button>
         ${task.kind === "pedido" ? `<button class="btn primary" id="toOrder">Crear pedido</button>` : ""}
         ${task.handoff ? `<button class="btn" id="aiBack">Devolver a ${esc(aiName())}</button>` : ""}
@@ -582,10 +662,10 @@ function chooseProduct(c) {
 async function sendText(c, text) {
   if (!text.trim()) return;
   try {
-    await fb.call("sendWhatsApp", { contactId: c.id, text });
-    toast("Mensaje enviado");
+    await fb.call("sendMessage", { contactId: c.id, text });
+    toast("Mensaje enviado por " + CHN[chOf(c)].label);
   } catch (e) {
-    if (/VENTANA_CERRADA/.test(errMsg(e))) return info("La ventana de 24 h está cerrada: usa una plantilla aprobada.");
+    if (/VENTANA_CERRADA/.test(errMsg(e))) return info(chOf(c) === "whatsapp" ? "La ventana de 24 h está cerrada: usa una plantilla aprobada." : `Pasaron más de 24 h desde su último mensaje: ${CHN[chOf(c)].label} no deja escribirle hasta que vuelva a escribir.`);
     toast("No se pudo enviar: " + errMsg(e));
   }
 }
@@ -619,6 +699,7 @@ function viewConv(el) {
   let list = S.contacts.filter(c => c.lastInboundAt || c.lastOutboundAt);
   if (S.convFilter === "sin") list = list.filter(c => c.lastInboundAt && (!c.lastOutboundAt || c.lastInboundAt > c.lastOutboundAt));
   if (S.convFilter === "mias") list = list.filter(c => c.owner === S.me.name);
+  if (S.convCh) list = list.filter(c => chOf(c) === S.convCh);
   if (q) list = list.filter(c => norm(contactName(c) + " " + c.phone + " " + (c.company || "")).includes(q));
   list.sort((a, b) => Math.max(b.lastInboundAt || 0, b.lastOutboundAt || 0) - Math.max(a.lastInboundAt || 0, a.lastOutboundAt || 0));
   const c = byId(S.contacts, S.convSel);
@@ -628,28 +709,32 @@ function viewConv(el) {
   el.innerHTML = `<div class="chat ${c ? "has-sel" : ""}">
     <div class="chat-list"><div class="search"><input class="in" id="convQ" placeholder="Buscar conversación" value="${esc(S.convQ || "")}">
       <select class="in" id="convF"><option value="todas">Todas</option><option value="sin" ${S.convFilter === "sin" ? "selected" : ""}>Sin responder</option><option value="mias" ${S.convFilter === "mias" ? "selected" : ""}>Mías</option></select></div>
+      <div class="ch-tabs"><button data-ch="" class="${!S.convCh ? "on" : ""}">Todos</button>${Object.keys(CHN).map(k => `<button data-ch="${k}" class="${S.convCh === k ? "on" : ""}" title="${CHN[k].label}">${chIcon(k)}</button>`).join("")}</div>
       ${list.map(x => { const last = Math.max(x.lastInboundAt || 0, x.lastOutboundAt || 0); return `<button class="conv ${c && x.id === c.id ? "on" : ""}" data-c="${x.id}">
-        <div class="avatar c" style="${avColor(contactName(x))}">${esc((contactName(x) || "?")[0].toUpperCase())}</div><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="tm ${x.unread ? "new" : ""}">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
+        <span class="av-wrap"><span class="avatar c" style="${avColor(contactName(x))}">${esc((contactName(x) || "?")[0].toUpperCase())}</span>${chIcon(chOf(x), "badge")}</span><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="tm ${x.unread ? "new" : ""}">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
         <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? (isAiName(x.lastOutboundBy) ? "✨ " : ticks("sent")) : ""}${esc(x.lastMessage || "")}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
-        || `<div class="empty"><p>${WHATSAPP_ENABLED ? "Aún no hay conversaciones. Cuando un cliente escriba a tu WhatsApp aparecerá aquí." : "Aquí verás las conversaciones cuando conectes WhatsApp. Mientras tanto, los mensajes que registres desde Hoy o Contactos aparecen aquí."}</p></div>`}
+        || `<div class="empty"><p>${anyChannel() ? "Aún no hay conversaciones. Cuando un cliente escriba por un canal conectado aparecerá aquí." : "Aquí verás las conversaciones de WhatsApp, Instagram, Messenger, Telegram y el chat web cuando los conectes en Canales."}</p></div>`}
     </div>
     <div class="chat-pane">${c ? `
       <div class="chat-top"><button class="btn sm back" id="cback">←</button><div class="avatar c" style="${avColor(contactName(c))}">${esc(contactName(c)[0].toUpperCase())}</div>
-        <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
-        <span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span></div>
+        <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${chIcon(chOf(c), "inl")} ${CHN[chOf(c)].label}${c.phone ? " · " : ""}${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
+        ${w.nolimit ? "" : `<span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span>`}</div>
       ${aiBar(c)}
       <div class="msgs" id="msgs">${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
       <div class="composer">
-        ${WHATSAPP_ENABLED && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
-        ${WHATSAPP_ENABLED && !w.open ? `<div class="row"><select class="in" id="ctpl">${waTpls.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("") || "<option value=''>No hay plantillas aprobadas</option>"}</select><button class="btn primary" id="ctplsend" ${waTpls.length ? "" : "disabled"}>Enviar plantilla</button></div>
+        ${canSend(c) && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
+        ${canSend(c) && !w.open && chOf(c) === "whatsapp" ? `<div class="row"><select class="in" id="ctpl">${waTpls.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("") || "<option value=''>No hay plantillas aprobadas</option>"}</select><button class="btn primary" id="ctplsend" ${waTpls.length ? "" : "disabled"}>Enviar plantilla</button></div>
           <small class="muted">Pasaron más de 24 h desde su último mensaje: WhatsApp solo permite plantillas aprobadas por Meta.</small>` : ""}
-        ${!WHATSAPP_ENABLED ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe el mensaje y ábrelo en WhatsApp"></textarea>
+        ${canSend(c) && !w.open && chOf(c) !== "whatsapp" ? `<small class="muted">Pasaron más de 24 h desde su último mensaje: ${CHN[chOf(c)].label} no deja escribirle hasta que vuelva a escribir.</small>` : ""}
+        ${!canSend(c) && chOf(c) === "whatsapp" ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe el mensaje y ábrelo en WhatsApp"></textarea>
           ${waLink(c.phone) ? `<button class="send" id="cwa" aria-label="Abrir en WhatsApp" title="Abrir en WhatsApp">${icon("send")}</button>` : ""}</div>` : ""}
+        ${!canSend(c) && chOf(c) !== "whatsapp" ? `<small class="muted">${CHN[chOf(c)].label} no está conectado. ${isAdmin() ? 'Conéctalo en <a href="#canales">Canales</a>.' : "Pídele a la administradora que lo conecte."}</small>` : ""}
         <div class="row note-row"><input class="in" id="cnote" placeholder="Nota interna: el cliente no la ve"><button class="btn sm" id="cnotebtn">Guardar nota</button></div>
       </div>` : `<div class="empty" style="margin:auto">Elige una conversación.</div>`}</div>
     ${c ? `<aside class="chat-info">${contactSummary(c)}</aside>` : ""}</div>`;
   $("#convQ").oninput = e => { S.convQ = e.target.value; renderShell(); };
   $("#convF").onchange = e => { S.convFilter = e.target.value; renderShell(); };
+  $$("[data-ch]", el).forEach(b => b.onclick = () => { S.convCh = b.dataset.ch; renderShell(); });
   $$("[data-c]", el).forEach(b => b.onclick = () => go("conv", b.dataset.c));
   if (!c) return;
   const box = $("#msgs"); box.scrollTop = box.scrollHeight;
@@ -981,8 +1066,8 @@ function openQuote(id, contactId) {
       if (!await save({ status: "Enviada", sentAt: Date.now() })) return;
       const c = byId(S.contacts, q.contactId), text = quoteText(q);
       draw();
-      if (WHATSAPP_ENABLED && winInfo(c).open && await ask("¿Enviar la cotización por WhatsApp ahora?", "Enviar", "No, ya la envié")) await sendText(c, text);
-      else if (!WHATSAPP_ENABLED && waLink(c.phone) && await ask("Cotización marcada como enviada. ¿Abrir WhatsApp con el texto listo?", "Abrir WhatsApp", "No")) { window.open(waLink(c.phone, text), "_blank"); await logOutbound(c, text, "Cotización"); }
+      if (canSend(c) && winInfo(c).open && await ask(`¿Enviar la cotización por ${CHN[chOf(c)].label} ahora?`, "Enviar", "No, ya la envié")) await sendText(c, text);
+      else if (!canSend(c) && waLink(c.phone) && await ask("Cotización marcada como enviada. ¿Abrir WhatsApp con el texto listo?", "Abrir WhatsApp", "No")) { window.open(waLink(c.phone, text), "_blank"); await logOutbound(c, text, "Cotización"); }
       else toast("Cotización " + q.number + " marcada como enviada");
     };
     if ($("#qacc")) $("#qacc").onclick = async () => { if (await save({ status: "Aceptada", acceptedAt: Date.now() })) { toast("Aceptada: ahora conviértela en pedido"); draw(); } };

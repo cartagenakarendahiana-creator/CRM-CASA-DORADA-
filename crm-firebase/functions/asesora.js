@@ -44,7 +44,7 @@ const TOOLS = [
 
 function systemPrompt(cfg) {
   const name = cfg.name || "Sofía";
-  return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"} por WhatsApp. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por WhatsApp; máximo 1 o 2 emojis). Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
+  return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis). Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
 Tu trabajo (modo mixto):
 - Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
@@ -56,7 +56,7 @@ Tu trabajo (modo mixto):
 - Si recibes un audio, imagen o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
 - No des descuentos, no confirmes pedidos, pagos, envíos ni fechas de entrega.
 
-Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por WhatsApp: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
+Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por el mismo chat: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
 Los mensajes del equipo humano en el historial también son de tu lado de la conversación; sé coherente con ellos.
 
 Instrucciones del negocio (horarios, envíos, pagos, políticas):
@@ -67,7 +67,8 @@ function contactText(c) {
   const f = [["Nombre", c.name], ["Empresa", c.company], ["Ciudad", c.city], ["Correo", c.email], ["Segmento", c.segment], ["Tipo", c.type],
     ["Etapa", c.stage], ["Temperatura", c.temperature], ["Qué busca", c.looking], ["Producto elegido", c.chosenProduct && `${c.chosenProduct.name} ${money(c.chosenProduct.price)}`],
     ["Próximo seguimiento", c.nextDate && `${c.nextDate} ${c.nextAction || ""}`], ["Observaciones", c.obs]];
-  return `Hoy es ${nowText()}.\nFicha actual del cliente:\n` + f.filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`).join("\n");
+  const canal = { whatsapp: "WhatsApp", telegram: "Telegram", messenger: "Messenger", instagram: "Instagram", web: "el chat de la página web" }[c.lastChannel || "whatsapp"];
+  return `Hoy es ${nowText()}. El cliente escribe por ${canal}${c.lastChannel && c.lastChannel !== "whatsapp" && !c.phone ? " (si quiere comprar, pídele su número de celular y guárdalo en la nota)" : ""}.\nFicha actual del cliente:\n` + f.filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`).join("\n");
 }
 
 // Historial de WhatsApp → turnos user/assistant (las notas internas no se incluyen)
