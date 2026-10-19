@@ -72,6 +72,7 @@ const ICONS = {
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
+  integraciones: '<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>',
   canales: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.3 11l7.4-3.8M8.3 13l7.4 3.8"/>',
   asesora: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
@@ -106,7 +107,7 @@ const DEFAULT_TEMPLATES = [
 ];
 
 const S = {
-  user: null, me: null, contacts: [], quotes: [], orders: [], products: [], templates: [], team: [], automations: [], campaigns: [],
+  user: null, me: null, contacts: [], quotes: [], orders: [], products: [], templates: [], team: [], automations: [], campaigns: [], knowledge: [],
   loaded: {}, view: "hoy", sel: null, convSel: null, convFilter: "todas", search: "", msgsUnsub: null, msgs: [], msgsFor: null,
   hoyMsgsUnsub: null, hoyMsgs: [], hoyMsgsFor: null, unsubs: [],
 };
@@ -200,6 +201,7 @@ function startData() {
   w("templates", "templates");
   w("team", "users");
   w("automations", "automations");
+  w("knowledge", "knowledge");
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"], limit: 100 });
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
@@ -224,7 +226,7 @@ const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
   ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
-  ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Configuración", [["canales", "Canales"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["integraciones", "Integraciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -256,7 +258,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
@@ -533,6 +535,73 @@ function openCampaign(id) {
   draw(); m.showModal();
 }
 
+// ======================= Integraciones =======================
+function viewIntegraciones(el) {
+  const adm = isAdmin(), base = location.origin + "/api/v1";
+  if (!adm) { el.innerHTML = `<div class="page"><div class="page-head"><h1>Integraciones</h1></div><p class="muted">Solo la administradora puede ver y configurar las integraciones.</p></div>`; return; }
+  const I = S.integ;
+  if (!I && !S.integLoading) {
+    S.integLoading = true;
+    fb.call("integrations", { action: "get" }).then(r => { S.integ = r; }).catch(er => { S.integ = { error: errMsg(er), webhooks: [], events: {} }; }).finally(() => { S.integLoading = false; renderShell(); });
+  }
+  const ev = (I && I.events) || {};
+  const ok = st => /^2\d\d$/.test(String(st));
+  el.innerHTML = `<div class="page"><div class="page-head"><h1>Integraciones</h1><span class="sub">Conecta House Chat con tu tienda, tu ERP, Zapier, Make o n8n.</span></div>
+    ${!I ? '<div class="empty">Cargando…</div>' : I.error ? `<div class="card" style="padding:14px 16px"><b>No se pudo cargar.</b><p class="muted" style="margin:6px 0 0">${esc(I.error)}. Si aún no publicas las funciones nuevas, en Cloud Shell: <code>firebase deploy --only functions</code></p></div>` : `
+    <div class="chgrid">
+      <section class="chcard"><div class="chcard-h">${icon("integraciones")}<div><b>Webhooks: avisar a otros sistemas</b><small>House Chat envía un POST con JSON cuando pasa algo</small></div></div>
+        ${(I.webhooks || []).map(h => `<div class="hook"><div class="hook-u mono">${esc(h.url)}</div><div class="hook-e">${h.events.map(e => `<span class="tag k-gray">${esc(ev[e] || e)}</span>`).join("")}</div>
+          <div class="hook-s muted">${h.lastAt ? `Último envío ${whenLabel(h.lastAt)}: <span class="${ok(h.lastStatus) ? "okc" : "errc"}">${esc(h.lastStatus)}</span>` : "Sin envíos todavía"} · firma: <code class="sel" title="Clave para verificar X-HouseChat-Signature">${esc(h.secret)}</code></div>
+          <div class="chrow"><button class="btn sm" data-test="${h.id}">Enviar prueba</button><button class="btn sm danger" data-delh="${h.id}">Eliminar</button></div></div>`).join("") || '<p class="muted">Aún no hay webhooks.</p>'}
+        <form id="hookf" class="chform"><input class="in" id="hurl" type="url" placeholder="https://hooks.zapier.com/…" required>
+          <div class="evs">${Object.entries(ev).map(([k, l]) => `<label><input type="checkbox" value="${k}" ${["contacto.creado", "pedido.creado"].includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>
+          <div class="chrow"><button class="btn primary">+ Agregar webhook</button></div></form></section>
+      <section class="chcard"><div class="chcard-h">${icon("integraciones")}<div><b>API: recibir datos de otros sistemas</b><small>Crea contactos, notas y pedidos desde tu página, tienda o ERP</small></div>${I.apiKeyHint ? '<span class="pill green">Activa</span>' : '<span class="pill">Sin clave</span>'}</div>
+        ${I.apiKeyHint ? `<p>Clave actual: <code>${esc(I.apiKeyHint)}</code></p>` : '<p class="muted">Genera una clave para empezar. Se muestra una sola vez: guárdala en un lugar seguro.</p>'}
+        <div id="newKey"></div>
+        <div class="chrow"><button class="btn primary" id="genKey">${I.apiKeyHint ? "Generar clave nueva" : "Generar clave"}</button>${I.apiKeyHint ? '<button class="btn danger" id="revKey">Desactivar la API</button>' : ""}</div>
+        <details class="apidoc"><summary>Cómo usarla</summary>
+<pre><code># Crear o actualizar un contacto (por celular o correo)
+curl -X POST ${esc(base)}/contacts \
+  -H "Authorization: Bearer TU_CLAVE" -H "Content-Type: application/json" \
+  -d '{"name":"Hotel Sol","phone":"3001112233","segment":"Hoteles","tags":["Web"],"note":"Pidió catálogo desde la página"}'
+
+# Buscar por celular
+curl "${esc(base)}/contacts?phone=3001112233" -H "Authorization: Bearer TU_CLAVE"
+
+# Agregar una nota
+curl -X POST ${esc(base)}/contacts/ID/notes -H "Authorization: Bearer TU_CLAVE" \
+  -H "Content-Type: application/json" -d '{"text":"Pagó por transferencia"}'
+
+# Crear un pedido (desde tu tienda en línea)
+curl -X POST ${esc(base)}/orders -H "Authorization: Bearer TU_CLAVE" \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"3001112233","items":[{"name":"Sábana 1.40","qty":2,"price":58000}]}'
+
+# Ver el catálogo
+curl ${esc(base)}/products -H "Authorization: Bearer TU_CLAVE"</code></pre></details></section>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin-top:14px">Con Zapier, Make o n8n puedes unir House Chat con Shopify, WooCommerce, Google Sheets, Siigo, Alegra, Gmail y cientos de apps más: usa los webhooks para que House Chat les avise, y la API para que ellos le escriban a House Chat.</p>`}
+  </div>`;
+  const refresh = r => { S.integ = { ...S.integ, ...r }; renderShell(); };
+  if ($("#hookf")) $("#hookf").onsubmit = async e => {
+    e.preventDefault();
+    const events = $$(".evs input:checked", el).map(i => i.value);
+    try { refresh(await fb.call("integrations", { action: "saveWebhook", url: $("#hurl").value.trim(), events })); toast("Webhook agregado"); } catch (er) { toast(errMsg(er)); }
+  };
+  $$("[data-test]", el).forEach(b => b.onclick = async () => { b.disabled = true;
+    try { const r = await fb.call("integrations", { action: "testWebhook", id: b.dataset.test }); toast(ok(r.status) ? "La prueba llegó (" + r.status + ")" : "No llegó: " + r.status); S.integ = null; renderShell(); }
+    catch (er) { toast(errMsg(er)); b.disabled = false; } });
+  $$("[data-delh]", el).forEach(b => b.onclick = async () => { if (!await ask("¿Eliminar este webhook?", "Eliminar")) return; refresh(await fb.call("integrations", { action: "deleteWebhook", id: b.dataset.delh })); });
+  if ($("#genKey")) $("#genKey").onclick = async () => {
+    if (I.apiKeyHint && !await ask("La clave anterior dejará de funcionar. ¿Generar una nueva?", "Generar")) return;
+    try { const r = await fb.call("integrations", { action: "newApiKey" }); S.integ = { ...S.integ, apiKeyHint: r.key.slice(0, 6) + "…" + r.key.slice(-4) }; renderShell();
+      $("#newKey").innerHTML = `<div class="codebox"><code class="sel">${esc(r.key)}</code><button class="btn sm" id="cpKey">Copiar</button></div><p class="errc" style="font-size:12.5px">Cópiala ahora: no se volverá a mostrar.</p>`;
+      $("#cpKey").onclick = () => copy(r.key); } catch (er) { toast(errMsg(er)); } };
+  if ($("#revKey")) $("#revKey").onclick = async () => { if (!await ask("¿Desactivar la API? Los sistemas que la usan dejarán de funcionar.", "Desactivar")) return;
+    await fb.call("integrations", { action: "revokeApiKey" }); S.integ = { ...S.integ, apiKeyHint: "" }; renderShell(); };
+}
+
 // ======================= Canales =======================
 function viewCanales(el) {
   const ch = S.ch || {}, adm = isAdmin(), pid = firebaseConfig.projectId || "TU-PROYECTO";
@@ -546,7 +615,12 @@ function viewCanales(el) {
   el.innerHTML = `<div class="page"><div class="page-head"><h1>Canales</h1><span class="sub">Todo llega a <b>Conversaciones</b> y la asesora virtual puede responder en todos.</span></div>
     <div class="chgrid">
     ${card("whatsapp", WHATSAPP_ENABLED, `<p class="muted">Se conecta con la app de Meta (WhatsApp Cloud API). Sigue la <b>fase 2</b> de la guía de instalación; cuando termines, cambia <code>WHATSAPP_ENABLED</code> a <code>true</code> en <code>firebase-config.js</code>.</p>
-      <p class="muted">Webhook para Meta: <code class="sel">${esc(hook)}</code></p>`)}
+      <p class="muted">Webhook para Meta: <code class="sel">${esc(hook)}</code></p>
+      <div class="lines"><b class="lines-t">Líneas de WhatsApp</b>
+        ${(ch.waLines || []).map((l, i) => `<div class="line-i"><span class="ln-n">${esc(l.name)}</span><span class="mono muted">${esc(l.number || "")}</span><span class="muted">${l.owner ? "→ " + esc(l.owner) : "sin responsable fijo"}</span>${adm ? `<button class="link" data-rmline="${i}">Quitar</button>` : ""}</div>`).join("")
+          || '<p class="muted" style="margin:4px 0">Una sola línea (la de WA_PHONE_ID). Agrega más si tienes varios números en la misma cuenta de WhatsApp Business.</p>'}
+        ${adm ? `<form id="linef" class="line-f"><input class="in" id="lnm" placeholder="Nombre (ej. Ventas hoteles)" required><input class="in" id="lnum" placeholder="Número (+57…)"><input class="in" id="lid" placeholder="Identificador del número (Phone number ID)" required>
+          <select class="in" id="low"><option value="">Responsable: sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option>${esc(u.name)}</option>`).join("")}</select><button class="btn">+ Agregar línea</button></form>` : ""}</div>`)}
     ${card("web", !!web.on, adm ? `<form id="webf" class="chform">
       <label class="switch"><input type="checkbox" id="won" ${web.on ? "checked" : ""}> <span>Mostrar el chat en mi página web</span></label>
       <div class="grid2"><div><label class="lb" for="wt">Título</label><input class="in" id="wt" value="${esc(web.title || EMPRESA)}"></div>
@@ -566,6 +640,15 @@ function viewCanales(el) {
     ${card("instagram", !!(ch.instagram && ch.instagram.on), ch.instagram && ch.instagram.on ? `<p>Conectado junto con Messenger.</p>`
       : `<p class="muted">Se conecta junto con Messenger, con el mismo token de la página. Tu cuenta de Instagram debe ser <b>profesional</b> y estar vinculada a la página de Facebook, y en Instagram activa <b>Configuración › Mensajes › Permitir acceso a los mensajes</b>.</p>`)}
     </div></div>`;
+  if ($("#linef")) $("#linef").onsubmit = async e => {
+    e.preventDefault();
+    const line = { id: $("#lid").value.replace(/\D/g, ""), name: $("#lnm").value.trim(), number: $("#lnum").value.trim(), owner: $("#low").value };
+    if (!line.id || !line.name) return toast("Escribe el nombre y el identificador del número.");
+    if ((ch.waLines || []).some(l => l.id === line.id)) return toast("Esa línea ya está agregada.");
+    await fb.set("settings/channels", { waLines: [...(ch.waLines || []), line] }); toast("Línea agregada");
+  };
+  $$("[data-rmline]", el).forEach(b => b.onclick = async () => { if (!await ask("¿Quitar esta línea? Los chats existentes se quedan.", "Quitar")) return;
+    await fb.set("settings/channels", { waLines: (ch.waLines || []).filter((_, i) => i !== +b.dataset.rmline) }); });
   if ($("#cpEmbed")) $("#cpEmbed").onclick = () => copy(embed.replace("<\\/", "</"));
   if ($("#webf")) $("#webf").onsubmit = async e => {
     e.preventDefault();
@@ -597,6 +680,29 @@ function metaSteps(hook) {
     <input class="in" id="mig" placeholder="ID de Instagram (opcional, se detecta solo)" autocomplete="off"><div class="chrow"><button class="btn primary">Conectar</button></div></form>`;
 }
 
+function openKb(id) {
+  const k = id ? byId(S.knowledge, id) : { title: "", content: "", on: true }, adm = isAdmin(), m = $("#modal");
+  m.innerHTML = `<form id="kf"><div class="mh"><h2>${id ? "Artículo" : "Nuevo artículo"}</h2><button class="iconbtn" type="button" id="kx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><div><label class="lb" for="kt">Título</label><input class="in" id="kt" required value="${esc(k.title || "")}" placeholder="Ej: Envíos y tiempos de entrega" ${adm ? "" : "disabled"}></div>
+      <div><label class="lb" for="kc">Contenido</label><textarea class="in" id="kc" rows="14" placeholder="Escribe como si le explicaras a una asesora nueva…" ${adm ? "" : "disabled"}>${esc(k.content || "")}</textarea>
+        <small class="muted" id="kn"></small></div>
+      ${adm ? `<div class="chrow"><label class="btn sm" for="kfile">Cargar desde archivo .txt o .md</label><input type="file" id="kfile" accept=".txt,.md,text/plain" hidden>
+        <label class="switch sm"><input type="checkbox" id="kon" ${k.on !== false ? "checked" : ""}> <span>La asesora lo usa</span></label></div>` : ""}</div>
+    <div class="mf">${id && adm ? '<button class="btn danger" type="button" id="kdel">Eliminar</button><span class="spacer"></span>' : ""}<button class="btn" type="button" id="kc2">Cerrar</button>${adm ? '<button class="btn primary">Guardar</button>' : ""}</div></form>`;
+  const count = () => { $("#kn").textContent = $("#kc").value.length.toLocaleString("es-CO") + " caracteres"; };
+  count(); $("#kc").oninput = count;
+  $("#kx").onclick = $("#kc2").onclick = () => m.close();
+  if ($("#kfile")) $("#kfile").onchange = async e => { const f = e.target.files[0]; if (!f) return; if (f.size > 300000) return toast("El archivo es muy grande (máximo 300 KB)."); $("#kc").value = await f.text(); if (!$("#kt").value) $("#kt").value = f.name.replace(/\.[^.]+$/, ""); count(); };
+  if ($("#kdel")) $("#kdel").onclick = async () => { if (!await ask("¿Eliminar este artículo?", "Eliminar")) return; await fb.remove("knowledge/" + id); m.close(); };
+  $("#kf").onsubmit = async e => {
+    e.preventDefault(); if (!adm) return;
+    const data = { title: $("#kt").value.trim(), content: $("#kc").value.trim().slice(0, 60000), on: $("#kon").checked, ...stamp() };
+    if (!data.title || !data.content) return toast("Escribe el título y el contenido.");
+    try { if (id) await fb.update("knowledge/" + id, data); else await fb.set("knowledge/" + fb.newId("knowledge"), { ...data, createdAt: Date.now() }, false); m.close(); toast("Guardado"); }
+    catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+  };
+  m.showModal();
+}
 function viewAsesora(el) {
   const a = S.ai || {}, adm = isAdmin();
   const waiting = S.contacts.filter(c => c.aiHandoff).sort((x, y) => y.aiHandoff.at - x.aiHandoff.at);
@@ -608,7 +714,7 @@ function viewAsesora(el) {
     ${anyChannel() ? "" : `<div class="card" style="margin-bottom:16px;padding:12px 16px"><b>Necesita al menos un canal conectado.</b><p class="muted" style="margin:6px 0 0">La asesora responde lo que llega por WhatsApp, Instagram, Messenger, Telegram o el chat web. Conéctalos en <a href="#canales">Canales</a>; puedes dejarla configurada desde ya.</p></div>`}
     <div class="kpis" style="margin-bottom:16px;width:fit-content"><div><b>${today}</b>chats respondidos hoy</div><div><b>${waiting.length}</b>esperando a una persona</div><div><b>${drafts}</b>cotizaciones por revisar</div></div>
     <form id="aif" class="card ai-form">
-      <label class="switch"><input type="checkbox" id="aen" ${a.enabled ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Responder automáticamente los mensajes de WhatsApp, las 24 horas</span></label>
+      <label class="switch"><input type="checkbox" id="aen" ${a.enabled ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Responder automáticamente los mensajes de todos los canales, las 24 horas</span></label>
       <div class="grid2">
         <div><label class="lb" for="anm">Nombre de la asesora</label><input class="in" id="anm" value="${esc(a.name || "Sofía")}" ${adm ? "" : "disabled"}></div>
         <div><label class="lb" for="aph">Se pausa en un chat cuando una persona escribe, durante (horas)</label><input class="in tabnum" id="aph" type="number" min="1" max="168" value="${a.pauseHours || 12}" ${adm ? "" : "disabled"}></div>
@@ -620,10 +726,17 @@ function viewAsesora(el) {
         <b style="display:block;margin-top:10px">Qué pasa a una persona</b><p class="muted" style="margin:4px 0 0">Cerrar pedidos y pagos, negociaciones y descuentos, quejas o reclamos, y lo que no sepa. Esos chats aparecen de primeros en Hoy y ella deja de responder ahí hasta que la reactives.</p></div>
       ${adm ? '<div><button class="btn primary" type="submit">Guardar</button></div>' : '<p class="muted">Solo la administradora puede cambiar esta configuración.</p>'}
     </form>
+    <h2 class="sec-t">Base de conocimiento <small class="muted">· lo que la asesora sabe de tu empresa</small></h2>
+    <div class="kb">${(S.knowledge || []).slice().sort((x, y) => String(x.title).localeCompare(String(y.title))).map(k => `<button class="kb-item ${k.on === false ? "off" : ""}" data-kb="${k.id}">
+        <b>${esc(k.title)}</b><span>${esc(String(k.content || "").slice(0, 140))}${String(k.content || "").length > 140 ? "…" : ""}</span><small class="muted">${String(k.content || "").length.toLocaleString("es-CO")} caracteres${k.on === false ? " · apagado" : ""}</small></button>`).join("")}
+      ${adm ? `<button class="kb-item add" id="kbNew"><b>+ Agregar artículo</b><span>Preguntas frecuentes, políticas de envío y garantía, cuidados de las sábanas, medidas, formas de pago… También puedes subir un archivo .txt.</span></button>` : ""}</div>
+    ${(S.knowledge || []).length ? "" : '<p class="muted" style="font-size:12.5px">Mientras más le enseñes, mejor responde. Si un tema no está aquí ni en el catálogo, la asesora pasa el chat a una persona.</p>'}
     <h2 style="margin-top:24px">Esperando a una persona</h2>
     <div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th>Motivo</th><th>Resumen</th><th>Hace</th></tr></thead><tbody>
       ${waiting.map(c => `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.aiHandoff.reason || "")}</td><td>${esc(c.aiHandoff.summary || "")}</td><td>${ago(c.aiHandoff.at)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">Ninguno.</td></tr>'}</tbody></table></div></div>`;
   $$("[data-c]", el).forEach(tr => tr.onclick = () => go("conv", tr.dataset.c));
+  $$("[data-kb]", el).forEach(b => b.onclick = () => openKb(b.dataset.kb));
+  if ($("#kbNew")) $("#kbNew").onclick = () => openKb(null);
   $("#aif").onsubmit = async e => {
     e.preventDefault(); if (!adm) return;
     try {
@@ -952,6 +1065,8 @@ function viewConv(el) {
   if (S.convFilter === "sin") list = list.filter(c => c.lastInboundAt && (!c.lastOutboundAt || c.lastInboundAt > c.lastOutboundAt));
   if (S.convFilter === "mias") list = list.filter(c => c.owner === S.me.name);
   if (S.convCh) list = list.filter(c => chOf(c) === S.convCh);
+  const lines = (S.ch && S.ch.waLines) || [];
+  if (S.convLine) list = list.filter(c => c.waLine === S.convLine);
   if (q) list = list.filter(c => norm(contactName(c) + " " + c.phone + " " + (c.company || "")).includes(q));
   list.sort((a, b) => Math.max(b.lastInboundAt || 0, b.lastOutboundAt || 0) - Math.max(a.lastInboundAt || 0, a.lastOutboundAt || 0));
   const c = byId(S.contacts, S.convSel);
@@ -960,7 +1075,8 @@ function viewConv(el) {
   const waTpls = S.templates.filter(t => t.waName);
   el.innerHTML = `<div class="chat ${c ? "has-sel" : ""}">
     <div class="chat-list"><div class="search"><input class="in" id="convQ" placeholder="Buscar conversación" value="${esc(S.convQ || "")}">
-      <select class="in" id="convF"><option value="todas">Todas</option><option value="sin" ${S.convFilter === "sin" ? "selected" : ""}>Sin responder</option><option value="mias" ${S.convFilter === "mias" ? "selected" : ""}>Mías</option></select></div>
+      <select class="in" id="convF"><option value="todas">Todas</option><option value="sin" ${S.convFilter === "sin" ? "selected" : ""}>Sin responder</option><option value="mias" ${S.convFilter === "mias" ? "selected" : ""}>Mías</option></select>
+      ${lines.length > 1 ? `<select class="in" id="convL" style="grid-column:1/-1"><option value="">Todas las líneas de WhatsApp</option>${lines.map(l => `<option value="${esc(l.id)}" ${S.convLine === l.id ? "selected" : ""}>${esc(l.name)}${l.number ? " · " + esc(l.number) : ""}</option>`).join("")}</select>` : ""}</div>
       <div class="ch-tabs"><button data-ch="" class="${!S.convCh ? "on" : ""}">Todos</button>${Object.keys(CHN).map(k => `<button data-ch="${k}" class="${S.convCh === k ? "on" : ""}" title="${CHN[k].label}">${chIcon(k)}</button>`).join("")}</div>
       ${list.map(x => { const last = Math.max(x.lastInboundAt || 0, x.lastOutboundAt || 0); return `<button class="conv ${c && x.id === c.id ? "on" : ""}" data-c="${x.id}">
         <span class="av-wrap"><span class="avatar c" style="${avColor(contactName(x))}">${esc((contactName(x) || "?")[0].toUpperCase())}</span>${chIcon(chOf(x), "badge")}</span><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="tm ${x.unread ? "new" : ""}">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
@@ -969,7 +1085,7 @@ function viewConv(el) {
     </div>
     <div class="chat-pane">${c ? `
       <div class="chat-top"><button class="btn sm back" id="cback">←</button><div class="avatar c" style="${avColor(contactName(c))}">${esc(contactName(c)[0].toUpperCase())}</div>
-        <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${chIcon(chOf(c), "inl")} ${CHN[chOf(c)].label}${c.phone ? " · " : ""}${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
+        <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${chIcon(chOf(c), "inl")} ${CHN[chOf(c)].label}${chOf(c) === "whatsapp" && c.waLine && lines.find(l => l.id === c.waLine) ? " · " + esc(lines.find(l => l.id === c.waLine).name) : ""}${c.phone ? " · " : ""}${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
         ${w.nolimit ? "" : `<span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span>`}</div>
       ${aiBar(c)}
       <div class="msgs" id="msgs">${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
@@ -987,6 +1103,7 @@ function viewConv(el) {
   $("#convQ").oninput = e => { S.convQ = e.target.value; renderShell(); };
   $("#convF").onchange = e => { S.convFilter = e.target.value; renderShell(); };
   $$("[data-ch]", el).forEach(b => b.onclick = () => { S.convCh = b.dataset.ch; renderShell(); });
+  if ($("#convL")) $("#convL").onchange = e => { S.convLine = e.target.value; renderShell(); };
   $$("[data-c]", el).forEach(b => b.onclick = () => go("conv", b.dataset.c));
   if (!c) return;
   const box = $("#msgs"); box.scrollTop = box.scrollHeight;

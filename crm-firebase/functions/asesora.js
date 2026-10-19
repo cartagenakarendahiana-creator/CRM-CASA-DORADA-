@@ -8,6 +8,8 @@ const MAX_ROUNDS = 6;       // vueltas de herramientas por mensaje
 const HISTORY = 40;         // mensajes de contexto
 const DEBOUNCE_MS = 7000;   // espera por si el cliente manda varios mensajes seguidos
 const TEMPS = ["🔥 Caliente", "🌤 Tibio", "❄️ Frío"];
+const STAGES = ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Negociación", "Ganado", "Perdido"];
+const STAGE_UP = ["Contactado", "Catálogo enviado", "Cotización enviada", "Negociación"];
 
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 const isoDay = d => new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
@@ -26,7 +28,8 @@ const TOOLS = [
       ciudad: { type: "string" },
       correo: { type: "string" },
       que_busca: { type: "string", description: "Resumen corto de lo que necesita, ej. '20 juegos de sábanas 1.40 para hotel'" },
-      temperatura: { type: "string", enum: TEMPS, description: "Qué tan cerca está de comprar" },
+      temperatura: { type: "string", enum: TEMPS, description: "Qué tan cerca está de comprar (calificación del lead)" },
+      etapa: { type: "string", enum: STAGE_UP, description: "Avanza la oportunidad en el embudo cuando corresponda (solo hacia adelante)" },
       producto_elegido_id: { type: "string", description: "id del producto que eligió (de buscar_productos)" },
       nota: { type: "string", description: "Dato útil para el equipo que no cabe en los otros campos" },
     }, []) },
@@ -40,9 +43,18 @@ const TOOLS = [
   { name: "pasar_a_humano", description: "Pasa la conversación a una persona del equipo y deja de responder en este chat. Úsala para: cerrar un pedido (datos de envío, pago, confirmación), negociar precio o descuentos, quejas o reclamos, garantías, preguntas que el catálogo y las instrucciones no responden, o si el cliente pide hablar con una persona.",
     input_schema: obj({ motivo: { type: "string", enum: ["Cerrar pedido", "Negociación", "Queja o reclamo", "Pide una persona", "No sé la respuesta", "Otro"] },
       resumen: { type: "string", description: "Resumen para la persona que toma el chat: qué quiere el cliente y qué falta" } }, ["motivo", "resumen"]) },
+  { name: "buscar_conocimiento", description: "Busca en la base de conocimiento de la empresa (políticas, envíos, garantías, cuidados de productos, preguntas frecuentes). Úsala antes de responder algo que no esté en el catálogo.",
+    input_schema: obj({ consulta: { type: "string", description: "Tema a buscar, ej. 'garantía' o 'envíos a Cali'" } }, ["consulta"]) },
 ].map(t => ({ ...t, strict: true }));
+const KB_INLINE = 12000; // si la base de conocimiento es corta, va completa en las instrucciones
 
-function systemPrompt(cfg) {
+function kbText(kb = []) {
+  if (!kb.length) return "";
+  const full = kb.map(k => `## ${k.title}\n${String(k.content || "").trim()}`).join("\n\n");
+  if (full.length <= KB_INLINE) return `\n\nBase de conocimiento de la empresa (úsala para responder; no inventes nada que no esté aquí o en el catálogo):\n${full}`;
+  return `\n\nBase de conocimiento: hay ${kb.length} artículos (${kb.map(k => k.title).join("; ")}). Consúltalos con buscar_conocimiento antes de responder sobre esos temas.`;
+}
+function systemPrompt(cfg, kb) {
   const name = cfg.name || "Sofía";
   return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis). Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
@@ -60,7 +72,7 @@ Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cl
 Los mensajes del equipo humano en el historial también son de tu lado de la conversación; sé coherente con ellos.
 
 Instrucciones del negocio (horarios, envíos, pagos, políticas):
-${(cfg.instructions || "No hay instrucciones adicionales.").trim()}`;
+${(cfg.instructions || "No hay instrucciones adicionales.").trim()}${kbText(kb)}`;
 }
 
 function contactText(c) {
@@ -85,12 +97,19 @@ function toMessages(msgs) {
   return out;
 }
 
-function makeTools({ db, admin, cref, contact, products, aiName }) {
+function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
   const active = products.filter(p => p.active !== false);
   const pub = p => ({ id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
     precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null });
   const done = []; // lo que hizo la asesora, para la nota interna
   const run = {
+    async buscar_conocimiento({ consulta }) {
+      if (!kb.length) return { articulos: [], aviso: "La empresa no ha cargado base de conocimiento." };
+      const words = norm(consulta).split(/\s+/).filter(w => w.length > 2);
+      const scored = kb.map(k => { const hay = norm(k.title + " " + k.content); return [k, words.filter(w => hay.includes(w)).length + (norm(k.title).includes(norm(consulta)) ? 3 : 0)]; })
+        .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      return scored.length ? { articulos: scored.map(([k]) => ({ titulo: k.title, contenido: String(k.content).slice(0, 4000) })) } : { articulos: [], aviso: "No hay nada sobre eso en la base de conocimiento." };
+    },
     async buscar_productos({ consulta }) {
       const words = norm(consulta).split(/\s+/).filter(w => w.length > 1);
       if (!words.length) return { productos: active.slice(0, 60).map(pub), total: active.length };
@@ -103,6 +122,7 @@ function makeTools({ db, admin, cref, contact, products, aiName }) {
       const map = { nombre: "name", empresa: "company", ciudad: "city", correo: "email", que_busca: "looking", temperatura: "temperature" };
       for (const [k, f] of Object.entries(map)) if (a[k] && String(a[k]).trim()) patch[f] = String(a[k]).trim().slice(0, 300);
       if (patch.temperature && !TEMPS.includes(patch.temperature)) delete patch.temperature;
+      if (a.etapa && STAGE_UP.includes(a.etapa) && STAGES.indexOf(a.etapa) > STAGES.indexOf(contact.stage || "Nuevo")) Object.assign(patch, { stage: a.etapa, stageAt: Date.now() });
       if (a.producto_elegido_id) {
         const p = active.find(x => x.id === a.producto_elegido_id);
         if (!p) return { error: "Ese id no existe en el catálogo." };
@@ -154,13 +174,13 @@ function makeTools({ db, admin, cref, contact, products, aiName }) {
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done };
+  return { run, done, kb };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
 function validInput(name, input) {
   if (!input || typeof input !== "object") return false;
-  const req = { buscar_productos: ["consulta"], crear_cotizacion: ["items"], agendar_seguimiento: ["fecha", "accion"], pasar_a_humano: ["motivo", "resumen"] }[name] || [];
+  const req = { buscar_productos: ["consulta"], buscar_conocimiento: ["consulta"], crear_cotizacion: ["items"], agendar_seguimiento: ["fecha", "accion"], pasar_a_humano: ["motivo", "resumen"] }[name] || [];
   return req.every(k => input[k] !== undefined) && (name !== "crear_cotizacion" || Array.isArray(input.items));
 }
 
@@ -170,7 +190,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
   const messages = toMessages(history);
   if (!messages.length || messages[messages.length - 1].role !== "user") return { text: "" };
   const system = [
-    { type: "text", text: systemPrompt(cfg), cache_control: { type: "ephemeral" } },
+    { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
     { type: "text", text: contactText(contact) },
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -226,14 +246,16 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => n
   if (claim !== "ok") return claim;
 
   const contact = (await cref.get()).data();
-  const [hs, ps] = await Promise.all([
+  const [hs, ps, ks] = await Promise.all([
     cref.collection("messages").orderBy("ts", "desc").limit(HISTORY).get(),
     db.collection("products").get(),
+    db.collection("knowledge").get(),
   ]);
+  const kb = ks.docs.map(d => d.data()).filter(k => k.on !== false && k.title).sort((a, b) => String(a.title).localeCompare(String(b.title)));
   const history = hs.docs.map(d => d.data()).reverse();
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
-  const tools = makeTools({ db, admin, cref, contact, products, aiName });
+  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb });
 
   let res;
   try { res = await think({ apiKey, cfg, contact, history, tools }); }

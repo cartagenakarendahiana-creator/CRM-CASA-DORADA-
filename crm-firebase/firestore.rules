@@ -34,6 +34,7 @@ service cloud.firestore {
     // Tokens de los canales: solo las funciones del servidor los leen
     match /private/{id} { allow read, write: if false; }
     match /automations/{id} { allow read: if member(); allow write: if isAdmin(); }
+    match /knowledge/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /campaigns/{id} {
       allow read: if member(); allow write: if isAdmin();
       match /recipients/{rid} { allow read: if member(); allow write: if false; }

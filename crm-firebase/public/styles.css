@@ -764,3 +764,21 @@ input[type=color].in{height:36px;padding:3px}
 .reach-ch{display:flex;gap:10px;margin-top:6px;color:var(--muted);align-items:center}
 .camp-k{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.camp-k div{background:var(--soft);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted)}
 .camp-k b{display:block;font-size:18px;color:var(--ink)}
+
+/* Líneas, integraciones y base de conocimiento */
+.lines{border-top:1px solid var(--line);margin-top:10px;padding-top:10px;display:grid;gap:6px}
+.lines-t{font-size:13px}
+.line-i{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}.ln-n{font-weight:600}
+.line-f{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px}.line-f .btn{grid-column:1/-1;justify-self:start}
+.hook{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:grid;gap:6px}
+.hook-u{font-size:12.5px;word-break:break-all}.hook-e{display:flex;gap:4px;flex-wrap:wrap}.hook-s{font-size:12px}
+.okc{color:#15803d;font-weight:600}.errc{color:var(--red);font-weight:600}
+.evs{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px}
+.apidoc{margin-top:12px}.apidoc summary{cursor:pointer;color:var(--accent);font-size:13px}
+.apidoc pre{background:#0f1822;color:#d7e3f0;border-radius:10px;padding:12px 14px;overflow:auto;font-size:11.5px;line-height:1.5;margin-top:8px}
+.kb{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.kb-item{text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;gap:4px;box-shadow:var(--shadow-1);color:var(--ink)}
+.kb-item:hover{border-color:var(--accent)}.kb-item b{font-size:13.5px}.kb-item span{font-size:12.5px;color:var(--muted)}.kb-item small{font-size:11.5px}
+.kb-item.off{opacity:.55}.kb-item.add{border-style:dashed;box-shadow:none}
+@media (max-width:520px){.line-f{grid-template-columns:1fr}}
+.apidoc pre code{background:transparent!important;border:0!important;padding:0!important;color:inherit;word-break:normal;white-space:pre;font-size:inherit}
