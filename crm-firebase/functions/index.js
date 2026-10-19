@@ -8,6 +8,7 @@
 // - telegramWebhook, webchat, connectTelegram, connectMeta, disconnectChannel: otros canales (ver canales.js)
 // - autoNuevoContacto, autoEtapa, autoMensaje, autoSinRespuesta, runCampaign: automatizaciones y campañas (ver automatizaciones.js)
 // - integrations, api, intCotizacion, intPedido: webhooks salientes y API con clave (ver integraciones.js)
+// - forms: formularios de captura públicos que crean contactos (ver formularios.js)
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -344,6 +345,13 @@ exports.integrations = onCall({ region: REGION }, async req => {
 exports.api = onRequest({ region: REGION }, async (req, res) => {
   try { await INT.api(req, res); }
   catch (e) { console.error("api", e); res.status(500).json({ error: "Error del servidor." }); }
+});
+
+// ---------- Formularios de captura ----------
+const FORMS = require("./formularios")({ db, admin, phoneId, nextAssignee: () => AUTO.nextAssignee() });
+exports.forms = onRequest({ region: REGION }, async (req, res) => {
+  try { await FORMS.handle(req, res); }
+  catch (e) { console.error("forms", e); res.status(500).json({ error: "Error del servidor." }); }
 });
 
 exports.createTeamUser = onCall({ region: REGION }, async req => {

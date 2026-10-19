@@ -122,7 +122,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       const map = { nombre: "name", empresa: "company", ciudad: "city", correo: "email", que_busca: "looking", temperatura: "temperature" };
       for (const [k, f] of Object.entries(map)) if (a[k] && String(a[k]).trim()) patch[f] = String(a[k]).trim().slice(0, 300);
       if (patch.temperature && !TEMPS.includes(patch.temperature)) delete patch.temperature;
-      if (a.etapa && STAGE_UP.includes(a.etapa) && STAGES.indexOf(a.etapa) > STAGES.indexOf(contact.stage || "Nuevo")) Object.assign(patch, { stage: a.etapa, stageAt: Date.now() });
+      if (a.etapa && (contact.pipeline || "ventas") === "ventas" && STAGE_UP.includes(a.etapa) && STAGES.indexOf(a.etapa) > STAGES.indexOf(contact.stage || "Nuevo")) Object.assign(patch, { stage: a.etapa, stageAt: Date.now() });
       if (a.producto_elegido_id) {
         const p = active.find(x => x.id === a.producto_elegido_id);
         if (!p) return { error: "Ese id no existe en el catálogo." };
