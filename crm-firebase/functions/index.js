@@ -65,7 +65,7 @@ function validSignature(req, secret) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-exports.whatsappWebhook = onRequest({ region: REGION, secrets: [WA_VERIFY_TOKEN, WA_APP_SECRET] }, async (req, res) => {
+exports.whatsappWebhook = onRequest({ region: REGION, invoker: "public", secrets: [WA_VERIFY_TOKEN, WA_APP_SECRET] }, async (req, res) => {
   if (req.method === "GET") {
     const ok = req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === WA_VERIFY_TOKEN.value();
     return ok ? res.status(200).send(req.query["hub.challenge"]) : res.sendStatus(403);
@@ -139,7 +139,7 @@ async function requireMember(req) {
   return u.data();
 }
 
-exports.sendWhatsApp = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req => {
+exports.sendWhatsApp = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
   const me = await requireMember(req);
   const { contactId, text, template, preview } = req.data || {};
   if (!contactId) throw new HttpsError("invalid-argument", "Falta el contacto.");
@@ -211,7 +211,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
 });
 
 // Enviar texto por el canal del contacto (o el indicado)
-exports.sendMessage = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req => {
+exports.sendMessage = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
   const me = await requireMember(req);
   const { contactId, text, channel } = req.data || {};
   if (!contactId || !String(text || "").trim()) throw new HttpsError("invalid-argument", "Falta el contacto o el mensaje.");
@@ -230,14 +230,14 @@ exports.sendMessage = onCall({ region: REGION, secrets: [WA_TOKEN] }, async req 
 });
 
 // Telegram: el bot reenvía aquí los mensajes
-exports.telegramWebhook = onRequest({ region: REGION }, async (req, res) => {
+exports.telegramWebhook = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
   if (req.method !== "POST") return res.sendStatus(405);
   try { res.sendStatus(await CH.telegramUpdate(req)); }
   catch (e) { console.error("telegram", e); res.sendStatus(500); }
 });
 
 // Chat web: lo usa el widget que se pega en la página de la empresa
-exports.webchat = onRequest({ region: REGION }, async (req, res) => {
+exports.webchat = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
   try { await CH.webchat(req, res); }
   catch (e) { console.error("webchat", e); res.status(500).json({ error: "Error del servidor." }); }
 });
@@ -247,21 +247,21 @@ async function requireAdmin(req) {
   if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede conectar canales.");
   return me;
 }
-exports.connectTelegram = onCall({ region: REGION }, async req => {
+exports.connectTelegram = onCall({ region: REGION, invoker: "public" }, async req => {
   await requireAdmin(req);
   const token = String((req.data || {}).token || "").trim();
   if (!/^\d+:[\w-]{20,}$/.test(token)) throw new HttpsError("invalid-argument", "Ese no parece un token de Telegram. Debe verse como 123456789:ABC…");
   try { return await CH.connectTelegram(token, `https://${REGION}-${PROJECT}.cloudfunctions.net/telegramWebhook`); }
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
-exports.connectMeta = onCall({ region: REGION }, async req => {
+exports.connectMeta = onCall({ region: REGION, invoker: "public" }, async req => {
   await requireAdmin(req);
   const { pageToken, igId } = req.data || {};
   if (!pageToken || String(pageToken).length < 20) throw new HttpsError("invalid-argument", "Pega el token de acceso de la página.");
   try { return await CH.connectMeta({ pageToken: String(pageToken).trim(), igId: String(igId || "").trim() }); }
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
-exports.disconnectChannel = onCall({ region: REGION }, async req => {
+exports.disconnectChannel = onCall({ region: REGION, invoker: "public" }, async req => {
   await requireAdmin(req);
   const ch = (req.data || {}).channel;
   if (ch === "telegram") {
@@ -319,7 +319,7 @@ exports.autoMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mi
 exports.autoSinRespuesta = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 540 }, async () => {
   console.log("auto sin respuesta", await AUTO.sweepNoReply());
 });
-exports.runCampaign = onCall({ ...AUTO_OPTS, timeoutSeconds: 540, memory: "512MiB" }, async req => {
+exports.runCampaign = onCall({ ...AUTO_OPTS, invoker: "public", timeoutSeconds: 540, memory: "512MiB" }, async req => {
   const me = await requireMember(req);
   if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede enviar campañas.");
   const id = String((req.data || {}).id || "");
@@ -337,32 +337,32 @@ exports.intPedido = onDocumentCreated({ document: "orders/{id}", region: REGION 
   const o = event.data && event.data.data();
   if (o) await INT.emit("pedido.creado", { id: event.params.id, number: o.number, contactId: o.contactId, contactName: o.contactName, items: o.items, total: o.total, status: o.status });
 });
-exports.integrations = onCall({ region: REGION }, async req => {
+exports.integrations = onCall({ region: REGION, invoker: "public" }, async req => {
   const me = await requireMember(req);
   if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede configurar integraciones.");
   try { return await INT.manage((req.data || {}).action, req.data || {}); }
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
-exports.api = onRequest({ region: REGION }, async (req, res) => {
+exports.api = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
   try { await INT.api(req, res); }
   catch (e) { console.error("api", e); res.status(500).json({ error: "Error del servidor." }); }
 });
 
 // ---------- Formularios de captura ----------
 const FORMS = require("./formularios")({ db, admin, phoneId, nextAssignee: () => AUTO.nextAssignee() });
-exports.forms = onRequest({ region: REGION }, async (req, res) => {
+exports.forms = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
   try { await FORMS.handle(req, res); }
   catch (e) { console.error("forms", e); res.status(500).json({ error: "Error del servidor." }); }
 });
 
 // ---------- Aplicaciones: Shopify y Siigo ----------
 const APPS = require("./apps")({ db, admin, phoneId });
-exports.shopifyWebhook = onRequest({ region: REGION }, async (req, res) => {
+exports.shopifyWebhook = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
   if (req.method !== "POST") return res.sendStatus(405);
   try { await APPS.shopifyWebhook(req, res); }
   catch (e) { console.error("shopify", e); res.sendStatus(500); } // Shopify reintenta
 });
-exports.apps = onCall({ region: REGION, timeoutSeconds: 300 }, async req => {
+exports.apps = onCall({ region: REGION, invoker: "public", timeoutSeconds: 300 }, async req => {
   const me = await requireMember(req);
   const { action } = req.data || {};
   if (action !== "siigoInvoice" && me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede configurar aplicaciones.");
@@ -370,7 +370,7 @@ exports.apps = onCall({ region: REGION, timeoutSeconds: 300 }, async req => {
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
 
-exports.createTeamUser = onCall({ region: REGION }, async req => {
+exports.createTeamUser = onCall({ region: REGION, invoker: "public" }, async req => {
   const me = await requireMember(req);
   if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede agregar personas.");
   const { name, email, password, role } = req.data || {};
@@ -385,7 +385,7 @@ exports.createTeamUser = onCall({ region: REGION }, async req => {
   return { uid: user.uid };
 });
 
-exports.setTeamPassword = onCall({ region: REGION }, async req => {
+exports.setTeamPassword = onCall({ region: REGION, invoker: "public" }, async req => {
   const me = await requireMember(req);
   if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede cambiar contraseñas de otras personas.");
   const { uid, password } = req.data || {};
