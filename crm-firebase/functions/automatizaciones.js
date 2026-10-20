@@ -29,7 +29,7 @@ function matches(c, f = {}) {
   return true;
 }
 
-module.exports = function automatizaciones({ db, admin, send }) {
+module.exports = function automatizaciones({ db, admin, send, waQrOn = async () => false }) {
   // send({ cref, contact, text, template, byName }) → envía por el canal del contacto (lo arma index.js)
   async function rules(type) {
     const s = await db.collection("automations").where("on", "==", true).get();
@@ -126,11 +126,12 @@ module.exports = function automatizaciones({ db, admin, send }) {
     const empresa = await empresaOf();
     const all = (await db.collection("contacts").get()).docs.map(d => ({ id: d.id, ref: db.doc("contacts/" + d.id), ...d.data() })).filter(c => matches(c, camp.filter));
     const counts = { total: all.length, sent: 0, failed: 0, skipped: 0 };
+    const waQr = await waQrOn();
     for (const c of all) {
       const rref = cref.collection("recipients").doc(c.id);
       try {
         const ch = chOf(c);
-        const windowOpen = ["telegram", "web"].includes(ch) || Date.now() - (c.lastInboundAt || 0) < DAY;
+        const windowOpen = ["telegram", "web"].includes(ch) || (ch === "whatsapp" && waQr) || Date.now() - (c.lastInboundAt || 0) < DAY;
         const useTpl = ch === "whatsapp" && !windowOpen;
         if (useTpl && !(camp.template && camp.template.name)) { counts.skipped++; await rref.set({ status: "omitido", reason: "Ventana cerrada y sin plantilla", name: c.name || "", channel: ch, at: Date.now() }); continue; }
         if (!useTpl && !windowOpen) { counts.skipped++; await rref.set({ status: "omitido", reason: "Ventana de 24 h cerrada", name: c.name || "", channel: ch, at: Date.now() }); continue; }

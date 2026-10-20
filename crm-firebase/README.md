@@ -34,6 +34,7 @@ functions/apps.js           Shopify (webhook firmado /api/shopify) y Siigo (API 
 functions/formularios.js    formularios de captura públicos (API /api/form)
 functions/integraciones.js  webhooks salientes y API entrante con clave
 functions/canales.js    Telegram, Messenger, Instagram y chat web: entrada, envío y conexión
+whatsapp-qr/            puente de WhatsApp por código QR (sin Meta): servidor pequeño en Compute Engine
 public/widget.js        burbuja de chat para pegar en la página web de la empresa
 firestore.rules         quién puede leer y escribir
 ```
@@ -57,3 +58,5 @@ firestore.rules         quién puede leer y escribir
 | `knowledge` | base de conocimiento de la asesora: title, content, on |
 | `private/integrations` | webhooks (url, eventos, secreto) y hash de la clave de la API |
 | `private/channels` | tokens de Telegram y de la página de Meta; solo los leen las funciones |
+| `waqr/state`, `waqr/cmd` | WhatsApp por QR: estado y código (lo escribe el puente) y órdenes de la administradora |
+| `waOutbox` | mensajes de WhatsApp en cola para que el puente QR los envíe |

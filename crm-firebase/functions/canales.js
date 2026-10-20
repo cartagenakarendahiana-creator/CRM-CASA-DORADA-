@@ -56,7 +56,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     const extId = (contact.channels || {})[ch];
     const body = String(text).slice(0, 4000);
     let id = null;
-    if (ch === "whatsapp") id = await sendWhatsApp(body);
+    if (ch === "whatsapp") id = await sendWhatsApp(body, cref.id);
     else if (ch === "telegram") {
       const cfg = (await privateCfg()).telegram || {};
       if (!cfg.token) throw new Error("Telegram no está conectado.");
@@ -82,7 +82,13 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     return { id: docId, channel: ch };
   }
 
-  const windowOpen = (contact, ch) => !CHANNELS[ch] || !CHANNELS[ch].window || Date.now() - (contact.lastInboundAt || 0) < DAY;
+  // waQr: WhatsApp conectado por código QR (sin la regla de 24 h de la API oficial)
+  const windowOpen = (contact, ch, waQr) => !CHANNELS[ch] || !CHANNELS[ch].window || (ch === "whatsapp" && !!waQr) || Date.now() - (contact.lastInboundAt || 0) < DAY;
+  let qrCache = null, qrAt = 0;
+  async function waQrOn() {
+    if (qrCache === null || Date.now() - qrAt > 30000) { qrCache = !!((((await db.doc("settings/channels").get()).data() || {}).waqr || {}).on); qrAt = Date.now(); }
+    return qrCache;
+  }
 
   // ---------- Telegram ----------
   async function telegramUpdate(req) {
@@ -184,6 +190,6 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     return res.json({ ok: true, ts });
   }
 
-  return { CHANNELS, ingest, deliver, windowOpen, telegramUpdate, connectTelegram, metaEvents, connectMeta, webchat, privateCfg, tgSecret };
+  return { CHANNELS, ingest, deliver, windowOpen, waQrOn, telegramUpdate, connectTelegram, metaEvents, connectMeta, webchat, privateCfg, tgSecret };
 };
 module.exports.CHANNELS = CHANNELS;

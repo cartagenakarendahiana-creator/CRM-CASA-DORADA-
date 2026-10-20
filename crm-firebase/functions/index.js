@@ -10,6 +10,8 @@
 // - integrations, api, intCotizacion, intPedido: webhooks salientes y API con clave (ver integraciones.js)
 // - forms: formularios de captura públicos que crean contactos (ver formularios.js)
 // - shopifyWebhook, apps: Shopify (pedidos, clientes, carritos, productos) y Siigo (facturas) (ver apps.js)
+// WhatsApp por código QR: si no hay WA_PHONE_ID y el puente está conectado (settings/channels.waqr.on), los envíos
+// quedan en la colección waOutbox y el puente de la carpeta whatsapp-qr los manda desde el celular vinculado.
 const crypto = require("crypto");
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -145,15 +147,20 @@ exports.sendWhatsApp = onCall({ region: REGION, invoker: "public", secrets: [WA_
   if (!contactId) throw new HttpsError("invalid-argument", "Falta el contacto.");
   const cref = db.doc("contacts/" + contactId), c = await cref.get();
   if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
-  const to = phoneId(c.get("phone"));
-  if (!to) throw new HttpsError("failed-precondition", "El contacto no tiene WhatsApp.");
   const phoneNumberId = c.get("waLine") || WA_PHONE_ID.value();
-  if (!phoneNumberId) throw new HttpsError("failed-precondition", "Falta configurar WA_PHONE_ID.");
+  const waQr = !phoneNumberId && await CH.waQrOn();
+  if (!phoneNumberId && !waQr) throw new HttpsError("failed-precondition", "Falta configurar WA_PHONE_ID.");
+  const to = phoneId(c.get("phone")) || (waQr && c.get("waJid") ? String((c.get("channels") || {}).whatsapp || "") : "");
+  if (!to) throw new HttpsError("failed-precondition", "El contacto no tiene WhatsApp.");
 
   let payload, shown;
-  if (text) {
+  if (waQr && !text && template && template.name) { // por QR no hay plantillas: se envía el texto ya armado
+    if (!preview || /^\[Plantilla /.test(preview)) throw new HttpsError("failed-precondition", "Con WhatsApp por QR no se usan plantillas: escribe el mensaje.");
+    payload = { messaging_product: "whatsapp", to, type: "text", text: { body: String(preview).slice(0, 4096) } };
+    shown = String(preview);
+  } else if (text) {
     const open = Date.now() - (c.get("lastInboundAt") || 0) < DAY;
-    if (!open) throw new HttpsError("failed-precondition", "VENTANA_CERRADA");
+    if (!open && !waQr) throw new HttpsError("failed-precondition", "VENTANA_CERRADA");
     payload = { messaging_product: "whatsapp", to, type: "text", text: { body: String(text).slice(0, 4096) } };
     shown = String(text);
   } else if (template && template.name) {
@@ -168,14 +175,15 @@ exports.sendWhatsApp = onCall({ region: REGION, invoker: "public", secrets: [WA_
   const pauseH = ai.exists ? Number(ai.get("pauseHours")) || 12 : 12;
   try {
     const id = await waSend(cref, payload, { text: shown, type: text ? "text" : "template", by: req.auth.uid, byName: me.name || "" },
-      { unread: 0, aiPausedUntil: Date.now() + pauseH * 3600 * 1000 }, phoneNumberId);
+      { unread: 0, aiPausedUntil: Date.now() + pauseH * 3600 * 1000 }, phoneNumberId || null);
     return { id };
   } catch (e) { throw new HttpsError("internal", e.message); }
 });
 
-// Envía por la API de WhatsApp y devuelve el id del mensaje
-async function waPost(payload, line) {
+// Envía por la API de WhatsApp (o lo deja en cola para el puente QR) y devuelve el id del mensaje
+async function waPost(payload, line, cid) {
   const from = line || WA_PHONE_ID.value();
+  if (!from && await CH.waQrOn()) return waQueue(payload, cid);
   if (!from) throw new Error("WhatsApp no está conectado (falta WA_PHONE_ID).");
   const r = await fetch(`${GRAPH}/${from}/messages`, {
     method: "POST", headers: { Authorization: "Bearer " + WA_TOKEN.value(), "Content-Type": "application/json" }, body: JSON.stringify(payload),
@@ -184,14 +192,21 @@ async function waPost(payload, line) {
   if (!r.ok) throw new Error((out.error && (out.error.error_user_msg || out.error.message)) || "WhatsApp rechazó el mensaje.");
   return out.messages && out.messages[0] && out.messages[0].id;
 }
-const waText = contact => async body => {
-  const to = phoneId(contact.phone);
+// WhatsApp por código QR: el puente (carpeta whatsapp-qr) escucha waOutbox y envía desde el celular vinculado
+async function waQueue(payload, cid) {
+  if (payload.type !== "text") throw new Error("Con WhatsApp por QR solo se envían mensajes de texto, no plantillas.");
+  const ref = db.collection("waOutbox").doc();
+  await ref.set({ cid: cid || "wa_" + payload.to, to: payload.to || "", text: payload.text.body, status: "pendiente", createdAt: Date.now() });
+  return ref.id;
+}
+const waText = contact => async (body, cid) => {
+  const to = phoneId(contact.phone) || (contact.waJid && cid ? String((contact.channels || {}).whatsapp || "") : "");
   if (!to) throw new Error("El contacto no tiene WhatsApp.");
-  return waPost({ messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } }, contact.waLine);
+  return waPost({ messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } }, contact.waLine, cid);
 };
 // Envía por la API de WhatsApp y registra el mensaje saliente en el contacto
 async function waSend(cref, payload, msg, extra = {}, line) {
-  const id = await waPost(payload, line);
+  const id = await waPost(payload, line, cref.id);
   const now = Date.now();
   await cref.collection("messages").doc(id || db.collection("x").doc().id).set({ dir: "out", ts: now, channel: "whatsapp", ...msg }, { merge: true }); // merge: el estado puede haber llegado antes
   await cref.set({ lastOutboundAt: now, lastOutboundBy: msg.byName, lastMessage: msg.text.slice(0, 200), lastMessageDir: "out", updatedAt: now, updatedBy: msg.byName, ...extra }, { merge: true });
@@ -203,7 +218,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   timeoutSeconds: 300, memory: "512MiB" }, async event => {
   const m = event.data && event.data.data();
   if (!m || m.dir !== "in") return;
-  if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line) return;
+  if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(),
     send: ({ cref, contact, text, byName }) => CH.deliver({ cref, contact, text, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
@@ -220,7 +235,7 @@ exports.sendMessage = onCall({ region: REGION, invoker: "public", secrets: [WA_T
   const contact = c.data();
   const ch = channel || contact.lastChannel || (contact.phone ? "whatsapp" : "");
   if (!CH.CHANNELS[ch]) throw new HttpsError("failed-precondition", "El contacto no tiene un canal para escribirle.");
-  if (!CH.windowOpen(contact, ch)) throw new HttpsError("failed-precondition", "VENTANA_CERRADA");
+  if (!CH.windowOpen(contact, ch, ch === "whatsapp" && await CH.waQrOn())) throw new HttpsError("failed-precondition", "VENTANA_CERRADA");
   const ai = await db.doc("settings/asesora").get();
   const pauseH = ai.exists ? Number(ai.get("pauseHours")) || 12 : 12;
   try {
@@ -282,7 +297,8 @@ exports.disconnectChannel = onCall({ region: REGION, invoker: "public" }, async 
 async function autoSend({ cref, contact, text, template, byName, campaign }) {
   const ch = contact.lastChannel || (contact.phone ? "whatsapp" : "web");
   const extra = campaign ? { lastCampaign: campaign } : {};
-  if (template && template.name && ch === "whatsapp" && !CH.windowOpen(contact, ch)) {
+  const waQr = ch === "whatsapp" && await CH.waQrOn();
+  if (template && template.name && ch === "whatsapp" && !CH.windowOpen(contact, ch, waQr)) {
     const to = phoneId(contact.phone);
     if (!to) throw new Error("Sin número de WhatsApp.");
     const params = (template.params || []).map(p => ({ type: "text", text: String(p || "-") }));
@@ -291,10 +307,10 @@ async function autoSend({ cref, contact, text, template, byName, campaign }) {
     return;
   }
   if (!text) throw new Error("No hay texto para este canal.");
-  if (!CH.windowOpen(contact, ch)) throw new Error("Ventana de 24 h cerrada.");
+  if (!CH.windowOpen(contact, ch, waQr)) throw new Error("Ventana de 24 h cerrada.");
   await CH.deliver({ cref, contact, text, channel: ch, msg: { by: "auto", byName, ...(campaign ? { campaign } : {}) }, extra, sendWhatsApp: waText(contact) });
 }
-const AUTO = require("./automatizaciones")({ db, admin, send: autoSend });
+const AUTO = require("./automatizaciones")({ db, admin, send: autoSend, waQrOn: () => CH.waQrOn() });
 const INT = require("./integraciones")({ db, admin, phoneId });
 const AUTO_OPTS = { region: REGION, secrets: [WA_TOKEN] };
 

@@ -921,3 +921,16 @@ dialog{border:1px solid var(--line)}
 .app-badge{display:flex;align-items:center;gap:8px;background:#f0f7ff;border:1px solid #cfe3f7;border-radius:8px;padding:8px 10px;font-size:13px}
 @media (prefers-color-scheme: dark){.app-what{color:#b6c2d4}.app-badge{background:#10243b;border-color:#1d3a5c}}
 @media (max-width:520px){.chgrid.apps{grid-template-columns:1fr}.app-k{grid-template-columns:1fr 1fr 1fr}}
+
+/* ---------- WhatsApp por código QR ---------- */
+.qrbox{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:4px 0 12px;background:var(--soft)}
+.qrbox.on{background:var(--green-soft);border-color:transparent}
+.qrbox>b{display:block;font-size:14px}
+.qr-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:10px 0 4px}
+.qr-img{width:240px;height:240px;max-width:100%;border-radius:8px;background:#fff;padding:6px;box-shadow:0 0 0 1px var(--line);image-rendering:pixelated}
+.qr-row .steps{flex:1;min-width:200px}
+.qr-warn{background:var(--amber-soft);color:var(--ink);border-radius:8px;padding:7px 10px;font-size:12.5px}
+.qr-err{color:var(--red);font-weight:600}
+.wa-api{margin-top:6px}
+.wa-api>summary{cursor:pointer;font-weight:600;padding:4px 0;color:var(--muted)}
+.wa-api[open]>summary{color:var(--ink)}

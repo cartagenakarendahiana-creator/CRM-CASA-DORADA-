@@ -131,12 +131,15 @@ const CHN = {
 };
 const chOf = c => (c && c.lastChannel) || (c && c.phone ? "whatsapp" : "web");
 const chIcon = (ch, cls = "") => `<svg class="chi ${cls}" viewBox="0 0 24 24" style="color:${CHN[ch] ? CHN[ch].color : "#999"}" aria-label="${CHN[ch] ? CHN[ch].label : ch}"><title>${CHN[ch] ? CHN[ch].label : ch}</title>${CHN[ch] ? CHN[ch].svg : ""}</svg>`;
+// WhatsApp: API oficial (WHATSAPP_ENABLED) o el puente por código QR (carpeta whatsapp-qr)
+const waQr = () => !WHATSAPP_ENABLED && !!(S.ch && S.ch.waqr && S.ch.waqr.on);
+const waOn = () => WHATSAPP_ENABLED || waQr();
 // ¿Se le puede escribir a este contacto desde el CRM por su canal?
-const canSend = c => { const ch = chOf(c); return ch === "whatsapp" ? WHATSAPP_ENABLED : !!(S.ch && S.ch[ch] && S.ch[ch].on); };
-const anyChannel = () => WHATSAPP_ENABLED || ["telegram", "messenger", "instagram", "web"].some(k => S.ch && S.ch[k] && S.ch[k].on);
+const canSend = c => { const ch = chOf(c); return ch === "whatsapp" ? waOn() : !!(S.ch && S.ch[ch] && S.ch[ch].on); };
+const anyChannel = () => waOn() || ["telegram", "messenger", "instagram", "web"].some(k => S.ch && S.ch[k] && S.ch[k].on);
 const contactName = c => c ? (c.name || c.company || (c.phone ? "+" + c.phone : "Visitante de " + (CHN[chOf(c)] || CHN.web).label)) : "";
 const winInfo = c => {
-  if (c && CHN[chOf(c)] && !CHN[chOf(c)].window) return { open: true, closesAt: null, nolimit: true };
+  if (c && CHN[chOf(c)] && (!CHN[chOf(c)].window || (chOf(c) === "whatsapp" && waQr()))) return { open: true, closesAt: null, nolimit: true };
   const last = c && c.lastInboundAt;
   if (!last) return { open: false, closesAt: null, never: true };
   const closesAt = last + 24 * H;
@@ -215,6 +218,8 @@ function startData() {
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"] });
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
+  // Estado del puente de WhatsApp por QR (solo la administradora puede leerlo); late cada minuto, así que solo redibuja Canales
+  S.unsubs.push(fb.watchDoc("waqr/state", d => { S.waqr = d; if (S.view === "canales" || S.view === "integraciones") scheduleRender(); }, () => { S.waqr = null; }));
   S.unsubs.push(fb.watchDoc("settings/apps", d => { S.apps = d || {}; scheduleRender(); }, () => { S.apps = {}; }));
   S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
   window.addEventListener("hashchange", route);
@@ -646,14 +651,14 @@ function openForm(id) {
 const crumb = t => `<nav class="crumb"><a href="#integraciones">Integraciones</a><span>›</span><b>${esc(t)}</b></nav>`;
 function viewIntegraciones(el) {
   const ch = S.ch || {}, adm = isAdmin();
-  const on = k => k === "whatsapp" ? WHATSAPP_ENABLED : !!(ch[k] && ch[k].on);
+  const on = k => k === "whatsapp" ? waOn() : !!(ch[k] && ch[k].on);
   const lines = (ch.waLines || []).length;
   const tile = t => `<a class="itile" href="${t.href}"${t.id ? ` data-anchor="${t.id}"` : ""}>
       <span class="itile-ic" style="--ic:${t.color}">${t.svg || icon(t.icon)}</span>
       <span class="itile-b"><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></span>
       <span class="itile-s ${t.state === "on" ? "on" : t.state === "warn" ? "warn" : ""}">${t.state === "on" ? "Conectado" : t.state === "warn" ? "Pendiente" : "Disponible"}</span></a>`;
   const chTile = k => ({ href: "#canales", id: "ch-" + k, name: CHN[k].label, color: CHN[k].color, svg: `<svg viewBox="0 0 24 24">${CHN[k].svg.replace(/(fill|stroke)="#fff"/g, `$1="${CHN[k].color}"`).replace(/fill="currentColor"/g, 'fill="#fff"')}</svg>`,
-    desc: { whatsapp: lines ? `${lines} líneas configuradas` : "API oficial de Meta, varias líneas", instagram: "Mensajes directos de tu cuenta profesional", messenger: "Mensajes de tu página de Facebook",
+    desc: { whatsapp: waQr() ? "Conectado por QR · " + (ch.waqr.phone || "") : lines ? `${lines} líneas configuradas` : "Con código QR o con la API oficial de Meta", instagram: "Mensajes directos de tu cuenta profesional", messenger: "Mensajes de tu página de Facebook",
       telegram: ch.telegram && ch.telegram.on ? "@" + ch.telegram.username : "Bot con el nombre de tu empresa", web: "Burbuja de chat para tu página web" }[k], state: on(k) ? "on" : "" });
   const ai = S.ai || {}, autos = (S.automations || []).filter(a => a.on).length, forms = (S.forms || []).filter(f => f.on !== false).length;
   const groups = [
@@ -820,6 +825,23 @@ curl ${esc(base)}/products -H "Authorization: Bearer TU_CLAVE"</code></pre></det
 }
 
 // ======================= Canales =======================
+// WhatsApp por código QR: el estado lo escribe el puente (whatsapp-qr/puente.mjs) en waqr/state
+function waQrBlock(adm) {
+  const pub = (S.ch && S.ch.waqr) || {}, q = S.waqr, alive = q && Date.now() - (q.seenAt || 0) < 3 * 60000;
+  if (!adm) return pub.on ? `<p>Conectado por código QR: <b>${esc(pub.phone || "")}</b>.</p>` : `<p class="muted">Pídele a la administradora que conecte WhatsApp.</p>`;
+  const warn = `<p class="qr-warn">⚠️ Conexión no oficial: WhatsApp puede bloquear el número. Usa un número que no sea el principal y evita campañas masivas.</p>`;
+  if (!alive) return `<div class="qrbox"><b>Conexión por código QR</b><p class="muted">${q ? "El servidor del puente no responde desde hace " + esc(ago(q.seenAt || 0)) + ". Revisa que esté encendido." : "Falta encender el servidor del puente. Sigue la <b>Fase 2B</b> de la guía de instalación (son 3 comandos en Cloud Shell)."}</p>${warn}</div>`;
+  const st = q.status;
+  if (st === "conectado") return `<div class="qrbox on"><b>Conectado por código QR</b><p><span class="mono">${esc(q.phone || "")}</span>${q.name ? " · " + esc(q.name) : ""}</p>
+    <p class="muted">Los mensajes que llegan a ese WhatsApp entran a Conversaciones, y lo que respondes aquí sale desde el celular.</p>${warn}<button class="btn danger sm" data-qr="desvincular">Desvincular</button></div>`;
+  if (st === "esperando_qr" && q.qr) return `<div class="qrbox"><b>Escanea este código con el celular del número nuevo</b>
+    <div class="qr-row"><img class="qr-img" src="${esc(q.qr)}" alt="Código QR de WhatsApp" width="240" height="240">
+    <ol class="steps"><li>En ese celular abre <b>WhatsApp</b>.</li><li>Toca <b>⋮</b> (Android) o <b>Configuración</b> (iPhone) › <b>Dispositivos vinculados</b>.</li><li>Toca <b>Vincular un dispositivo</b> y apunta la cámara a este código.</li></ol></div>
+    <p class="muted">El código cambia cada 20 segundos; si vence, aparece uno nuevo solo.</p>${warn}</div>`;
+  if (["iniciando", "conectando", "reconectando"].includes(st)) return `<div class="qrbox"><b>Conectando con WhatsApp…</b><p class="muted">Espera unos segundos.</p></div>`;
+  return `<div class="qrbox"><b>Conexión por código QR</b><p class="muted">Vincula el WhatsApp de tu número nuevo escaneando un código, igual que WhatsApp Web. No necesitas Facebook.</p>
+    ${q.error ? `<p class="qr-err">${esc(q.error)}</p>` : ""}${warn}<button class="btn primary" data-qr="vincular">Mostrar código QR</button></div>`;
+}
 function viewCanales(el) {
   const ch = S.ch || {}, adm = isAdmin(), pid = firebaseConfig.projectId || "TU-PROYECTO";
   const hook = `https://${REGION}-${pid}.cloudfunctions.net/whatsappWebhook`;
@@ -827,17 +849,19 @@ function viewCanales(el) {
   const web = ch.web || {};
   const st = on => `<span class="pill ${on ? "green" : ""}">${on ? "Conectado" : "Sin conectar"}</span>`;
   const card = (k, on, body) => `<section class="chcard" id="ch-${k}"><div class="chcard-h">${chIcon(k, "lg")}<div><b>${CHN[k].label}</b><small>${{
-    whatsapp: "Tu número de ventas por la API oficial de Meta", instagram: "Mensajes directos de tu cuenta de Instagram de empresa",
+    whatsapp: "Tu número de ventas, con código QR o con la API oficial de Meta", instagram: "Mensajes directos de tu cuenta de Instagram de empresa",
     messenger: "Mensajes de tu página de Facebook", telegram: "Un bot de Telegram con el nombre de tu empresa", web: "Una burbuja de chat en tu página web" }[k]}</small></div>${st(on)}</div>${body}</section>`;
   el.innerHTML = `<div class="page">${crumb("Canales de mensajería")}<div class="page-head"><div><h1>Canales de mensajería</h1><span class="sub">Todo llega a <b>Conversaciones</b> y la asesora virtual puede responder en todos.</span></div></div>
     <div class="chgrid">
-    ${card("whatsapp", WHATSAPP_ENABLED, `<p class="muted">Se conecta con la app de Meta (WhatsApp Cloud API). Sigue la <b>fase 2</b> de la guía de instalación; cuando termines, cambia <code>WHATSAPP_ENABLED</code> a <code>true</code> en <code>firebase-config.js</code>.</p>
+    ${card("whatsapp", waOn(), `${WHATSAPP_ENABLED ? "" : waQrBlock(adm)}
+      <details class="wa-api"${WHATSAPP_ENABLED ? " open" : ""}><summary>${WHATSAPP_ENABLED ? "API oficial de Meta" : "Opción oficial: API de Meta (sin riesgo de bloqueo)"}</summary>
+      <p class="muted">Se conecta con la app de Meta (WhatsApp Cloud API). Sigue la <b>fase 2</b> de la guía de instalación; cuando termines, cambia <code>WHATSAPP_ENABLED</code> a <code>true</code> en <code>firebase-config.js</code>.</p>
       <p class="muted">Webhook para Meta: <code class="sel">${esc(hook)}</code></p>
       <div class="lines"><b class="lines-t">Líneas de WhatsApp</b>
         ${(ch.waLines || []).map((l, i) => `<div class="line-i"><span class="ln-n">${esc(l.name)}</span><span class="mono muted">${esc(l.number || "")}</span><span class="muted">${l.owner ? "→ " + esc(l.owner) : "sin responsable fijo"}</span>${adm ? `<button class="link" data-rmline="${i}">Quitar</button>` : ""}</div>`).join("")
           || '<p class="muted" style="margin:4px 0">Una sola línea (la de WA_PHONE_ID). Agrega más si tienes varios números en la misma cuenta de WhatsApp Business.</p>'}
         ${adm ? `<form id="linef" class="line-f"><input class="in" id="lnm" placeholder="Nombre (ej. Ventas hoteles)" required><input class="in" id="lnum" placeholder="Número (+57…)"><input class="in" id="lid" placeholder="Identificador del número (Phone number ID)" required>
-          <select class="in" id="low"><option value="">Responsable: sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option>${esc(u.name)}</option>`).join("")}</select><button class="btn">+ Agregar línea</button></form>` : ""}</div>`)}
+          <select class="in" id="low"><option value="">Responsable: sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option>${esc(u.name)}</option>`).join("")}</select><button class="btn">+ Agregar línea</button></form>` : ""}</div></details>`)}
     ${card("web", !!web.on, adm ? `<form id="webf" class="chform">
       <label class="switch"><input type="checkbox" id="won" ${web.on ? "checked" : ""}> <span>Mostrar el chat en mi página web</span></label>
       <div class="grid2"><div><label class="lb" for="wt">Título</label><input class="in" id="wt" value="${esc(web.title || EMPRESA)}"></div>
@@ -858,6 +882,12 @@ function viewCanales(el) {
       : `<p class="muted">Se conecta junto con Messenger, con el mismo token de la página. Tu cuenta de Instagram debe ser <b>profesional</b> y estar vinculada a la página de Facebook, y en Instagram activa <b>Configuración › Mensajes › Permitir acceso a los mensajes</b>.</p>`)}
     </div></div>`;
   if (S.chAnchor && $("#" + S.chAnchor)) { const t = $("#" + S.chAnchor); S.chAnchor = null; t.scrollIntoView({ block: "start" }); t.classList.add("flash"); }
+  $$("[data-qr]", el).forEach(b => b.onclick = async () => {
+    if (b.dataset.qr === "desvincular" && !await ask("¿Desvincular WhatsApp? Los mensajes dejarán de entrar a House Chat hasta que vuelvas a escanear el código.", "Desvincular")) return;
+    b.disabled = true;
+    try { await fb.set("waqr/cmd", { action: b.dataset.qr, at: Date.now(), by: S.me.name || "" }); toast(b.dataset.qr === "vincular" ? "Generando el código QR…" : "Listo"); }
+    catch (er) { b.disabled = false; toast("No se pudo: " + errMsg(er)); }
+  });
   if ($("#linef")) $("#linef").onsubmit = async e => {
     e.preventDefault();
     const line = { id: $("#lid").value.replace(/\D/g, ""), name: $("#lnm").value.trim(), number: $("#lnum").value.trim(), owner: $("#low").value };
