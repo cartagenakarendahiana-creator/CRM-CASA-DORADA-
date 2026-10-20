@@ -33,6 +33,10 @@ service cloud.firestore {
     match /settings/{id} { allow read: if member(); allow write: if isAdmin(); }
     // Tokens de los canales: solo las funciones del servidor los leen
     match /private/{id} { allow read, write: if false; }
+    // WhatsApp por código QR: el puente escribe el estado y el código; la administradora solo envía órdenes (cmd).
+    // La cola de envío (waOutbox) la manejan las funciones y el puente; la app no la toca.
+    match /waqr/{id} { allow read: if isAdmin(); allow write: if isAdmin() && id == 'cmd'; }
+    match /waOutbox/{id} { allow read, write: if false; }
     match /automations/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /knowledge/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /forms/{id} { allow read: if member(); allow write: if isAdmin(); }

@@ -121,6 +121,51 @@ Cuando un cliente lleva más de 24 horas sin escribirte, WhatsApp solo permite m
 
 ---
 
+## Fase 2B · WhatsApp por código QR (sin Facebook ni Meta)
+
+Es la alternativa a la fase 2 cuando no quieres o no puedes usar la API de Meta. Funciona como WhatsApp Web: un pequeño servidor queda conectado a tu WhatsApp, guarda en House Chat los mensajes que llegan y envía lo que respondes desde el CRM o lo que responde la asesora virtual.
+
+> **Riesgo:** WhatsApp no permite oficialmente esta conexión y puede **bloquear el número**. Usa un número nuevo, no el principal del negocio, y evita campañas masivas: el puente envía con pausas de 3 a 6 segundos, pero mandar a cientos de personas que no te han escrito es lo que más bloqueos causa.
+
+Necesitas el plan Blaze (paso 6) y las funciones publicadas (paso 8, aunque no configures los secretos de Meta). El servidor entra en la capa gratuita de Google Cloud (una máquina e2-micro); Google puede cobrar unos US$3–4 al mes por su dirección de internet.
+
+### 8B. Encender el servidor del puente (una sola vez)
+
+En Cloud Shell, dentro de la carpeta `crm-firebase`, pega **una línea a la vez**:
+
+```bash
+git pull
+firebase deploy --only functions,firestore,hosting
+gcloud config set project crm-casa-dorada
+gcloud services enable compute.googleapis.com
+gcloud projects add-iam-policy-binding crm-casa-dorada --member="serviceAccount:$(gcloud projects describe crm-casa-dorada --format='value(projectNumber)')-compute@developer.gserviceaccount.com" --role=roles/datastore.user --condition=None
+gcloud compute instances create housechat-whatsapp --zone=us-east1-b --machine-type=e2-micro --image-family=debian-12 --image-project=debian-cloud --boot-disk-size=30GB --boot-disk-type=pd-standard --scopes=cloud-platform --metadata-from-file=startup-script=whatsapp-qr/arranque.sh,puente-mjs=whatsapp-qr/puente.mjs,puente-pkg=whatsapp-qr/package.json
+```
+
+El último comando crea el servidor. Tarda unos **5 minutos** en instalarse solo.
+
+### 9B. Escanear el código
+
+1. En House Chat ve a **Integraciones › Canales de mensajería › WhatsApp**.
+2. Cuando diga "Conexión por código QR", toca **Mostrar código QR**.
+3. En el celular del número nuevo: **WhatsApp › Dispositivos vinculados › Vincular un dispositivo**, y escanea el código de la pantalla.
+4. Debe quedar **Conectado**. Escríbele a ese número desde otro celular: el mensaje aparece en **Conversaciones**.
+
+El celular puede quedar apagado o sin internet: el servidor sigue recibiendo. WhatsApp solo pide volver a abrir la app en el celular cada 14 días para mantener vinculados los dispositivos.
+
+### Si algo falla
+
+- **"Falta encender el servidor" después de 10 minutos:** mira qué pasó con
+  `gcloud compute ssh housechat-whatsapp --zone=us-east1-b --command="sudo journalctl -u housechat-wa -n 50 --no-pager; sudo journalctl -u google-startup-scripts -n 30 --no-pager"`
+- **Actualizar el puente** (cuando cambie la carpeta `whatsapp-qr`):
+  `gcloud compute instances add-metadata housechat-whatsapp --zone=us-east1-b --metadata-from-file=puente-mjs=whatsapp-qr/puente.mjs,puente-pkg=whatsapp-qr/package.json` y luego
+  `gcloud compute instances reset housechat-whatsapp --zone=us-east1-b`. La vinculación se conserva.
+- **Apagarlo para siempre:** `gcloud compute instances delete housechat-whatsapp --zone=us-east1-b`.
+
+Si más adelante haces la fase 2 (API oficial), cambia `WHATSAPP_ENABLED` a `true`: desde ese momento House Chat usa la API de Meta y puedes apagar el servidor.
+
+---
+
 ## Fase 3 · Asesora virtual con IA (opcional)
 
 La asesora virtual responde los mensajes de WhatsApp las 24 horas con Claude, la IA de Anthropic. Necesita la fase 2 funcionando.
