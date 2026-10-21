@@ -79,6 +79,7 @@ const ICONS = {
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  ajustes: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 };
 const icon = k => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[k] || ""}</svg>`;
@@ -266,7 +267,7 @@ function renderShell() {
   root.innerHTML = `<div class="app">
     <aside class="side" id="side">
       <div class="side-top">
-        <div class="brand"><img class="brand-logo" src="logo.svg" alt=""><div><b>${APP_NAME}</b><small>CRM · ${esc(EMPRESA)}</small></div></div>
+        <div class="brand"><img class="brand-logo" src="logo.svg" alt=""><div><b>${APP_NAME}</b><small>${esc(EMPRESA)}</small></div></div>
         <label class="side-search">${icon("buscar")}<input id="gsearch" placeholder="Buscar contacto" value="${esc(S.search)}" autocomplete="off"></label>
       </div>
       <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => navOn(k)) ? "" : items.map(([k, t]) =>
@@ -493,9 +494,9 @@ function viewCampanas(el) {
   if ($("#newCamp")) $("#newCamp").onclick = () => openCampaign(null);
   $$("[data-cp]", el).forEach(tr => tr.onclick = () => openCampaign(tr.dataset.cp));
 }
-function openCampaign(id) {
+function openCampaign(id, preset) {
   const base = id ? byId(S.campaigns, id) : null;
-  const cp = base ? JSON.parse(JSON.stringify(base)) : { name: "", filter: {}, text: "", template: null, status: "borrador" };
+  const cp = base ? JSON.parse(JSON.stringify(base)) : { name: preset && preset.stage ? "Mensaje a " + preset.stage : "", filter: { ...(preset || {}) }, text: "", template: null, status: "borrador" };
   const m = $("#modal"), adm = isAdmin(), locked = cp.status !== "borrador";
   const waTpls = S.templates.filter(t => t.waName), team = S.team.filter(u => u.active !== false).map(u => u.name);
   const tags = [...new Set(S.contacts.flatMap(c => c.tags || []))].sort();
@@ -1471,52 +1472,114 @@ function openPipes() {
   };
   draw(); m.showModal();
 }
+// Tarjeta del embudo: hora corta del último movimiento ("10:19 a.m.", "ayer", "19/10")
+function shortWhen(ms) {
+  if (!ms) return "";
+  const d = new Date(ms), t = new Date(), y = new Date(Date.now() - DAY);
+  if (d.toDateString() === t.toDateString()) return d.toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" }).replace(/\s/g, " ");
+  if (d.toDateString() === y.toDateString()) return "ayer";
+  return d.getDate() + "/" + (d.getMonth() + 1);
+}
+// Estado de la ventana de 24 h en palabras cortas, como un chip
+function winChip(c) {
+  if (!canSend(c) && chOf(c) !== "whatsapp") return "";
+  const w = winInfo(c);
+  if (w.nolimit) return `<span class="kchip">chat abierto</span>`;
+  if (w.never) return `<span class="kchip">sin chat</span>`;
+  if (!w.open) return `<span class="kchip">ventana cerrada</span>`;
+  const left = w.closesAt - Date.now(), h = Math.floor(left / H);
+  return `<span class="kchip ${left < H ? "red" : left < 4 * H ? "amber" : ""}">${h >= 1 ? h + "h" : Math.max(1, Math.round(left / 6e4)) + "m"}</span>`;
+}
+const needsHuman = c => (c.unread || 0) > 0 || !!c.aiHandoff;
+let _ordSum = null, _ordSumRef = null;
+const orderTotals = () => { if (_ordSumRef !== S.orders) { _ordSumRef = S.orders; _ordSum = {}; S.orders.forEach(o => { if (o.status !== "Cancelado") _ordSum[o.contactId] = (_ordSum[o.contactId] || 0) + (o.total || 0); }); } return _ordSum; };
+
 function viewEmbudo(el) {
-  const f = S.embF || {}, q = norm(f.q || ""), more = S.embMore || (S.embMore = {});
+  const f = S.embF || {}, q = norm(f.q || ""), more = S.embMore || (S.embMore = {}), sel = S.embSel || (S.embSel = new Set()), adm = isAdmin();
   const base = S.contacts.filter(c => !c.archived);
-  const segCount = sg => base.filter(c => (!sg || c.segment === sg) && pipeOf(c).id === ((pipes().find(p => p.id === f.pipe) || pipes()[0]).id)).length;
   const pipe = pipes().find(p => p.id === f.pipe) || pipes()[0];
-  let list = base.filter(c => pipeOf(c).id === pipe.id && (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner));
-  if (q) list = list.filter(c => norm([c.name, c.company, c.phone, c.city, c.chosenProduct && c.chosenProduct.name].join(" ")).includes(q));
   const qv = {}; S.quotes.forEach(x => { if (["Enviada", "Aceptada", "Borrador"].includes(x.status)) qv[x.contactId] = (qv[x.contactId] || 0) + (x.total || 0); });
+  const ot = orderTotals(), val = c => ot[c.id] || qv[c.id] || 0;
+  let inPipe = base.filter(c => pipeOf(c).id === pipe.id && (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner));
+  if (q) inPipe = inPipe.filter(c => norm([c.name, c.company, c.phone, c.city, c.lastMessage, c.chosenProduct && c.chosenProduct.name].join(" ")).includes(q));
+  const CHIPS = [["", "Todas", () => true], ["aten", "Requieren atención", needsHuman], ["escribir", "Puedo escribir", c => canSend(c) && winInfo(c).open], ["pedido", "Con pedido", c => !!ot[c.id]], ["sinresp", "Sin responsable", c => !c.owner]];
+  const chip = CHIPS.find(x => x[0] === (f.chip || "")) || CHIPS[0];
+  const list = inPipe.filter(chip[2]);
   const stages = f.showLost ? pipe.stages : pipe.stages.filter(st => st !== "Perdido");
+  const first = pipe.stages[0], stageOfC = c => (c.stage && pipe.stages.includes(c.stage) ? c.stage : first);
+  const shown = list.filter(c => stages.includes(stageOfC(c)));
+  [...sel].forEach(id => { if (!shown.some(c => c.id === id)) sel.delete(id); });
+  const owners = [...new Set([...S.team.filter(u => u.active !== false).map(u => u.name), ...S.contacts.map(c => c.owner)].filter(Boolean))];
   // Conserva el desplazamiento del tablero cuando se redibuja por cambios en vivo
   const ob = $(".board"), keep = ob ? { x: ob.scrollLeft, y: Object.fromEntries($$(".col").map(cl => [cl.dataset.stage, $(".col-body", cl).scrollTop])) } : null;
-  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Embudo</h1>
-      <span class="sub">Toca una tarjeta para moverla de etapa${matchMedia("(pointer:fine)").matches ? " o arrástrala con el mouse" : ""}</span><span class="spacer"></span>
-      ${isAdmin() ? '<button class="btn" id="pipesBtn">Embudos y etapas</button>' : ""}</div>
-    ${pipes().length > 1 ? `<div class="pipe-tabs">${pipes().map(p => `<button class="${p.id === pipe.id ? "on" : ""}" data-pipe="${p.id}">${esc(p.name)} <small>${base.filter(c => pipeOf(c).id === p.id).length}</small></button>`).join("")}</div>` : ""}
-    <div class="seg-tabs">${["", ...SEGMENTS].filter(sg => !sg || segCount(sg)).map(sg => `<button class="${(f.seg || "") === sg ? "on" : ""}" data-seg="${sg}">${sg || "Todos"} <small class="tabnum">${segCount(sg)}</small></button>`).join("")}</div>
-    <div class="toolbar"><input class="in" id="eq" placeholder="Buscar en el embudo" value="${esc(f.q || "")}">
-      <select class="in" id="ef2"><option value="">Todos los responsables</option>${[...new Set(S.contacts.map(c => c.owner).filter(Boolean))].map(o => `<option ${f.owner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
-      <label class="pill"><input type="checkbox" id="ef3" ${f.showLost ? "checked" : ""}> Ver perdidos</label></div>
-    <div class="board">${stages.map((st, si) => {
-      const first = pipe.stages[0];
-      const cards = list.filter(c => (c.stage && pipe.stages.includes(c.stage) ? c.stage : first) === st).sort((a, b) => (b.stageAt || b.updatedAt || 0) - (a.stageAt || a.updatedAt || 0));
-      const total = cards.reduce((a, c) => a + (qv[c.id] || 0), 0), lim = more[st] || 40;
-      return `<div class="col" data-stage="${esc(st)}" style="--st:${stColor(st, pipe.stages.indexOf(st))}"><div class="col-head"><b>${st}</b><small class="tabnum">${cards.length}${total ? " · " + money(total) : ""}</small></div>
-        <div class="col-body">${cards.slice(0, lim).map(c => `<div class="deal" data-id="${c.id}" tabindex="0" role="button" aria-label="${esc(contactName(c))}, ${st}">
-          <span class="nm">${esc(contactName(c))}</span>${c.company && c.name ? `<span class="muted" style="font-size:13px">${esc(c.company)}</span>` : ""}
-          ${c.chosenProduct ? `<span style="font-size:13px">${esc(c.chosenProduct.name)}</span>` : ""}
-          <div class="ln"><span>${esc(c.owner || "")}</span><span class="tabnum">${qv[c.id] ? money(qv[c.id]) : esc(c.temperature || "")}</span></div>
-          ${c.stageAt && st !== "Nuevo" ? `<small class="age">en esta etapa hace ${ago(c.stageAt)}</small>` : ""}</div>`).join("")}
-          ${cards.length > lim ? `<button class="btn sm" data-more="${st}">Ver ${Math.min(50, cards.length - lim)} más (quedan ${cards.length - lim})</button>` : ""}
-          ${!cards.length ? '<small class="muted" style="padding:6px">Vacío</small>' : ""}</div></div>`;
-    }).join("")}</div></div>`;
+  const card = (c, st) => {
+    const v = val(c), last = Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0) || c.updatedAt || c.createdAt;
+    const prev = c.lastMessage || c.nextAction || c.looking || (c.company && c.name ? c.company : "");
+    return `<div class="deal kcard${c.aiHandoff ? " hot" : ""}${sel.has(c.id) ? " picked" : ""}" data-id="${c.id}" tabindex="0" role="button" aria-label="${esc(contactName(c))}, ${esc(st)}">
+      <div class="kc-top"><input type="checkbox" class="kc-pick" data-pick="${c.id}" ${sel.has(c.id) ? "checked" : ""} aria-label="Seleccionar ${esc(contactName(c))}">
+        <span class="kav avatar c" style="${avColor(contactName(c))}">${esc((contactName(c) || "?")[0].toUpperCase())}</span>
+        <span class="kc-id"><b class="nm">${esc(contactName(c))}</b><small>${chIcon(chOf(c), "xs")}${esc((c.phone || "").replace(/^\+/, "") || (CHN[chOf(c)] || CHN.web).label)}</small></span>
+        ${(c.unread || 0) > 0 ? `<span class="kun">${c.unread}</span>` : ""}</div>
+      ${prev ? `<p class="kc-msg">${esc(prev)}</p>` : ""}
+      ${c.aiHandoff ? `<p class="kc-note">${esc(aiName())} pasó el chat a una persona${c.aiHandoff.reason ? " — " + esc(c.aiHandoff.reason) : ""}</p>` : ""}
+      <div class="kc-meta">${winChip(c)}${v ? `<b class="tabnum kc-val">${money(v)}</b>` : ""}<span class="spacer"></span><span class="kc-time">${shortWhen(last)}</span></div>
+      <select class="in kc-stage" data-stage-of="${c.id}" aria-label="Etapa de ${esc(contactName(c))}">${pipe.stages.map(s => `<option ${s === st ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>`;
+  };
+  el.innerHTML = `<div class="page emb" style="max-width:none">
+    <div class="page-head emb-head"><h1>Embudo</h1><span class="spacer"></span>
+      ${adm ? `<button class="btn" data-goto="automatizaciones">${icon("automatizaciones")}Automatizar</button><button class="btn" data-goto="importar">${icon("exportar")}Importar</button>
+      <button class="btn" id="pipesBtn">${icon("ajustes")}Ajustes</button>` : ""}</div>
+    <div class="emb-tabs"><div class="segctl">${pipes().map(p => `<button class="${p.id === pipe.id ? "on" : ""}" data-pipe="${p.id}">${esc(p.name)}</button>`).join("")}</div>
+      ${adm ? `<button class="btn icon-only" id="pipeAdd" title="Nuevo embudo" aria-label="Nuevo embudo">+</button>` : ""}</div>
+    <div class="emb-filters"><label class="emb-search">${icon("buscar")}<input id="eq" placeholder="Buscar nombre, teléfono, mensaje" value="${esc(f.q || "")}" autocomplete="off"></label>
+      <div class="kchips">${CHIPS.map(([k, t, fn]) => `<button class="${chip[0] === k ? "on" : ""}" data-chip="${k}">${t}${k ? ` <span class="tabnum">${inPipe.filter(fn).length}</span>` : ""}</button>`).join("")}
+        <button class="${f.showLost ? "on" : ""}" id="ef3">Perdidos</button></div>
+      <select class="in emb-owner" id="ef2" aria-label="Responsable"><option value="">Todos los responsables</option>${owners.map(o => `<option ${f.owner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
+      <span class="emb-sum"><b class="tabnum">${shown.length}</b> personas · <b class="tabnum">${money(shown.reduce((a, c) => a + val(c), 0))}</b></span></div>
+    <div class="board kboard">${stages.map(st => {
+      const cards = list.filter(c => stageOfC(c) === st).sort((a, b) => (needsHuman(b) - needsHuman(a)) || ((Math.max(b.lastInboundAt || 0, b.lastOutboundAt || 0) || b.stageAt || 0) - (Math.max(a.lastInboundAt || 0, a.lastOutboundAt || 0) || a.stageAt || 0)));
+      const total = cards.reduce((a, c) => a + val(c), 0), lim = more[st] || 40, allOn = cards.length && cards.every(c => sel.has(c.id));
+      return `<div class="col" data-stage="${esc(st)}" style="--st:${stColor(st, pipe.stages.indexOf(st))}">
+        <div class="col-head"><div class="kh-1"><input type="checkbox" data-pickall="${esc(st)}" ${allOn ? "checked" : ""} aria-label="Seleccionar todos en ${esc(st)}"><b>${esc(st)}</b></div>
+          <div class="kh-2"><span class="tabnum">${cards.length} ${cards.length === 1 ? "persona" : "personas"}</span>${total ? `<b class="tabnum">${money(total)}</b>` : ""}<span class="spacer"></span>
+          ${adm && cards.length ? `<button class="link" data-difundir="${esc(st)}">Difundir</button>` : ""}</div></div>
+        <div class="col-body">${cards.slice(0, lim).map(c => card(c, st)).join("")}
+          ${cards.length > lim ? `<button class="btn sm" data-more="${esc(st)}">Ver ${Math.min(50, cards.length - lim)} más (quedan ${cards.length - lim})</button>` : ""}
+          ${!cards.length ? '<p class="kempty">Sin personas aquí</p>' : ""}</div></div>`;
+    }).join("")}</div>
+    ${sel.size ? `<div class="bulkbar"><b>${sel.size} ${sel.size === 1 ? "seleccionada" : "seleccionadas"}</b>
+      <select class="in" id="bkStage"><option value="">Mover a…</option>${pipe.stages.map(s => `<option>${esc(s)}</option>`).join("")}</select>
+      <select class="in" id="bkOwner"><option value="">Asignar a…</option>${owners.map(o => `<option>${esc(o)}</option>`).join("")}</select>
+      <button class="btn sm" id="bkClear">Quitar selección</button></div>` : ""}</div>`;
   const board = $(".board", el);
   if (keep) { board.scrollLeft = keep.x; $$(".col", el).forEach(cl => { const y = keep.y[cl.dataset.stage]; if (y) $(".col-body", cl).scrollTop = y; }); }
-  $$("[data-seg]", el).forEach(b => b.onclick = () => { S.embF = { ...f, seg: b.dataset.seg }; S.embMore = {}; renderShell(); });
-  $$("[data-pipe]", el).forEach(b => b.onclick = () => { S.embF = { ...f, pipe: b.dataset.pipe, seg: "" }; S.embMore = {}; renderShell(); });
+  const setF = p => { S.embF = { ...f, ...p }; S.embMore = {}; renderShell(); };
+  $$("[data-pipe]", el).forEach(b => b.onclick = () => { S.embSel.clear(); setF({ pipe: b.dataset.pipe, seg: "" }); });
+  $$("[data-chip]", el).forEach(b => b.onclick = () => setF({ chip: b.dataset.chip }));
+  $$("[data-goto]", el).forEach(b => b.onclick = () => go(b.dataset.goto));
   if ($("#pipesBtn")) $("#pipesBtn").onclick = openPipes;
+  if ($("#pipeAdd")) $("#pipeAdd").onclick = openPipes;
   $("#eq").oninput = e => { S.embF = { ...f, q: e.target.value }; renderShell(); };
-  $("#ef2").onchange = e => { S.embF = { ...f, owner: e.target.value }; renderShell(); };
-  $("#ef3").onchange = e => { S.embF = { ...f, showLost: e.target.checked }; renderShell(); };
+  $("#ef2").onchange = e => setF({ owner: e.target.value });
+  $("#ef3").onclick = () => setF({ showLost: !f.showLost });
   $$("[data-more]", el).forEach(b => b.onclick = () => { more[b.dataset.more] = (more[b.dataset.more] || 40) + 50; renderShell(); });
+  $$("[data-difundir]", el).forEach(b => b.onclick = () => openCampaign(null, { stage: b.dataset.difundir }));
+  $$("[data-pick]", el).forEach(x => x.onchange = () => { x.checked ? sel.add(x.dataset.pick) : sel.delete(x.dataset.pick); renderShell(); });
+  $$("[data-pickall]", el).forEach(x => x.onchange = () => { list.filter(c => stageOfC(c) === x.dataset.pickall).forEach(c => x.checked ? sel.add(c.id) : sel.delete(c.id)); renderShell(); });
+  $$("[data-stage-of]", el).forEach(s => s.onchange = () => moveStage(byId(S.contacts, s.dataset.stageOf), s.value));
+  const bulk = async patchOf => {
+    const ids = [...sel];
+    try { await Promise.all(ids.map(id => fb.update("contacts/" + id, { ...patchOf(byId(S.contacts, id)), ...stamp() }))); toast(`${ids.length} actualizados`); sel.clear(); renderShell(); }
+    catch (e) { toast("No se pudo: " + errMsg(e)); }
+  };
+  if ($("#bkStage")) $("#bkStage").onchange = e => { const st = e.target.value; if (st) bulk(() => ({ stage: st, stageAt: Date.now(), ...(st === "Ganado" ? { type: "Cliente" } : {}), ...(pipe.id !== "ventas" ? { pipeline: pipe.id } : {}) })); };
+  if ($("#bkOwner")) $("#bkOwner").onchange = e => { const o = e.target.value; if (o) bulk(() => ({ owner: o })); };
+  if ($("#bkClear")) $("#bkClear").onclick = () => { sel.clear(); renderShell(); };
   $$(".deal", el).forEach(d => {
     const c = byId(S.contacts, d.dataset.id);
-    d.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); stageSheet(c); } };
+    d.onkeydown = e => { if (e.target !== d) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go("conv", c.id); } };
     d.onpointerdown = e => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || e.target.closest("input,select,button,label")) return;
       const x0 = e.clientX, y0 = e.clientY, mouse = e.pointerType === "mouse";
       let ghost = null, over = null, timer = null;
       const finish = () => { S.dragging = false; if (S.pendingRender) { S.pendingRender = false; scheduleRender(); } };
@@ -1537,7 +1600,7 @@ function viewEmbudo(el) {
       const up = ev => {
         removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", cancel); clearInterval(timer);
         if (ghost) { ghost.remove(); d.classList.remove("dragging"); over && over.classList.remove("over"); finish(); if (over) moveStage(c, over.dataset.stage); }
-        else if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 10) stageSheet(c);
+        else if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 10) go("conv", c.id);
       };
       const cancel = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", cancel); clearInterval(timer); ghost && ghost.remove(); d.classList.remove("dragging"); over && over.classList.remove("over"); finish(); };
       addEventListener("pointermove", move); addEventListener("pointerup", up); addEventListener("pointercancel", cancel);
