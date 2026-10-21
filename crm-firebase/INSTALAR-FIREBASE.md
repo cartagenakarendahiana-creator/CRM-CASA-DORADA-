@@ -257,6 +257,17 @@ Todo se configura en **Integraciones › Aplicaciones**, y cada tarjeta trae los
 - **Siigo:** necesitas la credencial de la API (usuario, clave de acceso y Partner-ID) y los identificadores del comprobante de factura, la forma de pago y el IVA. El contacto debe tener cédula o NIT en su ficha y cada producto su referencia de Siigo. Te recomendamos probar primero con una factura de prueba.
 - **Mastershop:** sus pedidos llegan a través de tu tienda Shopify. Conecta Shopify y activa Mastershop.
 
+## Dirección corta: housechat.web.app
+
+El CRM se publica en dos direcciones a la vez: **https://housechat.web.app** y la original (https://crm-casa-dorada.web.app), para que no se dañen los enlaces ya configurados en Meta o Shopify. La dirección corta se crea una sola vez:
+
+```bash
+firebase hosting:sites:create housechat
+firebase deploy --only hosting
+```
+
+Luego, en la consola de Firebase › Authentication › Configuración › **Dominios autorizados**, agrega `housechat.web.app`.
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash
