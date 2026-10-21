@@ -934,3 +934,5 @@ dialog{border:1px solid var(--line)}
 .wa-api{margin-top:6px}
 .wa-api>summary{cursor:pointer;font-weight:600;padding:4px 0;color:var(--muted)}
 .wa-api[open]>summary{color:var(--ink)}
+
+.ai-err{color:var(--red);white-space:normal}

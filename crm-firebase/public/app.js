@@ -145,6 +145,15 @@ const winInfo = c => {
   const closesAt = last + 24 * H;
   return { open: Date.now() < closesAt, closesAt };
 };
+// Explica en palabras simples por qué la asesora virtual no pudo responder
+function aiErrText(m) {
+  const t = String(m || "");
+  if (/x-api-key|authentication|invalid.*api.?key|401/i.test(t)) return "la clave de la API de Claude no es válida (revisa ANTHROPIC_API_KEY).";
+  if (/credit balance|billing|402/i.test(t)) return "la cuenta de Claude no tiene saldo (recárgala en console.anthropic.com).";
+  if (/overloaded|529|rate.?limit|429/i.test(t)) return "Claude estaba ocupado; lo intentará con el próximo mensaje.";
+  if (/WhatsApp|Graph|OAuth|token/i.test(t)) return "WhatsApp rechazó el envío (revisa WA_TOKEN): " + t;
+  return t || "error desconocido.";
+}
 const isAdmin = () => S.me && S.me.role === "admin";
 const stamp = () => ({ updatedAt: Date.now(), updatedBy: S.me ? S.me.name : "" });
 
@@ -298,7 +307,7 @@ function aiBar(c) {
   if (!canSend(c) || !S.ai || !S.ai.enabled) return "";
   const st = aiState(c);
   return `<div class="aibar">${icon("asesora")}<span class="pill ${st.cls}">${esc(st.txt)}</span>
-    ${c.aiError && c.aiError.at > (c.lastOutboundAt || 0) ? `<span class="muted" title="${esc(c.aiError.message || "")}">⚠ no pudo responder el último mensaje</span>` : ""}
+    ${c.aiError && c.aiError.at > (c.lastOutboundAt || 0) ? `<span class="muted ai-err">⚠ no pudo responder el último mensaje: ${esc(aiErrText(c.aiError.message))}</span>` : ""}
     <span class="spacer"></span><button class="btn sm" id="aiToggle" data-on="${st.on ? "0" : "1"}">${st.on ? "Pausar en este chat" : "Reactivar " + esc(aiName())}</button></div>`;
 }
 async function setAi(c, on) {
