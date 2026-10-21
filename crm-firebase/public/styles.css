@@ -1070,3 +1070,37 @@ select.kc-stage{height:34px;padding:0 10px;font-size:13.5px;background:var(--bg)
 }
 
 .brand-logo,.brand-logo.sm{box-shadow:none}
+
+/* ---------- WhatsApp: panel de conexión (API oficial) ---------- */
+.sec-t{font-size:17px;font-weight:700;margin:6px 0 2px;letter-spacing:-.01em}
+.sec-s{color:var(--muted);margin:0 0 12px;font-size:14px}
+h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
+.wapanel{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:22px 24px;box-shadow:var(--shadow-1);margin-bottom:8px}
+.wp-h{display:flex;align-items:center;gap:14px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.wp-h b{display:block;font-size:17px}.wp-h small{color:var(--muted);font-size:14px}
+.wp-h .pill{margin-left:auto}
+.wp-ic{width:44px;height:44px;border-radius:12px;background:#e9f9ef;border:1px solid #cdeedb;display:grid;place-items:center;flex:none}
+.wp-ic .chi{width:26px;height:26px}
+.wp-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px 20px;padding:18px 0;border-bottom:1px solid var(--line)}
+.wst small{display:block;color:var(--muted);font-size:13px;margin-bottom:4px}
+.wdot{display:inline-flex;align-items:center;gap:7px;font-size:15px;font-weight:500;color:var(--side-ink)}
+.wdot::before{content:"";width:8px;height:8px;border-radius:50%;background:#9aa3ad;flex:none}
+.wdot.ok{color:#127a52}.wdot.ok::before{background:#16a36a}
+.wdot.warn{color:#b45309}.wdot.warn::before{background:#f59e0b}
+.wdot.bad{color:#b42318}.wdot.bad::before{background:#ef4444}
+.wp-err{color:#b42318;font-size:13.5px;margin:12px 0 0}
+.wp-last{color:var(--muted);font-size:13.5px;margin:12px 0}
+.wp-how{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:12px 0}
+.wp-how summary{cursor:pointer;font-weight:600}
+.wp-how[open] summary{margin-bottom:8px}
+.wp-eb{margin:18px 0 8px}
+.wp-num{border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.wp-num-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.wp-num-h b{font-size:19px;letter-spacing:.01em}
+.wp-tier{margin:6px 0 0;font-size:13px}
+.wp-dest{display:flex;align-items:center;gap:14px;margin-top:14px;flex-wrap:wrap}
+.wp-dest span{color:var(--muted);font-size:14px}.wp-dest select.in{width:auto;min-width:160px}
+.wp-actions{margin-top:14px}
+.banner.warn{background:#fef3f2;color:#912018}
+@media (prefers-color-scheme: dark){.wp-ic{background:#14301f;border-color:#1f4a31}.wdot.ok{color:#5fd39b}.wdot.warn{color:#f5b54a}.wdot.bad{color:#f19a92}.banner.warn{background:#3b1d1a;color:#f6c3bd}}
+@media (max-width:1000px){.wp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.wapanel{padding:16px}.wp-grid{grid-template-columns:1fr}.wp-h{flex-wrap:wrap}.wp-h .pill{margin-left:0}}
