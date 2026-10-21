@@ -278,7 +278,7 @@ function renderShell() {
     </aside>
     <main class="main">
       <div class="topbar-mobile"><button class="iconbtn" id="menuBtn" aria-label="Menú">${icon("menu")}</button><img class="brand-logo sm" src="logo-hc.svg" alt=""><b class="brand-name">${APP_NAME}</b></div>
-      ${!anyChannel() ? `<div class="banner"><span>Aún no hay canales conectados: los mensajes se abren en tu WhatsApp y los registras aquí. ${isAdmin() ? '<a href="#canales">Conectar canales</a>' : ""}</span></div>` : ""}
+      ${waAlert()}${!anyChannel() ? `<div class="banner"><span>Aún no hay canales conectados: los mensajes se abren en tu WhatsApp y los registras aquí. ${isAdmin() ? '<a href="#canales">Conectar canales</a>' : ""}</span></div>` : ""}
       <div class="view" id="view"></div>
     </main></div>`;
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
@@ -834,7 +834,56 @@ curl ${esc(base)}/products -H "Authorization: Bearer TU_CLAVE"</code></pre></det
     await fb.call("integrations", { action: "revokeApiKey" }); S.integ = { ...S.integ, apiKeyHint: "" }; renderShell(); };
 }
 
+// Aviso arriba de todo cuando la revisión automática encuentra un problema con WhatsApp
+function waAlert() {
+  const w = (S.ch && S.ch.waStatus) || {};
+  if (!WHATSAPP_ENABLED || !isAdmin() || !w.checkedAt) return "";
+  const why = w.meta === "error" ? "Meta no acepta la conexión (revisa el token)" : w.quality === "RED" ? "la calidad del número está baja y Meta podría limitarlo"
+    : w.quality === "YELLOW" ? "la calidad del número bajó: evita enviar mensajes masivos" : w.subscribed === false ? "los mensajes no están llegando (falta la suscripción)"
+    : w.number && !["CONNECTED", "VERIFIED"].includes(w.number) ? "el número no está activo en WhatsApp" : "";
+  return why ? `<div class="banner warn"><span>⚠ WhatsApp: ${why}. <a href="#canales">Ver detalles</a></span></div>` : "";
+}
 // ======================= Canales =======================
+// WhatsApp por la API oficial: estado que revisa la función waStatus (settings/channels.waStatus)
+const dotRow = (label, cls, txt) => `<div class="wst"><small>${label}</small><span class="wdot ${cls}">${esc(txt)}</span></div>`;
+function waStatusRows(w = {}) {
+  const none = !w.checkedAt, sub = w.subscribed;
+  const lastIn = Math.max(0, ...S.contacts.filter(c => chOf(c) === "whatsapp").map(c => c.lastInboundAt || 0));
+  return [
+    dotRow("Acceso a Meta", w.meta === "ok" ? "ok" : w.meta === "error" ? "bad" : "", none ? "sin comprobar" : w.meta === "ok" ? "confirmado" : w.meta === "error" ? "con error" : "sin configurar"),
+    dotRow("El número en WhatsApp", !w.number ? "" : w.number === "CONNECTED" || w.number === "VERIFIED" ? "ok" : "warn", !w.number ? "sin comprobar" : w.number === "CONNECTED" || w.number === "VERIFIED" ? "activo en WhatsApp" : w.number.toLowerCase().replace(/_/g, " ")),
+    dotRow("Calidad del número", { GREEN: "ok", YELLOW: "warn", RED: "bad" }[w.quality] || "", { GREEN: "normal", YELLOW: "media: cuidado con los envíos", RED: "baja: riesgo de bloqueo" }[w.quality] || (none ? "sin comprobar" : "sin datos todavía")),
+    dotRow("Cuenta", { APPROVED: "ok", PENDING: "warn", REJECTED: "bad" }[w.account] || "", { APPROVED: "aprobada", PENDING: "en revisión", REJECTED: "rechazada", error: "no se pudo revisar" }[w.account] || "sin comprobar"),
+    dotRow("Recepción de mensajes", sub === true ? "ok" : sub === false ? "bad" : lastIn ? "ok" : "", sub === true ? "suscripción confirmada" : sub === false ? "sin suscripción" : lastIn ? "último mensaje hace " + ago(lastIn) : "sin comprobar"),
+    dotRow("Alertas preventivas", "ok", "activas"),
+  ].join("");
+}
+function waApiPanel(ch, adm, hook) {
+  const w = ch.waStatus || {}, ok = w.meta === "ok";
+  const tier = { TIER_250: "250 clientes nuevos al día", TIER_1K: "1.000 clientes al día", TIER_10K: "10.000 clientes al día", TIER_100K: "100.000 clientes al día", TIER_UNLIMITED: "sin límite" }[w.tier] || "";
+  return `<section class="wapanel" id="ch-whatsapp">
+    <div class="wp-h"><span class="wp-ic">${chIcon("whatsapp")}</span><div><b>WhatsApp</b><small>La conexión de tu negocio con tus clientes.</small></div>
+      <span class="pill ${w.meta === "error" ? "red" : "green"}">${w.meta === "error" ? "Revisar conexión" : "Conexión configurada"}</span></div>
+    <div class="wp-grid">${waStatusRows(w)}</div>
+    ${w.meta === "error" && w.error ? `<p class="wp-err">Meta respondió: ${esc(w.error)}</p>` : ""}
+    <p class="wp-last">${w.checkedAt ? `Última comprobación: ${new Date(w.checkedAt).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: false })}${new Date(w.checkedAt).toDateString() !== new Date().toDateString() ? " del " + new Date(w.checkedAt).toLocaleDateString("es-CO") : ""}. ` : "Aún no se ha comprobado. "}Revisión automática cada hora.</p>
+    <details class="wp-how"><summary>Cómo configurar la recepción de mensajes</summary>
+      <ol class="steps"><li>En <b>developers.facebook.com</b> › tu app › WhatsApp › Configuración, pon esta URL de devolución de llamada: <code class="sel">${esc(hook)}</code></li>
+        <li>Token de verificación: la palabra que guardaste en <code>WA_VERIFY_TOKEN</code>.</li>
+        <li>Suscríbete al campo <b>messages</b> y prende <b>Suscribir webhooks</b> en tu número.</li>
+        <li>Para revisar la cuenta y la suscripción desde aquí, agrega <code>WA_WABA_ID</code> (el identificador de tu cuenta de WhatsApp) en <code>functions/.env</code>.</li></ol></details>
+    <p class="eyebrow wp-eb">Número conectado${(ch.waLines || []).length ? ` · ${(ch.waLines || []).length + 1} líneas` : ""}</p>
+    <div class="wp-num"><div class="wp-num-h"><b class="tabnum">${esc(w.phone || "Número principal")}</b><span class="pill ${ok ? "green" : ""}">${ok ? "Conexión configurada" : "Sin comprobar"}</span>${w.name ? `<small class="muted">${esc(w.name)}</small>` : ""}</div>
+      ${tier ? `<p class="muted wp-tier">Límite de Meta: ${tier}</p>` : ""}
+      <label class="wp-dest"><span>Destino de las conversaciones</span><select class="in" id="waDest" ${adm ? "" : "disabled"}>${pipes().map(p => `<option value="${p.id}" ${(ch.waPipeline || "ventas") === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label></div>
+    ${adm ? `<div class="wp-actions"><button class="btn" id="waCheck">Comprobar acceso a Meta</button></div>` : ""}
+    <details class="wp-how"><summary>Varias líneas de WhatsApp</summary>
+      <div class="lines">${(ch.waLines || []).map((l, i) => `<div class="line-i"><span class="ln-n">${esc(l.name)}</span><span class="mono muted">${esc(l.number || "")}</span><span class="muted">${l.owner ? "→ " + esc(l.owner) : "sin responsable fijo"}</span>${adm ? `<button class="link" data-rmline="${i}">Quitar</button>` : ""}</div>`).join("")
+        || '<p class="muted" style="margin:4px 0">Solo usas el número principal. Agrega otra línea si tienes más números en la misma cuenta de WhatsApp Business.</p>'}
+      ${adm ? `<form id="linef" class="line-f"><input class="in" id="lnm" placeholder="Nombre (ej. Ventas hoteles)" required><input class="in" id="lnum" placeholder="Número (+57…)"><input class="in" id="lid" placeholder="Identificador del número (Phone number ID)" required>
+        <select class="in" id="low"><option value="">Responsable: sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option>${esc(u.name)}</option>`).join("")}</select><button class="btn">+ Agregar línea</button></form>` : ""}</div></details>
+  </section>`;
+}
 // WhatsApp por código QR: el estado lo escribe el puente (whatsapp-qr/puente.mjs) en waqr/state
 function waQrBlock(adm) {
   const pub = (S.ch && S.ch.waqr) || {}, q = S.waqr, alive = q && Date.now() - (q.seenAt || 0) < 3 * 60000;
@@ -862,9 +911,10 @@ function viewCanales(el) {
     whatsapp: "Tu número de ventas, con código QR o con la API oficial de Meta", instagram: "Mensajes directos de tu cuenta de Instagram de empresa",
     messenger: "Mensajes de tu página de Facebook", telegram: "Un bot de Telegram con el nombre de tu empresa", web: "Una burbuja de chat en tu página web" }[k]}</small></div>${st(on)}</div>${body}</section>`;
   el.innerHTML = `<div class="page">${crumb("Canales de mensajería")}<div class="page-head"><div><h1>Canales de mensajería</h1><span class="sub">Todo llega a <b>Conversaciones</b> y la asesora virtual puede responder en todos.</span></div></div>
+    ${WHATSAPP_ENABLED ? `<h2 class="sec-t">Canal de atención</h2><p class="sec-s">El punto de entrada de las conversaciones de tus clientes.</p>${waApiPanel(ch, adm, hook)}<h2 class="sec-t">Otros canales</h2>` : ""}
     <div class="chgrid">
-    ${card("whatsapp", waOn(), `${WHATSAPP_ENABLED ? "" : waQrBlock(adm)}
-      <details class="wa-api"${WHATSAPP_ENABLED ? " open" : ""}><summary>${WHATSAPP_ENABLED ? "API oficial de Meta" : "Opción oficial: API de Meta (sin riesgo de bloqueo)"}</summary>
+    ${WHATSAPP_ENABLED ? "" : card("whatsapp", waOn(), `${waQrBlock(adm)}
+      <details class="wa-api"><summary>Opción oficial: API de Meta (sin riesgo de bloqueo)</summary>
       <p class="muted">Se conecta con la app de Meta (WhatsApp Cloud API). Sigue la <b>fase 2</b> de la guía de instalación; cuando termines, cambia <code>WHATSAPP_ENABLED</code> a <code>true</code> en <code>firebase-config.js</code>.</p>
       <p class="muted">Webhook para Meta: <code class="sel">${esc(hook)}</code></p>
       <div class="lines"><b class="lines-t">Líneas de WhatsApp</b>
@@ -892,6 +942,10 @@ function viewCanales(el) {
       : `<p class="muted">Se conecta junto con Messenger, con el mismo token de la página. Tu cuenta de Instagram debe ser <b>profesional</b> y estar vinculada a la página de Facebook, y en Instagram activa <b>Configuración › Mensajes › Permitir acceso a los mensajes</b>.</p>`)}
     </div></div>`;
   if (S.chAnchor && $("#" + S.chAnchor)) { const t = $("#" + S.chAnchor); S.chAnchor = null; t.scrollIntoView({ block: "start" }); t.classList.add("flash"); }
+  if ($("#waDest")) $("#waDest").onchange = async e => { try { await fb.set("settings/channels", { waPipeline: e.target.value }); toast("Los chats nuevos de WhatsApp entrarán a " + e.target.selectedOptions[0].text); } catch (er) { toast("No se pudo guardar: " + errMsg(er)); } };
+  if ($("#waCheck")) $("#waCheck").onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Comprobando…";
+    try { const r = await fb.call("waStatus", {}); toast(r.meta === "ok" ? "Conexión con Meta confirmada" : "Meta reportó un problema: revisa los detalles"); }
+    catch (er) { toast("No se pudo comprobar: " + errMsg(er)); } finally { b.disabled = false; b.textContent = "Comprobar acceso a Meta"; } };
   $$("[data-qr]", el).forEach(b => b.onclick = async () => {
     if (b.dataset.qr === "desvincular" && !await ask("¿Desvincular WhatsApp? Los mensajes dejarán de entrar a House Chat hasta que vuelvas a escanear el código.", "Desvincular")) return;
     b.disabled = true;

@@ -1,5 +1,6 @@
 // Funciones del CRM Casa Dorada:
 // - whatsappWebhook: recibe los mensajes y estados de la API de WhatsApp (Meta)
+// - waStatus: revisa con Meta el estado del número, la cuenta y la suscripción (también cada hora)
 // - sendWhatsApp: envía texto (ventana de 24 h abierta) o plantillas aprobadas
 // - createTeamUser: la administradora crea cuentas para su equipo
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
@@ -28,6 +29,7 @@ const WA_TOKEN = defineSecret("WA_TOKEN");             // token permanente del u
 const WA_VERIFY_TOKEN = defineSecret("WA_VERIFY_TOKEN"); // texto que tú inventas para verificar el webhook
 const WA_APP_SECRET = defineSecret("WA_APP_SECRET");     // clave secreta de la app de Meta
 const WA_PHONE_ID = defineString("WA_PHONE_ID", { default: "" }); // identificador del número de teléfono
+const WA_WABA_ID = defineString("WA_WABA_ID", { default: "" });   // cuenta de WhatsApp Business (para revisar su estado)
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");     // clave de la API de Claude (asesora virtual)
 const asesora = require("./asesora");
 const CH = require("./canales")({ db, admin, GRAPH });
@@ -98,16 +100,18 @@ async function handleWebhook(body) {
 }
 exports._handleWebhook = handleWebhook; // para pruebas
 
-// Líneas de WhatsApp configuradas en Canales: [{ id: phone_number_id, name, number, owner }]
-let linesCache = null, linesAt = 0;
-async function waLines() {
-  if (linesCache && Date.now() - linesAt < 60000) return linesCache;
-  linesCache = (((await db.doc("settings/channels").get()).data() || {}).waLines) || []; linesAt = Date.now();
-  return linesCache;
+// Configuración pública de canales (líneas de WhatsApp [{ id: phone_number_id, name, number, owner }], embudo de destino…)
+let chCache = null, chAt = 0;
+async function chSettings() {
+  if (chCache && Date.now() - chAt < 60000) return chCache;
+  chCache = (await db.doc("settings/channels").get()).data() || {}; chAt = Date.now();
+  return chCache;
 }
+const waLines = async () => (await chSettings()).waLines || [];
 async function saveInbound(m, profileName, line) {
   const pid = phoneId(m.from), cid = "wa_" + pid;
   const lineCfg = line ? (await waLines()).find(l => String(l.id) === String(line)) : null;
+  const dest = (await chSettings()).waPipeline; // embudo al que entran los contactos nuevos de WhatsApp
   const ts = Number(m.timestamp) * 1000 || Date.now();
   const text = textOf(m);
   const cref = db.doc("contacts/" + cid);
@@ -119,12 +123,46 @@ async function saveInbound(m, profileName, line) {
       unread: admin.firestore.FieldValue.increment(1), updatedAt: Date.now(), updatedBy: "WhatsApp" };
     if (line) patch.waLine = String(line);
     if (!snap.exists) Object.assign(patch, { name: profileName || "", segment: "WhatsApp", type: "Prospecto", stage: "Nuevo",
-      createdAt: ts, stageAt: ts, source: "WhatsApp" + (lineCfg && lineCfg.name ? " · " + lineCfg.name : "") }, lineCfg && lineCfg.owner ? { owner: lineCfg.owner } : {});
+      createdAt: ts, stageAt: ts, source: "WhatsApp" + (lineCfg && lineCfg.name ? " · " + lineCfg.name : "") }, lineCfg && lineCfg.owner ? { owner: lineCfg.owner } : {},
+      dest && dest !== "ventas" ? { pipeline: dest } : {});
     else if (!snap.get("name") && profileName) patch.name = profileName;
     t.set(cref, patch, { merge: true });
     t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}) });
   });
 }
+
+// Estado de la conexión con Meta: acceso, número, calidad, cuenta y suscripción a los mensajes.
+// Se guarda en settings/channels.waStatus; se revisa cada hora y con el botón "Comprobar acceso a Meta".
+async function graphGet(path) {
+  const r = await fetch(`${GRAPH}/${path}`, { headers: { Authorization: "Bearer " + WA_TOKEN.value() } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && (j.error.error_user_msg || j.error.message)) || "Meta respondió " + r.status);
+  return j;
+}
+async function waCheck() {
+  const pid = WA_PHONE_ID.value(), waba = WA_WABA_ID.value(), out = { checkedAt: Date.now() };
+  if (!pid) out.meta = "sin_configurar";
+  else {
+    try {
+      const p = await graphGet(`${pid}?fields=display_phone_number,verified_name,quality_rating,status,code_verification_status,messaging_limit_tier`);
+      Object.assign(out, { meta: "ok", phone: p.display_phone_number || "", name: p.verified_name || "", quality: p.quality_rating || "",
+        number: p.status || p.code_verification_status || "", tier: p.messaging_limit_tier || "" });
+    } catch (e) { out.meta = "error"; out.error = String(e.message).slice(0, 300); }
+    if (out.meta === "ok" && waba) {
+      try { out.account = (await graphGet(`${waba}?fields=account_review_status`)).account_review_status || ""; }
+      catch (e) { out.account = "error"; }
+      try { out.subscribed = ((await graphGet(`${waba}/subscribed_apps`)).data || []).length > 0; }
+      catch (e) { out.subscribed = null; }
+    }
+  }
+  await db.doc("settings/channels").set({ waStatus: out }, { merge: true });
+  return out;
+}
+exports._waCheck = waCheck; // para pruebas
+exports.waStatus = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
+  await requireAdmin(req);
+  return waCheck();
+});
 
 async function saveStatus(s) {
   const cid = "wa_" + phoneId(s.recipient_id);
@@ -334,6 +372,7 @@ exports.autoMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mi
 });
 exports.autoSinRespuesta = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 540 }, async () => {
   console.log("auto sin respuesta", await AUTO.sweepNoReply());
+  if (WA_PHONE_ID.value()) await waCheck().catch(e => console.error("revisión de WhatsApp", e)); // revisión automática cada hora
 });
 exports.runCampaign = onCall({ ...AUTO_OPTS, invoker: "public", timeoutSeconds: 540, memory: "512MiB" }, async req => {
   const me = await requireMember(req);
