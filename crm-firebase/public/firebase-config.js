@@ -13,6 +13,6 @@ export const firebaseConfig = {
 export const REGION = "us-east1";
 
 // Ponlo en true cuando la API de WhatsApp esté conectada (paso 5 de la guía).
-export const WHATSAPP_ENABLED = false;
+export const WHATSAPP_ENABLED = true;
 
 export const EMPRESA = "Casa Dorada";
