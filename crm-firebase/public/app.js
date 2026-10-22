@@ -711,16 +711,16 @@ function viewApps(el) {
     <div class="chgrid apps">
     <section class="chcard" id="app-shopify">${head("shopify", "Shopify", "Pedidos, clientes, carritos abandonados y productos", sh.on)}
       ${sh.on ? `<div class="app-k"><div><b>${sh.orders || 0}</b>pedidos recibidos</div><div><b>${sh.products || 0}</b>productos importados</div><div><b>${sh.lastAt ? ago(sh.lastAt) : "—"}</b>último pedido</div></div>
-        <div class="chrow"><span>Tienda: <b>${esc(sh.shop)}</b></span><span class="spacer"></span>${adm && sh.hasToken ? '<button class="btn" type="button" id="shImp">Importar productos</button>' : ""}</div>` : ""}
+        <div class="chrow"><span>Tienda: <b>${esc(sh.shop)}</b></span><span class="spacer"></span>${adm ? '<button class="btn" type="button" id="shImp">Importar productos</button>' : ""}</div>` : ""}
       <ul class="app-what"><li>Cada <b>pedido</b> de Shopify llega a Pedidos con su número, productos, dirección y estado de pago, y el cliente queda como Ganado.</li>
         <li>Los <b>carritos abandonados</b> crean una tarea en Hoy con el enlace para recuperarlos.</li><li>Puedes <b>importar tus productos</b> al catálogo para que la asesora los cotice.</li></ul>
       ${adm ? `<details class="app-steps" ${sh.on ? "" : "open"}><summary>${sh.on ? "Cambiar la conexión" : "Cómo conectarlo"}</summary><ol class="steps">
           <li>En Shopify ve a <b>Configuración › Notificaciones › Webhooks</b> y pulsa <b>Crear webhook</b> cinco veces, uno por evento: <i>Creación de pedido</i>, <i>Pago de pedido</i>, <i>Actualización de pedido</i>, <i>Creación de cliente</i> y <i>Creación de pago (checkout)</i>. Formato <b>JSON</b> y esta URL:<div class="codebox"><code class="sel">${esc(hookUrl)}</code><button class="btn sm" type="button" data-copy="${esc(hookUrl)}">Copiar</button></div></li>
           <li>Debajo de la lista, Shopify muestra "Tus webhooks se firmarán con…": copia esa clave y pégala aquí.</li>
-          <li>Opcional, para importar productos: en <b>Configuración › Apps › Desarrollar apps</b> crea una app con permiso <code>read_products</code> e instálala; copia el <b>token de acceso de la API de Admin</b>.</li></ol>
+          <li>Productos: cuando la tienda esté conectada, toca <b>Importar productos</b>. Se leen del catálogo público de tu tienda; cada medida o talla con precio distinto queda como un producto. Solo si tu tienda tiene contraseña necesitas un token de Admin.</li></ol>
         <form id="shf" class="chform"><div class="grid2"><div><label class="lb" for="shs">Dominio de la tienda</label><input class="in" id="shs" placeholder="casadorada.myshopify.com" value="${esc(sh.shop || "")}" required></div>
           <div><label class="lb" for="shk">Clave de firma de webhooks</label><input class="in" id="shk" placeholder="${sh.on ? "Guardada · escribe para cambiarla" : "Pega la clave"}" autocomplete="off"></div>
-          <div class="full"><label class="lb" for="sht">Token de acceso de Admin (opcional)</label><input class="in" id="sht" placeholder="${sh.hasToken ? "Guardado · escribe para cambiarlo" : "shpat_…"}" autocomplete="off"></div></div>
+          <div class="full"><label class="lb" for="sht">Token de acceso de Admin (opcional: sin él, los productos se importan del catálogo público de la tienda)</label><input class="in" id="sht" placeholder="${sh.hasToken ? "Guardado · escribe para cambiarlo" : "shpat_…"}" autocomplete="off"></div></div>
           <div class="chrow"><button class="btn primary">${sh.on ? "Guardar cambios" : "Conectar Shopify"}</button>${sh.on ? '<span class="spacer"></span><button class="btn danger" type="button" data-appoff="shopify">Desconectar</button>' : ""}</div></form></details>` : ""}
     </section>
     <section class="chcard" id="app-siigo">${head("siigo", "Siigo", "Facturación electrónica y clientes", sg.on)}
