@@ -104,23 +104,44 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const out = await shopifyEvent(String(req.get("x-shopify-topic") || ""), req.body || {});
     res.status(200).json({ ok: true, out });
   }
+  // Guarda un producto de Shopify. Si tiene variantes con precios distintos (tallas, medidas), crea una ficha por variante.
+  async function saveShopifyProduct(p, active) {
+    const vs = (p.variants || []).length ? p.variants : [{}];
+    const multi = vs.length > 1 && new Set(vs.map(v => Number(v.price) || 0)).size > 1;
+    const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", updatedAt: Date.now(), updatedBy: "Shopify" };
+    for (const v of multi ? vs : [vs[0]]) {
+      const vt = multi && v.title && v.title !== "Default Title" ? " · " + v.title : "";
+      await db.doc("products/shp_" + p.id + (multi ? "_" + v.id : "")).set({ ...base, name: p.title + vt, priceRetail: Math.round(Number(v.price) || 0), sku: v.sku || "" }, { merge: true });
+    }
+    return multi ? vs.length : 1;
+  }
+  // Con token de Admin usa la API; sin token lee el catálogo público de la tienda (tienda.com/products.json)
   async function shopifyImport() {
     const c = (await cfg(true)).shopify || {};
-    if (!c.shop || !c.token) throw new Error("Falta la tienda o el token de acceso de Shopify.");
-    let url = `https://${c.shop}/admin/api/${SHOPIFY_API}/products.json?limit=250&status=active`, n = 0, pages = 0;
-    while (url && pages++ < 20) {
-      const r = await fetchFn(url, { headers: { "X-Shopify-Access-Token": c.token, "Content-Type": "application/json" } });
-      if (!r.ok) throw new Error(r.status === 401 ? "Shopify rechazó el token de acceso." : "Shopify respondió " + r.status);
-      const j = await r.json();
-      for (const p of j.products || []) {
-        const v = (p.variants || [])[0] || {};
-        await db.doc("products/shp_" + p.id).set({ name: p.title, category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), priceRetail: Math.round(Number(v.price) || 0),
-          sku: v.sku || "", active: p.status !== "archived", source: "Shopify", updatedAt: Date.now(), updatedBy: "Shopify" }, { merge: true });
-        n++;
+    if (!c.shop) throw new Error("Primero conecta la tienda de Shopify.");
+    let n = 0;
+    if (c.token) {
+      let url = `https://${c.shop}/admin/api/${SHOPIFY_API}/products.json?limit=250&status=active`, pages = 0;
+      while (url && pages++ < 20) {
+        const r = await fetchFn(url, { headers: { "X-Shopify-Access-Token": c.token, "Content-Type": "application/json" } });
+        if (!r.ok) throw new Error(r.status === 401 ? "Shopify rechazó el token de acceso." : "Shopify respondió " + r.status);
+        const j = await r.json();
+        for (const p of j.products || []) n += await saveShopifyProduct(p, p.status !== "archived");
+        const link = (r.headers && r.headers.get && r.headers.get("link")) || "";
+        const m = link.match(/<([^>]+)>;\s*rel="next"/);
+        url = m ? m[1] : null;
       }
-      const link = (r.headers && r.headers.get && r.headers.get("link")) || "";
-      const m = link.match(/<([^>]+)>;\s*rel="next"/);
-      url = m ? m[1] : null;
+    } else {
+      for (let page = 1; page <= 40; page++) {
+        const r = await fetchFn(`https://${c.shop}/products.json?limit=250&page=${page}`, { headers: { Accept: "application/json" } });
+        const j = r.ok ? await r.json().catch(() => null) : null;
+        if (!j || !Array.isArray(j.products)) {
+          if (page === 1) throw new Error("No se pudo leer el catálogo público de la tienda. Si la tienda tiene contraseña, quítala o usa un token de Admin.");
+          break;
+        }
+        if (!j.products.length) break;
+        for (const p of j.products) n += await saveShopifyProduct(p, true);
+      }
     }
     await setPub({ shopify: { productsAt: Date.now(), products: n } });
     return { products: n };
