@@ -11,6 +11,7 @@ const MAX_ROUNDS = 6;       // vueltas de herramientas por mensaje
 const HISTORY = 40;         // mensajes de contexto
 const DEBOUNCE_MS = 7000;   // espera por si el cliente manda varios mensajes seguidos
 const DAY_MS = 24 * 3600 * 1000;
+const CAPTION_MAX = 1000;   // pie de foto máximo (WhatsApp y Telegram permiten 1024)
 const TEMPS = ["🔥 Caliente", "🌤 Tibio", "❄️ Frío"];
 const STAGES = ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Negociación", "Ganado", "Perdido"];
 const STAGE_UP = ["Contactado", "Catálogo enviado", "Cotización enviada", "Negociación"];
@@ -62,7 +63,12 @@ function kbText(kb = []) {
 }
 function systemPrompt(cfg, kb) {
   const name = cfg.name || "Sofía";
-  return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis). Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
+  return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis).
+Cuando hablas de un producto, tu mensaje va como pie de su foto, así que escríbelo en párrafos cortos separados por una línea en blanco:
+1) en el primer mensaje de la conversación, un saludo y tu nombre ("¡Hola! ¿Cómo estás? Hablas con ${name} de ${cfg.empresa || "Casa Dorada"}.");
+2) cómo es el producto: "Así se ve la …" con material y para qué sirve, con 1 emoji;
+3) el precio: si tiene promoción u oferta, "queda en $X con el descuento incluido (antes $Y)"; si no, el precio normal (y el de por mayor si aplica).
+Máximo unas 80 palabras. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
 Tu trabajo (modo mixto):
 - Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
@@ -340,13 +346,20 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
     // Si una persona respondió mientras la IA pensaba, no enviar
     const fresh = (await cref.get()).data();
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
-    if (hasText) await send({ cref, contact: fresh, text, byName: aiName });
     // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
     const auto = hasText && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
+    const photos = [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))];
     const sentNow = {};
-    for (const f of [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))]) {
-      try { await send({ cref, contact: fresh, text: f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
-      catch (e) { console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e)); }
+    // Un solo mensaje: la primera foto lleva la respuesta completa como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
+    // las demás fotos van con su nombre y precio
+    const joined = hasText && photos.length && text.length <= CAPTION_MAX;
+    if (hasText && !joined) await send({ cref, contact: fresh, text, byName: aiName });
+    for (const [i, f] of photos.entries()) {
+      try { await send({ cref, contact: fresh, text: joined && i === 0 ? text : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
+      catch (e) {
+        console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e));
+        if (joined && i === 0) await send({ cref, contact: fresh, text, byName: aiName }); // la respuesta no se pierde si la foto falla
+      }
     }
     if (auto.length) tools.done.push("envió la foto de " + auto.map(p => p.name).join(", "));
     if (Object.keys(sentNow).length) await cref.set({ aiPhotos: sentNow }, { merge: true });
