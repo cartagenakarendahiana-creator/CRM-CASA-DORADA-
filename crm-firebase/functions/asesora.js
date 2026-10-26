@@ -9,6 +9,7 @@ const DEFAULT_MODEL = "haiku";
 const MAX_ROUNDS = 6;       // vueltas de herramientas por mensaje
 const HISTORY = 40;         // mensajes de contexto
 const DEBOUNCE_MS = 7000;   // espera por si el cliente manda varios mensajes seguidos
+const DAY_MS = 24 * 3600 * 1000;
 const TEMPS = ["🔥 Caliente", "🌤 Tibio", "❄️ Frío"];
 const STAGES = ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Negociación", "Ganado", "Perdido"];
 const STAGE_UP = ["Contactado", "Catálogo enviado", "Cotización enviada", "Negociación"];
@@ -65,7 +66,7 @@ function systemPrompt(cfg, kb) {
 Tu trabajo (modo mixto):
 - Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
 - Explica el precio por mayor cuando aplique ("desde X unidades queda a $Y").
-- Si el cliente quiere ver un producto, o una foto le ayuda a decidir, envíala con enviar_foto_producto (si el producto tiene foto). Nunca pegues enlaces de imágenes en el texto.
+- Cuando hables de un producto, su foto con el precio se envía sola después de tu mensaje (no hace falta pedirla). Usa enviar_foto_producto solo si el cliente pide la foto de un producto que no nombraste. Nunca pegues enlaces de imágenes en el texto ni digas que no puedes enviar fotos.
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
 - Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
@@ -110,12 +111,27 @@ function toMessages(msgs) {
   return out;
 }
 
+// Pie de foto de un producto: nombre y precio (y por mayor, si aplica)
+const photoCaption = p => `${p.name} · ${money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` (por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)})` : ""}`;
+const nameTokens = s => norm(s).split(/[^a-z0-9.]+/).filter(w => w.length > 1);
+// Fotos que se envían solas cuando la asesora habla de productos: primero los que nombra en su respuesta,
+// si no nombra ninguno, los mejores resultados de su última búsqueda. Máximo 3, sin repetir fotos enviadas a este cliente en 24 h.
+function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), max = 3 }) {
+  const t = " " + nameTokens(text).join(" ") + " ";
+  const fresh = p => !queued.some(q => q.id === p.id) && now - (sentAt[p.id] || 0) > DAY_MS;
+  const withImg = found.filter(p => p.image);
+  const named = withImg.filter(p => { const tk = nameTokens(p.name); return tk.length && tk.filter(w => t.includes(" " + w + " ")).length / tk.length >= 0.7; });
+  // Si nombra productos, solo esos (aunque ya se hayan enviado: no se cambia por otro parecido)
+  return (named.length ? named : withImg).filter(fresh).slice(0, Math.max(0, max - queued.length));
+}
+
 function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
   const active = products.filter(p => p.active !== false);
   const pub = p => ({ id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
     precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null, tiene_foto: !!p.image });
   const done = []; // lo que hizo la asesora, para la nota interna
   const photos = []; // fotos de productos para enviar después del texto
+  const found = []; // productos de la última búsqueda, en orden de relevancia (para adjuntar sus fotos)
   const run = {
     async buscar_conocimiento({ consulta }) {
       if (!kb.length) return { articulos: [], aviso: "La empresa no ha cargado base de conocimiento." };
@@ -130,7 +146,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       if (!p.image) return { error: "Ese producto no tiene foto cargada. Descríbelo con palabras." };
       if (photos.some(f => f.id === p.id)) return { ok: true, aviso: "Esa foto ya está en la lista para enviar." };
       if (photos.length >= 3) return { error: "Ya vas a enviar 3 fotos en esta respuesta; no envíes más." };
-      photos.push({ id: p.id, image: p.image, caption: `${p.name} · ${money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` (por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)})` : ""}` });
+      photos.push({ id: p.id, image: p.image, caption: photoCaption(p) });
       done.push("envió la foto de " + p.name);
       return { ok: true, aviso: "La foto se enviará justo después de tu mensaje. No pegues enlaces en el texto." };
     },
@@ -139,6 +155,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       if (!words.length) return { productos: active.slice(0, 60).map(pub), total: active.length };
       const scored = active.map(p => { const hay = norm(`${p.name} ${p.category} ${p.desc}`); return [p, words.filter(w => hay.includes(w)).length]; })
         .filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).slice(0, 12);
+      found.splice(0, found.length, ...scored.map(([p]) => p));
       return scored.length ? { productos: scored.map(([p]) => pub(p)) } : { productos: [], aviso: "No hay coincidencias. Prueba con otras palabras o con consulta vacía para ver todo el catálogo." };
     },
     async actualizar_ficha(a) {
@@ -198,7 +215,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, kb };
+  return { run, done, photos, found, kb };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -308,14 +325,19 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
     const fresh = (await cref.get()).data();
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
     if (hasText) await send({ cref, contact: fresh, text, byName: aiName });
-    for (const f of tools.photos) {
-      try { await send({ cref, contact: fresh, text: f.caption, image: f.image, byName: aiName }); }
+    // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
+    const auto = hasText && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
+    const sentNow = {};
+    for (const f of [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p) }))]) {
+      try { await send({ cref, contact: fresh, text: f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
       catch (e) { console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e)); }
     }
+    if (auto.length) tools.done.push("envió la foto de " + auto.map(p => p.name).join(", "));
+    if (Object.keys(sentNow).length) await cref.set({ aiPhotos: sentNow }, { merge: true });
     if ((fresh.stage || "Nuevo") === "Nuevo") await cref.set({ stage: "Contactado", stageAt: Date.now() }, { merge: true });
   }
   if (tools.done.length) await cref.collection("messages").add({ dir: "note", text: `${aiName}: ` + tools.done.join("; ") + ".", ts: Date.now(), by: "asesora", byName: aiName });
   return hasText || tools.photos.length ? "respondido" : "sin-texto";
 }
 
-module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS };
+module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption };
