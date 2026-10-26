@@ -79,6 +79,7 @@ const ICONS = {
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  promociones: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.5"/>',
   foto: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
   ajustes: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -227,6 +228,7 @@ function startData() {
   w("knowledge", "knowledge");
   w("forms", "forms");
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"] });
+  w("promos", "promos");
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
   // Estado del puente de WhatsApp por QR (solo la administradora puede leerlo); late cada minuto, así que solo redibuja Canales
@@ -255,7 +257,7 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["formularios", "Formularios"], ["metricas", "Métricas"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -289,7 +291,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -1385,7 +1387,7 @@ async function sendText(c, text) {
 }
 const info = msg => ask(msg, "Entendido", null);
 // Elegir un producto del catálogo y enviar su foto con nombre y precio como pie de foto
-const prodCaption = p => `${p.name}\n${money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}${p.desc ? "\n" + p.desc : ""}`;
+const prodCaption = p => { const b = bestPromo(p); return `${p.name}\n${b ? `Antes ${money(p.priceRetail)} · Ahora ${money(b.price)} 🔥 ${b.promo.name}` : money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}${p.desc ? "\n" + p.desc : ""}`; };
 function pickProduct(c) {
   const m = $("#modal"); let q = "", sel = null;
   const draw = () => {
@@ -2164,7 +2166,7 @@ function viewProductos(el) {
   el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Productos</h1><span class="sub tabnum">${S.products.length}</span><span class="spacer"></span><button class="btn primary" id="np">+ Nuevo producto</button></div>
     <div class="toolbar"><input class="in" id="pq" placeholder="Buscar producto" value="${esc(S.pQ || "")}"></div>
     ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th></th><th>Producto</th><th>Categoría</th><th>Descripción</th><th class="num">Precio detal</th><th class="num">Precio por mayor</th><th class="num">Mayor desde</th><th>Estado</th></tr></thead><tbody>
-      ${list.map(p => `<tr data-id="${p.id}"><td class="pthumb">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : ""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.category || "")}</td><td>${esc(p.desc || "")}</td><td class="num">${money(p.priceRetail)}</td><td class="num">${p.priceWholesale ? money(p.priceWholesale) : ""}</td><td class="num">${p.minWholesale || ""}</td><td>${p.active === false ? '<span class="pill">Inactivo</span>' : '<span class="pill green">Activo</span>'}</td></tr>`).join("")}</tbody></table></div>`
+      ${list.map(p => `<tr data-id="${p.id}"><td class="pthumb">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : ""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.category || "")}</td><td>${esc(p.desc || "")}</td><td class="num">${(b => b ? `<s class="muted">${money(p.priceRetail)}</s> <b class="promo-price">${money(b.price)}</b><br><span class="pill amber" title="${esc(b.promo.name)}">🔥 ${esc(b.promo.name)}</span>` : money(p.priceRetail))(bestPromo(p))}</td><td class="num">${p.priceWholesale ? money(p.priceWholesale) : ""}</td><td class="num">${p.minWholesale || ""}</td><td>${p.active === false ? '<span class="pill">Inactivo</span>' : '<span class="pill green">Activo</span>'}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty"><p><b>Tu catálogo está vacío.</b></p><p>Agrega tus productos con precio al detal y al por mayor, por ejemplo una sábana para cama de 1.40.</p></div>`}</div>`;
   $("#pq").oninput = e => { S.pQ = e.target.value; renderShell(); };
   $("#np").onclick = () => openProduct(null);
@@ -2198,6 +2200,109 @@ function openProduct(id) {
     catch (er) { toast(/permission/i.test(errMsg(er)) ? "Solo la administradora puede cambiar productos." : "No se pudo guardar: " + errMsg(er)); }
   };
   m.showModal();
+}
+
+// ======================= Promociones =======================
+// Misma lógica que functions/promos.js (la usa Sofía): vigencia, a qué productos aplica y precio con descuento
+const PROMO_TYPES = { porcentaje: "% de descuento", valor: "Pesos menos por unidad", precio: "Precio especial", envio: "Envío gratis", regalo: "Regalo", otro: "Otro beneficio" };
+const promoActive = (p, now = Date.now()) => p && p.on !== false && p.name && (!p.start || p.start <= isoBogota(now)) && (!p.end || p.end >= isoBogota(now));
+const isoBogota = ms => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+const promoApplies = (pr, p) => pr.scope === "categoria" ? (pr.categories || []).map(norm).includes(norm(p.category || ""))
+  : pr.scope === "productos" ? (pr.productIds || []).some(id => id === p.id || String(p.id).startsWith(id + "_")) : true;
+function promoUnit(pr, base, qty = 1) {
+  if (!base || (pr.minQty && qty < pr.minQty)) return null;
+  const v = Number(pr.value) || 0;
+  const x = pr.type === "porcentaje" ? base * (1 - Math.min(100, v) / 100) : pr.type === "valor" ? base - v : pr.type === "precio" ? v : null;
+  return x === null || x <= 0 || x >= base ? null : Math.round(x);
+}
+// Mejor precio con promoción vigente para 1 unidad: { price, promo } o null
+function bestPromo(p) {
+  let best = null;
+  for (const pr of (S.promos || []).filter(x => promoActive(x))) {
+    if (!promoApplies(pr, p)) continue;
+    const x = promoUnit(pr, p.priceRetail || 0, 1);
+    if (x !== null && (!best || x < best.price)) best = { price: x, promo: pr };
+  }
+  return best;
+}
+function promoCondition(pr) {
+  const v = Number(pr.value) || 0;
+  const what = pr.type === "porcentaje" ? `${v}% de descuento` : pr.type === "valor" ? `${money(v)} menos por unidad` : pr.type === "precio" ? `Precio especial ${money(v)}`
+    : pr.type === "envio" ? "Envío gratis" : pr.type === "regalo" ? "Regalo" : "Beneficio";
+  const on = pr.scope === "categoria" ? `en ${(pr.categories || []).join(", ") || "—"}` : pr.scope === "productos" ? `en ${(pr.productIds || []).length} producto(s)` : "en todo el catálogo";
+  return `${what} ${on}${pr.minQty ? ` · desde ${pr.minQty} unidades` : ""}${pr.code ? ` · código ${pr.code}` : ""}`;
+}
+function promoState(pr) {
+  const t = isoBogota(Date.now());
+  if (pr.on === false) return ["Apagada", ""];
+  if (pr.start && pr.start > t) return ["Programada", "blue"];
+  if (pr.end && pr.end < t) return ["Vencida", "red"];
+  return ["Activa", "green"];
+}
+function viewPromociones(el) {
+  const adm = isAdmin(), list = [...(S.promos || [])].sort((a, b) => (promoActive(b) - promoActive(a)) || String(a.name).localeCompare(String(b.name)));
+  el.innerHTML = `<div class="page"><div class="page-head"><div><h1>Promociones</h1><span class="sub">Descuentos y beneficios que ${esc(aiName())} ofrece a los clientes mientras estén vigentes.</span></div><span class="spacer"></span>
+      ${adm ? '<button class="btn primary" id="newPromo">+ Nueva promoción</button>' : ""}</div>
+    ${list.length ? `<div class="promo-list">${list.map(pr => { const [st, cls] = promoState(pr); return `<button class="promo-card" data-promo="${pr.id}">
+        <div class="pc-h"><b>${esc(pr.name)}</b><span class="pill ${cls}">${st}</span></div>
+        <div class="pc-c">${esc(promoCondition(pr))}</div>
+        ${pr.desc ? `<p class="muted">${esc(pr.desc)}</p>` : ""}
+        <small class="muted">${pr.start || pr.end ? `Vigencia: ${pr.start ? "desde " + pr.start : ""}${pr.end ? " hasta " + pr.end : ""}` : "Sin fecha de fin"}</small></button>`; }).join("")}</div>`
+      : `<div class="empty"><p><b>Aún no hay promociones.</b></p><p>Por ejemplo: 15% en sábanas este mes, envío gratis desde 6 unidades o un precio especial para un producto. ${esc(aiName())} solo ofrece lo que esté aquí y vigente.</p></div>`}
+    <p class="muted" style="font-size:12.5px;margin-top:14px">${esc(aiName())} ofrece estas promociones tal cual: no inventa descuentos ni los combina. Si un cliente pide un descuento mayor o distinto, pasa el chat a una persona. Las cotizaciones que prepara ya traen el precio con la promoción.</p></div>`;
+  if ($("#newPromo")) $("#newPromo").onclick = () => openPromo(null);
+  $$("[data-promo]", el).forEach(b => b.onclick = () => adm ? openPromo(b.dataset.promo) : null);
+}
+function openPromo(id) {
+  const base = id ? byId(S.promos, id) : null, m = $("#modal");
+  const pr = base ? JSON.parse(JSON.stringify(base)) : { name: "", desc: "", type: "porcentaje", value: 10, scope: "todo", categories: [], productIds: [], minQty: 0, code: "", start: isoBogota(Date.now()), end: "", on: true };
+  const cats = [...new Set(S.products.map(p => p.category).filter(Boolean))].sort();
+  let pq = "";
+  const read = () => {
+    pr.name = $("#prn").value.trim(); pr.desc = $("#prd").value.trim(); pr.type = $("#prt").value; pr.value = !$("#prv") ? 0 : pr.type === "porcentaje" ? Number(String($("#prv").value).replace(",", ".")) || 0 : num($("#prv").value);
+    pr.scope = $("#prs").value; pr.minQty = Number($("#prm").value) || 0; pr.code = $("#prc").value.trim(); pr.start = $("#pra").value; pr.end = $("#prb").value; pr.on = $("#pro").checked;
+    if ($("#prcats")) pr.categories = $$("[data-cat]:checked", m).map(x => x.dataset.cat);
+    if ($("#prprods")) { const seen = new Set($$("[data-pid]", m).map(x => x.dataset.pid)); pr.productIds = [...(pr.productIds || []).filter(x => !seen.has(x)), ...$$("[data-pid]:checked", m).map(x => x.dataset.pid)]; }
+  };
+  const draw = () => {
+    const priced = ["porcentaje", "valor", "precio"].includes(pr.type);
+    const prods = S.products.filter(p => p.active !== false && (!pq || norm(p.name + " " + (p.category || "")).includes(norm(pq)))).slice(0, 80);
+    m.innerHTML = `<form id="prf"><div class="mh"><h2>${id ? "Editar promoción" : "Nueva promoción"}</h2><button class="iconbtn" type="button" id="prx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><div class="grid2">
+        <div class="full"><label class="lb" for="prn">Nombre</label><input class="in" id="prn" required value="${esc(pr.name)}" placeholder="Ej: Mes de las sábanas"></div>
+        <div class="full"><label class="lb" for="prd">Texto para el cliente (opcional)</label><input class="in" id="prd" value="${esc(pr.desc || "")}" placeholder="Ej: Aprovecha 15% en todas las sábanas hasta fin de mes"></div>
+        <div><label class="lb" for="prt">Tipo</label><select class="in" id="prt">${Object.entries(PROMO_TYPES).map(([k, t]) => `<option value="${k}" ${pr.type === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        ${priced ? `<div><label class="lb" for="prv">${pr.type === "porcentaje" ? "Porcentaje" : pr.type === "valor" ? "Pesos menos por unidad" : "Precio especial por unidad"}</label><input class="in tabnum" id="prv" inputmode="numeric" required value="${pr.value || ""}"></div>` : "<div></div>"}
+        <div><label class="lb" for="prs">Aplica a</label><select class="in" id="prs"><option value="todo" ${pr.scope === "todo" ? "selected" : ""}>Todo el catálogo</option><option value="categoria" ${pr.scope === "categoria" ? "selected" : ""}>Categorías</option><option value="productos" ${pr.scope === "productos" ? "selected" : ""}>Productos específicos</option></select></div>
+        <div><label class="lb" for="prm">Desde cuántas unidades (opcional)</label><input class="in tabnum" id="prm" type="number" min="0" value="${pr.minQty || ""}"></div>
+        ${pr.scope === "categoria" ? `<div class="full" id="prcats"><label class="lb">Categorías</label><div class="chk-grid">${cats.map(c => `<label class="switch sm"><input type="checkbox" data-cat="${esc(c)}" ${(pr.categories || []).includes(c) ? "checked" : ""}> <span>${esc(c)}</span></label>`).join("") || '<span class="muted">Tus productos aún no tienen categoría.</span>'}</div></div>` : ""}
+        ${pr.scope === "productos" ? `<div class="full" id="prprods"><label class="lb" for="prq">Productos (${(pr.productIds || []).length} elegidos)</label><input class="in" id="prq" placeholder="Buscar producto" value="${esc(pq)}" autocomplete="off">
+          <div class="chk-list">${prods.map(p => `<label class="switch sm"><input type="checkbox" data-pid="${p.id}" ${(pr.productIds || []).includes(p.id) ? "checked" : ""}> <span>${esc(p.name)} <small class="muted">${money(p.priceRetail)}</small></span></label>`).join("")}</div></div>` : ""}
+        <div><label class="lb" for="pra">Desde</label><input class="in" id="pra" type="date" value="${esc(pr.start || "")}"></div>
+        <div><label class="lb" for="prb">Hasta (opcional)</label><input class="in" id="prb" type="date" value="${esc(pr.end || "")}"></div>
+        <div><label class="lb" for="prc">Código (opcional)</label><input class="in" id="prc" value="${esc(pr.code || "")}" placeholder="Ej: SABANAS15"></div>
+        <div style="align-self:end"><label class="switch"><input type="checkbox" id="pro" ${pr.on !== false ? "checked" : ""}> <span>Activa</span></label></div>
+      </div><p class="muted" style="margin:10px 0 0">${esc(aiName())} la ofrecerá así: <b id="prprev">${esc(promoCondition(pr))}</b></p></div>
+      <div class="mf">${id ? '<button class="btn danger" type="button" id="prdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="prcancel">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+    $("#prx").onclick = $("#prcancel").onclick = () => m.close();
+    ["#prt", "#prs"].forEach(s => $(s).onchange = () => { read(); setTimeout(draw); });
+    ["#prv", "#prm", "#prc"].forEach(s => $(s) && ($(s).oninput = () => { read(); $("#prprev").textContent = promoCondition(pr); }));
+    $$("[data-cat],[data-pid]", m).forEach(x => x.onchange = () => { read(); $("#prprev").textContent = promoCondition(pr); });
+    if ($("#prq")) $("#prq").oninput = e => { read(); pq = e.target.value; draw(); const i = $("#prq"); i.focus(); i.setSelectionRange(pq.length, pq.length); };
+    if ($("#prdel")) $("#prdel").onclick = async () => { if (!await ask("¿Eliminar la promoción " + pr.name + "?", "Eliminar")) return; await fb.remove("promos/" + id); m.close(); toast("Promoción eliminada"); };
+    $("#prf").onsubmit = async e => {
+      e.preventDefault(); read();
+      if (["porcentaje", "valor", "precio"].includes(pr.type) && !(pr.value > 0)) return toast("Escribe el valor del descuento.");
+      if (pr.type === "porcentaje" && pr.value >= 100) return toast("El porcentaje debe ser menor a 100.");
+      if (pr.scope === "categoria" && !pr.categories.length) return toast("Elige al menos una categoría.");
+      if (pr.scope === "productos" && !pr.productIds.length) return toast("Elige al menos un producto.");
+      if (pr.start && pr.end && pr.end < pr.start) return toast("La fecha de fin es anterior a la de inicio.");
+      const data = { ...pr, ...stamp() }; delete data.id;
+      try { id ? await fb.set("promos/" + id, data, false) : await fb.add("promos", { ...data, createdAt: Date.now() }); m.close(); toast("Promoción guardada"); }
+      catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+    };
+  };
+  draw(); m.showModal();
 }
 
 // ======================= Plantillas =======================

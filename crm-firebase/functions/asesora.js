@@ -2,6 +2,7 @@
 // Modo mixto: resuelve preguntas de productos, precios, medidas y disponibilidad;
 // pasa a una persona los cierres de pedido, negociaciones y quejas.
 const Anthropic = require("@anthropic-ai/sdk");
+const PROMOS = require("./promos");
 
 // Modelo de la asesora: Haiku 5.5 por defecto (rápido y económico); se puede cambiar en Asesora virtual
 const MODELS = { haiku: "claude-haiku-5-5", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
@@ -70,9 +71,10 @@ Tu trabajo (modo mixto):
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
 - Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
-- Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide descuento o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
+- Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
+- Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide un descuento distinto o mayor a las promociones vigentes o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
 - Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Si recibes un audio, video o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
-- No des descuentos, no confirmes pedidos, pagos, envíos ni fechas de entrega.
+- No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega.
 
 Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por el mismo chat: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
 Los mensajes del equipo humano en el historial también son de tu lado de la conversación; sé coherente con ellos.
@@ -112,7 +114,11 @@ function toMessages(msgs) {
 }
 
 // Pie de foto de un producto: nombre y precio (y por mayor, si aplica)
-const photoCaption = p => `${p.name} · ${money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` (por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)})` : ""}`;
+function photoCaption(p, promos = []) {
+  const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos);
+  const price = b.promo ? `Antes ${money(p.priceRetail)} · Ahora ${money(b.price)} (${b.promo.name})` : money(p.priceRetail);
+  return `${p.name} · ${price}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}`;
+}
 const nameTokens = s => norm(s).split(/[^a-z0-9.]+/).filter(w => w.length > 1);
 // Fotos que se envían solas cuando la asesora habla de productos: primero los que nombra en su respuesta,
 // si no nombra ninguno, los mejores resultados de su última búsqueda. Máximo 3, sin repetir fotos enviadas a este cliente en 24 h.
@@ -125,10 +131,15 @@ function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), m
   return (named.length ? named : withImg).filter(fresh).slice(0, Math.max(0, max - queued.length));
 }
 
-function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
+function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [] }) {
   const active = products.filter(p => p.active !== false);
-  const pub = p => ({ id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
-    precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null, tiene_foto: !!p.image });
+  const pub = p => {
+    const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos), other = PROMOS.promosFor(p, promos).filter(x => x !== b.promo);
+    return { id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
+      precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null, tiene_foto: !!p.image,
+      ...(b.promo ? { precio_con_promocion: b.price, promocion: `${b.promo.name}: ${PROMOS.conditionText(b.promo)}` } : {}),
+      ...(other.length ? { otras_promociones: other.map(x => `${x.name}: ${PROMOS.conditionText(x)}`) } : {}) };
+  };
   const done = []; // lo que hizo la asesora, para la nota interna
   const photos = []; // fotos de productos para enviar después del texto
   const found = []; // productos de la última búsqueda, en orden de relevancia (para adjuntar sus fotos)
@@ -146,7 +157,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       if (!p.image) return { error: "Ese producto no tiene foto cargada. Descríbelo con palabras." };
       if (photos.some(f => f.id === p.id)) return { ok: true, aviso: "Esa foto ya está en la lista para enviar." };
       if (photos.length >= 3) return { error: "Ya vas a enviar 3 fotos en esta respuesta; no envíes más." };
-      photos.push({ id: p.id, image: p.image, caption: photoCaption(p) });
+      photos.push({ id: p.id, image: p.image, caption: photoCaption(p, promos) });
       done.push("envió la foto de " + p.name);
       return { ok: true, aviso: "La foto se enviará justo después de tu mensaje. No pegues enlaces en el texto." };
     },
@@ -181,7 +192,8 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       for (const it of items || []) {
         const p = active.find(x => x.id === it.producto_id), qty = Math.max(1, Math.round(Number(it.cantidad) || 0));
         if (!p) return { error: `El producto ${it.producto_id} no existe en el catálogo. Búscalo con buscar_productos.` };
-        lines.push({ productId: p.id, name: p.name, qty, price: priceFor(p, qty) });
+        const base = priceFor(p, qty), b = PROMOS.bestPrice(p, qty, base, promos);
+        lines.push({ productId: p.id, name: p.name, qty, price: b.price, ...(b.promo ? { listPrice: base, promo: b.promo.name } : {}) });
       }
       if (!lines.length) return { error: "La cotización necesita al menos un producto." };
       const subtotal = lines.reduce((s, l) => s + l.qty * l.price, 0), now = Date.now();
@@ -191,15 +203,16 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
         const n = (s.exists ? s.get("n") || 0 : 0) + 1;
         const num = "COT-" + String(n).padStart(4, "0");
         t.set(cr, { n });
+        const promoNote = [...new Set(lines.filter(l => l.promo).map(l => l.promo))].map(n => "Promoción aplicada: " + n).join("\n");
         t.set(qref, { contactId: cref.id, contactName: contact.name || contact.company || contact.phone || "", items: lines, subtotal, discount: 0, total: subtotal,
-          status: "Borrador", validUntil: isoDay(now + 15 * 864e5), notes: String(notas || "").slice(0, 1000), number: num, aiCreated: true,
+          status: "Borrador", validUntil: isoDay(now + 15 * 864e5), notes: [String(notas || ""), promoNote].filter(Boolean).join("\n").slice(0, 1000), number: num, aiCreated: true,
           createdAt: now, createdBy: "asesora", createdByName: aiName, updatedAt: now, updatedBy: aiName });
         return num;
       });
       const first = lines[0], p = active.find(x => x.id === first.productId);
       await cref.set({ chosenProduct: { id: first.productId, name: first.name, price: first.price, desc: p.desc || "" }, updatedAt: now, updatedBy: aiName }, { merge: true });
       done.push(`preparó la cotización ${number} por ${money(subtotal)} (borrador para revisar)`);
-      return { ok: true, numero: number, lineas: lines.map(l => ({ producto: l.name, cantidad: l.qty, precio_unitario: l.price, subtotal: l.qty * l.price })), total: subtotal,
+      return { ok: true, numero: number, lineas: lines.map(l => ({ producto: l.name, cantidad: l.qty, precio_unitario: l.price, ...(l.promo ? { promocion: l.promo, precio_sin_promocion: l.listPrice } : {}), subtotal: l.qty * l.price })), total: subtotal,
         aviso: "Queda en borrador: dile al cliente el total aproximado y que una asesora del equipo se la confirma." };
     },
     async agendar_seguimiento({ fecha, accion }) {
@@ -215,7 +228,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, found, kb };
+  return { run, done, photos, found, kb, promos };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -232,7 +245,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
   if (!messages.length || messages[messages.length - 1].role !== "user") return { text: "" };
   const system = [
     { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
-    { type: "text", text: contactText(contact) },
+    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) },
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const key = MODELS[cfg.model] ? cfg.model : DEFAULT_MODEL;
@@ -292,11 +305,13 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
   if (claim !== "ok") return claim;
 
   const contact = (await cref.get()).data();
-  const [hs, ps, ks] = await Promise.all([
+  const [hs, ps, ks, prs] = await Promise.all([
     cref.collection("messages").orderBy("ts", "desc").limit(HISTORY).get(),
     db.collection("products").get(),
     db.collection("knowledge").get(),
+    db.collection("promos").get(),
   ]);
+  const promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
   const kb = ks.docs.map(d => d.data()).filter(k => k.on !== false && k.title).sort((a, b) => String(a.title).localeCompare(String(b.title)));
   const history = hs.docs.map(d => d.data()).reverse();
   // Lee del bucket privado las 3 fotos más recientes del cliente (Claude acepta hasta ~5 MB por imagen)
@@ -306,7 +321,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
   }
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
-  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb });
+  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos });
 
   let res;
   try { res = await think({ apiKey, cfg, contact, history, tools }); }
@@ -328,7 +343,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
     // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
     const auto = hasText && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
     const sentNow = {};
-    for (const f of [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p) }))]) {
+    for (const f of [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))]) {
       try { await send({ cref, contact: fresh, text: f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
       catch (e) { console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e)); }
     }
