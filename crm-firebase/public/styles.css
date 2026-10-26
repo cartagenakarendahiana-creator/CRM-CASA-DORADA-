@@ -1140,3 +1140,9 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .promo-price{color:#b45309}
 .chk-grid{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:4px}
 .chk-list{display:grid;gap:4px;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:6px}
+/* Mensaje con foto: la foto arriba, ancha, y el texto en párrafos debajo */
+.bubble.has-img{max-width:min(380px,86%);padding:4px 4px 6px}
+.bubble.has-img .bimg{margin:0 0 6px;border-radius:9px}
+.bubble.has-img .bimg img{max-width:100%;width:100%;max-height:420px;object-fit:cover}
+.bubble.has-img .btx,.bubble.has-img .bw{display:block;padding:0 6px}
+.bubble .btx{white-space:pre-wrap}

@@ -1391,8 +1391,10 @@ async function sendText(c, text) {
 }
 const info = msg => ask(msg, "Entendido", null);
 // Elegir un producto del catálogo y enviar su foto con nombre y precio como pie de foto
-const prodCaption = p => { const b = bestPromo(p), before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0;
-  return `${p.name}\n${before ? `Antes ${money(before)} · Ahora ${money(b ? b.price : p.priceRetail)} 🔥 ${b ? b.promo.name : "Oferta"}` : money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}${p.desc ? "\n" + p.desc : ""}`; };
+// Pie de foto en párrafos, como lo escribe la asesora: producto y descripción, luego el precio (con "antes" si hay descuento)
+const prodCaption = p => { const b = bestPromo(p), before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0, now = b ? b.price : p.priceRetail;
+  return `Te muestro: ${p.name} 😊${p.desc ? "\n" + p.desc + "." : ""}\n\n${before ? `Queda en ${money(now)} con el descuento incluido (antes ${money(before)}).` : `Su precio es ${money(p.priceRetail)}.`}`
+    + (p.priceWholesale && p.minWholesale ? `\nPor mayor, desde ${p.minWholesale} unidades: ${money(p.priceWholesale)} c/u.` : ""); };
 function pickProduct(c) {
   const m = $("#modal"); let q = "", sel = null;
   const draw = () => {
