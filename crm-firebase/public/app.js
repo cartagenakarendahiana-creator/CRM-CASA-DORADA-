@@ -715,7 +715,8 @@ function viewApps(el) {
     <div class="chgrid apps">
     <section class="chcard" id="app-shopify">${head("shopify", "Shopify", "Pedidos, clientes, carritos abandonados y productos", sh.on)}
       ${sh.on ? `<div class="app-k"><div><b>${sh.orders || 0}</b>pedidos recibidos</div><div><b>${sh.products || 0}</b>productos importados</div><div><b>${sh.lastAt ? ago(sh.lastAt) : "—"}</b>último pedido</div></div>
-        <div class="chrow"><span>Tienda: <b>${esc(sh.shop)}</b></span><span class="spacer"></span>${adm ? '<button class="btn" type="button" id="shImp">Importar productos</button>' : ""}</div>` : ""}
+        <div class="chrow"><span>Tienda: <b>${esc(sh.shop)}</b></span><span class="spacer"></span>${adm ? `<button class="btn" type="button" id="shImp">Importar productos</button><button class="btn" type="button" id="shPromos" title="${sh.hasToken ? "Trae los descuentos automáticos y códigos de Shopify a Promociones" : "Necesita un token de Admin con permiso read_discounts"}">Importar descuentos</button>` : ""}</div>
+        ${sh.promosAt ? `<p class="muted" style="margin:6px 0 0;font-size:12.5px">${sh.promos || 0} descuentos de Shopify en Promociones · ${ago(sh.promosAt)}</p>` : ""}` : ""}
       <ul class="app-what"><li>Cada <b>pedido</b> de Shopify llega a Pedidos con su número, productos, dirección y estado de pago, y el cliente queda como Ganado.</li>
         <li>Los <b>carritos abandonados</b> crean una tarea en Hoy con el enlace para recuperarlos.</li><li>Puedes <b>importar tus productos</b> al catálogo para que la asesora los cotice.</li></ul>
       ${adm ? `<details class="app-steps" ${sh.on ? "" : "open"}><summary>${sh.on ? "Cambiar la conexión" : "Cómo conectarlo"}</summary><ol class="steps">
@@ -760,6 +761,9 @@ function viewApps(el) {
   const busy = (b, t) => { b.disabled = true; b.dataset.t = b.textContent; b.textContent = t; }, done = b => { b.disabled = false; b.textContent = b.dataset.t; };
   if ($("#shf")) $("#shf").onsubmit = async e => { e.preventDefault(); const b = $("#shf .btn.primary"); busy(b, "Guardando…");
     try { await appCall("saveShopify", { shop: $("#shs").value, secret: $("#shk").value, token: $("#sht").value }); toast("Shopify conectado"); } catch (er) { toast(errMsg(er)); } finally { done(b); } };
+  if ($("#shPromos")) $("#shPromos").onclick = async () => { const b = $("#shPromos"); busy(b, "Importando…");
+    try { const r = await appCall("importShopifyPromos"); toast(`${r.promos} descuentos de Shopify en Promociones`); }
+    catch (er) { info(errMsg(er)); } finally { done(b); } };
   if ($("#shImp")) $("#shImp").onclick = async () => { const b = $("#shImp"); busy(b, "Importando…");
     try { const r = await appCall("importShopify"); toast(`${r.products} productos importados de Shopify`); } catch (er) { toast(errMsg(er)); } finally { done(b); } };
   if ($("#sgf")) $("#sgf").onsubmit = async e => { e.preventDefault(); const b = $("#sgf .btn.primary"); busy(b, "Probando conexión…");
@@ -1387,7 +1391,8 @@ async function sendText(c, text) {
 }
 const info = msg => ask(msg, "Entendido", null);
 // Elegir un producto del catálogo y enviar su foto con nombre y precio como pie de foto
-const prodCaption = p => { const b = bestPromo(p); return `${p.name}\n${b ? `Antes ${money(p.priceRetail)} · Ahora ${money(b.price)} 🔥 ${b.promo.name}` : money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}${p.desc ? "\n" + p.desc : ""}`; };
+const prodCaption = p => { const b = bestPromo(p), before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0;
+  return `${p.name}\n${before ? `Antes ${money(before)} · Ahora ${money(b ? b.price : p.priceRetail)} 🔥 ${b ? b.promo.name : "Oferta"}` : money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}${p.desc ? "\n" + p.desc : ""}`; };
 function pickProduct(c) {
   const m = $("#modal"); let q = "", sel = null;
   const draw = () => {
@@ -2166,7 +2171,8 @@ function viewProductos(el) {
   el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Productos</h1><span class="sub tabnum">${S.products.length}</span><span class="spacer"></span><button class="btn primary" id="np">+ Nuevo producto</button></div>
     <div class="toolbar"><input class="in" id="pq" placeholder="Buscar producto" value="${esc(S.pQ || "")}"></div>
     ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th></th><th>Producto</th><th>Categoría</th><th>Descripción</th><th class="num">Precio detal</th><th class="num">Precio por mayor</th><th class="num">Mayor desde</th><th>Estado</th></tr></thead><tbody>
-      ${list.map(p => `<tr data-id="${p.id}"><td class="pthumb">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : ""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.category || "")}</td><td>${esc(p.desc || "")}</td><td class="num">${(b => b ? `<s class="muted">${money(p.priceRetail)}</s> <b class="promo-price">${money(b.price)}</b><br><span class="pill amber" title="${esc(b.promo.name)}">🔥 ${esc(b.promo.name)}</span>` : money(p.priceRetail))(bestPromo(p))}</td><td class="num">${p.priceWholesale ? money(p.priceWholesale) : ""}</td><td class="num">${p.minWholesale || ""}</td><td>${p.active === false ? '<span class="pill">Inactivo</span>' : '<span class="pill green">Activo</span>'}</td></tr>`).join("")}</tbody></table></div>`
+      ${list.map(p => `<tr data-id="${p.id}"><td class="pthumb">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : ""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.category || "")}</td><td>${esc(p.desc || "")}</td><td class="num">${(b => { const before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0;
+        return before ? `<s class="muted">${money(before)}</s> <b class="promo-price">${money(b ? b.price : p.priceRetail)}</b><br><span class="pill amber" title="${esc(b ? b.promo.name : "Oferta de Shopify")}">🔥 ${esc(b ? b.promo.name : "Oferta")}</span>` : money(p.priceRetail); })(bestPromo(p))}</td><td class="num">${p.priceWholesale ? money(p.priceWholesale) : ""}</td><td class="num">${p.minWholesale || ""}</td><td>${p.active === false ? '<span class="pill">Inactivo</span>' : '<span class="pill green">Activo</span>'}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty"><p><b>Tu catálogo está vacío.</b></p><p>Agrega tus productos con precio al detal y al por mayor, por ejemplo una sábana para cama de 1.40.</p></div>`}</div>`;
   $("#pq").oninput = e => { S.pQ = e.target.value; renderShell(); };
   $("#np").onclick = () => openProduct(null);
@@ -2244,7 +2250,7 @@ function viewPromociones(el) {
   el.innerHTML = `<div class="page"><div class="page-head"><div><h1>Promociones</h1><span class="sub">Descuentos y beneficios que ${esc(aiName())} ofrece a los clientes mientras estén vigentes.</span></div><span class="spacer"></span>
       ${adm ? '<button class="btn primary" id="newPromo">+ Nueva promoción</button>' : ""}</div>
     ${list.length ? `<div class="promo-list">${list.map(pr => { const [st, cls] = promoState(pr); return `<button class="promo-card" data-promo="${pr.id}">
-        <div class="pc-h"><b>${esc(pr.name)}</b><span class="pill ${cls}">${st}</span></div>
+        <div class="pc-h"><b>${esc(pr.name)}</b>${pr.source === "Shopify" ? '<span class="pill">Shopify</span>' : ""}<span class="pill ${cls}">${st}</span></div>
         <div class="pc-c">${esc(promoCondition(pr))}</div>
         ${pr.desc ? `<p class="muted">${esc(pr.desc)}</p>` : ""}
         <small class="muted">${pr.start || pr.end ? `Vigencia: ${pr.start ? "desde " + pr.start : ""}${pr.end ? " hasta " + pr.end : ""}` : "Sin fecha de fin"}</small></button>`; }).join("")}</div>`
