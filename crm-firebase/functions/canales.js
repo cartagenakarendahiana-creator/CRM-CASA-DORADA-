@@ -23,7 +23,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
   const tgSecret = token => crypto.createHmac("sha256", "casa-dorada-tg").update(String(token)).digest("hex").slice(0, 48);
 
   // Guarda un mensaje entrante de cualquier canal y crea o actualiza el contacto
-  async function ingest({ channel, extId, msgId, text, type = "text", ts = Date.now(), name = "", extra = {} }) {
+  async function ingest({ channel, extId, msgId, text, type = "text", ts = Date.now(), name = "", extra = {}, media = null }) {
     const ch = CHANNELS[channel];
     const cid = ch.prefix + String(extId).replace(/[^\w-]/g, "");
     const cref = db.doc("contacts/" + cid);
@@ -44,7 +44,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         if (!snap.get("name") && name) patch.name = name;
         t.update(cref, patch);
       }
-      t.set(mref, { dir: "in", text: String(text), type, ts, channel, extId: String(msgId || "") });
+      t.set(mref, { dir: "in", text: String(text), type, ts, channel, extId: String(msgId || ""), ...(media ? { media } : {}) });
     });
     return { cid, created };
   }
@@ -105,7 +105,13 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     const text = m.text || (m.photo ? "[Imagen] " + (m.caption || "") : m.voice ? "[Audio]" : m.document ? "[Documento] " + (m.document.file_name || "")
       : m.sticker ? "[Sticker] " + (m.sticker.emoji || "") : m.location ? "[Ubicación]" : m.contact ? "[Contacto] " + (m.contact.phone_number || "") : "[Mensaje]");
     const extra = m.contact && m.contact.phone_number ? { phone: "+" + String(m.contact.phone_number).replace(/\D/g, "") } : {};
-    await ingest({ channel: "telegram", extId: m.chat.id, msgId: "tg_in_" + m.message_id, text: text.trim(), ts: (m.date || 0) * 1000 || Date.now(), name, extra });
+    // Archivo adjunto (la foto más grande, nota de voz, audio, video, documento o sticker): lo descarga la función guardarMedia
+    const f = m.photo ? { kind: "image", fileId: m.photo[m.photo.length - 1].file_id, mime: "image/jpeg" } : m.voice ? { kind: "audio", fileId: m.voice.file_id, mime: m.voice.mime_type || "audio/ogg" }
+      : m.audio ? { kind: "audio", fileId: m.audio.file_id, mime: m.audio.mime_type || "", filename: m.audio.file_name || "" } : m.video ? { kind: "video", fileId: m.video.file_id, mime: m.video.mime_type || "video/mp4" }
+      : m.document ? { kind: "document", fileId: m.document.file_id, mime: m.document.mime_type || "", filename: m.document.file_name || "" }
+      : m.sticker && !m.sticker.is_animated && !m.sticker.is_video ? { kind: "image", fileId: m.sticker.file_id, mime: "image/webp" } : null;
+    await ingest({ channel: "telegram", extId: m.chat.id, msgId: "tg_in_" + m.message_id, text: text.trim(), ts: (m.date || 0) * 1000 || Date.now(), name, extra,
+      type: f ? f.kind : "text", media: f });
     return 200;
   }
   async function connectTelegram(token, webhookUrl) {
@@ -141,7 +147,9 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         const text = m.text || (att ? "[" + ({ image: "Imagen", video: "Video", audio: "Audio", file: "Documento" }[att.type] || "Adjunto") + "]" : "[Mensaje]");
         const exists = (await db.doc("contacts/" + CHANNELS[channel].prefix + ev.sender.id).get()).exists;
         const name = exists ? "" : await metaProfile(ev.sender.id, channel);
-        await ingest({ channel, extId: ev.sender.id, msgId: m.mid, text, ts: ev.timestamp || Date.now(), name });
+        const kind = att && { image: "image", video: "video", audio: "audio", file: "document" }[att.type];
+        await ingest({ channel, extId: ev.sender.id, msgId: m.mid, text, ts: ev.timestamp || Date.now(), name,
+          type: kind || "text", media: kind && att.payload && att.payload.url ? { kind, url: att.payload.url } : null });
       }
     }
   }

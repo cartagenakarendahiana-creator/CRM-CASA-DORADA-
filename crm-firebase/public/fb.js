@@ -22,6 +22,7 @@ export const fb = {
   onUser: cb => onAuthStateChanged(auth, u => cb(u ? { uid: u.uid, email: u.email } : null)),
   login: (email, pass) => signInWithEmailAndPassword(auth, email, pass),
   logout: () => signOut(auth),
+  idToken: () => auth.currentUser ? auth.currentUser.getIdToken() : Promise.resolve(""),
   resetPassword: email => sendPasswordResetEmail(auth, email),
   // Firebase pide confirmar la contraseña actual antes de cambiarla
   changePassword: async (current, next) => {

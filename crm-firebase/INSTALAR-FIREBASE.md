@@ -268,6 +268,20 @@ firebase deploy --only hosting
 
 Luego, en la consola de Firebase › Authentication › Configuración › **Dominios autorizados**, agrega `housechat.web.app`.
 
+## Publicación automática desde GitHub
+
+Con esto no hace falta volver a publicar desde Cloud Shell: cada cambio que llega a `main` se publica solo (página, reglas y funciones) con el flujo `.github/workflows/publicar.yml`. Se configura **una sola vez** en Cloud Shell:
+
+```bash
+cd ~/CRM-CASA-DORADA-/crm-firebase
+git pull
+bash scripts/configurar-publicacion.sh
+```
+
+El script crea la cuenta `github-deploy`, le da permisos y autoriza solo a este repositorio de GitHub a usarla, sin guardar claves. Para ver cada publicación: en GitHub, pestaña **Actions**. Para publicar a mano: Actions › Publicar House Chat › **Run workflow**.
+
+Las fotos, audios y documentos que envían los clientes se guardan en el bucket **privado** `crm-casa-dorada-media` (lo crea la publicación automática, con el acceso público bloqueado). Solo las personas activas del equipo los ven desde House Chat: la app los pide a `/api/media` con su sesión.
+
 ## Actualizar el CRM más adelante
 En Cloud Shell:
 ```bash

@@ -5,6 +5,7 @@
 // - createTeamUser: la administradora crea cuentas para su equipo
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
+// - guardarMedia: descarga las fotos, audios, videos y documentos que mandan los clientes (ver media.js)
 // - sendMessage: envía texto por el canal del contacto (WhatsApp, Telegram, Messenger, Instagram o chat web)
 // - telegramWebhook, webchat, connectTelegram, connectMeta, disconnectChannel: otros canales (ver canales.js)
 // - autoNuevoContacto, autoEtapa, autoMensaje, autoSinRespuesta, runCampaign: automatizaciones y campañas (ver automatizaciones.js)
@@ -43,6 +44,12 @@ function phoneId(v) {
   return d;
 }
 
+// Archivo de un mensaje de WhatsApp (se descarga después en guardarMedia)
+function waMedia(m) {
+  const kind = { image: "image", sticker: "image", audio: "audio", video: "video", document: "document" }[m.type];
+  const o = kind && m[m.type];
+  return o && o.id ? { kind, id: o.id, mime: o.mime_type || "", ...(o.filename ? { filename: o.filename } : {}) } : null;
+}
 // Texto legible de cualquier tipo de mensaje entrante
 function textOf(m) {
   switch (m.type) {
@@ -127,7 +134,8 @@ async function saveInbound(m, profileName, line) {
       dest && dest !== "ventas" ? { pipeline: dest } : {});
     else if (!snap.get("name") && profileName) patch.name = profileName;
     t.set(cref, patch, { merge: true });
-    t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}) });
+    const md = waMedia(m);
+    t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}), ...(md ? { media: md } : {}) });
   });
 }
 
@@ -260,10 +268,24 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   const m = event.data && event.data.data();
   if (!m || m.dir !== "in") return;
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
-  const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(),
+  const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(), loadMedia: p => MEDIA.read(p),
     send: ({ cref, contact, text, byName, image }) => CH.deliver({ cref, contact, text, image, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
+});
+
+// Fotos, audios, videos y documentos que mandan los clientes: se descargan y se guardan para verlos en el chat
+const MEDIA = require("./media")({ db, admin, graph: GRAPH, bucketName: (PROJECT || "crm-casa-dorada") + "-media" });
+exports.guardarMedia = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", region: REGION, secrets: [WA_TOKEN], memory: "512MiB", timeoutSeconds: 120 }, async event => {
+  const msg = event.data && event.data.data();
+  if (!msg || msg.dir !== "in" || !msg.media) return;
+  const tgToken = msg.channel === "telegram" ? ((await CH.privateCfg()).telegram || {}).token : "";
+  console.log("media", event.params.cid, await MEDIA.saveIncoming({ cid: event.params.cid, mid: event.params.mid, msg, waToken: WA_TOKEN.value(), tgToken }));
+});
+// Entrega esos archivos solo a personas activas del equipo (la app los pide con su sesión)
+exports.media = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
+  try { await MEDIA.serve(req, res); }
+  catch (e) { console.error("media", e); res.sendStatus(500); }
 });
 
 // Enviar texto por el canal del contacto (o el indicado)
