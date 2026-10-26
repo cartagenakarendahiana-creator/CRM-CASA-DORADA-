@@ -321,6 +321,83 @@ async function setAi(c, on) {
   await fb.update("contacts/" + c.id, { ...patch, ...stamp() });
   toast(on ? `${aiName()} vuelve a responder este chat` : `${aiName()} no responderá este chat hasta que la reactives`);
 }
+// ======================= Copiloto de ventas (IA) =======================
+// Borrador del mensaje por contacto: no se pierde cuando la pantalla se redibuja con mensajes nuevos
+const draftOf = c => (S.drafts && S.drafts[c.id]) || "";
+const setDraft = (c, t) => { (S.drafts || (S.drafts = {}))[c.id] = t; };
+const probCls = p => (p >= 70 ? "hi" : p >= 40 ? "mid" : "lo");
+const SENT_ICON = { Positivo: "🙂", Neutral: "😐", Negativo: "🙁" };
+// Tarjeta con el análisis de la IA (contacts.ai, lo deja la función copiloto)
+function aiInsight(c, wide) {
+  const a = c.ai, busy = S.cpBusy === "an:" + c.id;
+  if (!a) return `<div class="aicard empty${wide ? " wide" : ""}"><div class="aic-h">${icon("asesora")}<b>Análisis con IA</b></div>
+    <p class="muted">Lee la conversación y te dice qué tan probable es la venta, qué necesita el cliente y qué hacer ahora.</p>
+    <button class="btn sm" data-cp-an="${c.id}" ${busy ? "disabled" : ""}>${busy ? "Analizando…" : "✨ Analizar conversación"}</button></div>`;
+  const stale = (c.lastInboundAt || 0) > (a.hasta || 0);
+  const canMove = a.etapa && a.etapa !== (c.stage || "Nuevo") && stagesOf(c).includes(a.etapa) && !["Ganado", "Perdido"].includes(c.stage);
+  return `<div class="aicard${wide ? " wide" : ""}">
+    <div class="aic-h">${icon("asesora")}<b>Análisis con IA</b><small class="muted">${stale ? "hay mensajes nuevos" : "hace " + ago(a.at)}</small><span class="spacer"></span>
+      <button class="btn sm quiet" data-cp-an="${c.id}" ${busy ? "disabled" : ""} title="Volver a analizar">${busy ? "Analizando…" : "↻ Actualizar"}</button></div>
+    <div class="aic-prob"><div class="aic-num ${probCls(a.probabilidad)}"><b class="tabnum">${a.probabilidad}%</b><small>probabilidad de compra</small></div>
+      <div class="aic-bar"><span class="${probCls(a.probabilidad)}" style="width:${a.probabilidad}%"></span></div></div>
+    <div class="aic-tags">${a.temperatura ? `<span class="pill">${esc(a.temperatura)}</span>` : ""}<span class="pill">${esc(a.intencion)}</span><span class="pill">${SENT_ICON[a.sentimiento] || ""} ${esc(a.sentimiento)}</span>${a.urgente ? '<span class="pill red">Urgente</span>' : ""}${a.valor ? `<span class="pill tabnum">≈ ${money(a.valor)}</span>` : ""}</div>
+    <p class="aic-sum">${esc(a.resumen)}</p>
+    ${a.siguiente ? `<div class="aic-next"><span class="fl">Siguiente paso</span><b>${esc(a.siguiente)}</b></div>` : ""}
+    ${a.riesgo ? `<div class="aic-risk">⚠ ${esc(a.riesgo)}</div>` : ""}
+    ${(a.objeciones || []).length ? `<div class="aic-list"><span class="fl">Objeciones</span><ul>${a.objeciones.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    ${(a.productos || []).length ? `<div class="aic-list"><span class="fl">Le interesa</span><div class="aic-tags">${a.productos.map(x => `<span class="pill">${esc(x)}</span>`).join("")}</div></div>` : ""}
+    ${canMove ? `<button class="btn sm" data-cp-stage="${c.id}">Mover a «${esc(a.etapa)}»</button>` : ""}</div>`;
+}
+function bindInsight(c) {
+  $$(`[data-cp-an="${c.id}"]`).forEach(b => b.onclick = () => runAnalyze(c));
+  $$(`[data-cp-stage="${c.id}"]`).forEach(b => b.onclick = () => moveStage(c, c.ai.etapa));
+}
+async function runAnalyze(c) {
+  S.cpBusy = "an:" + c.id; renderShell();
+  try { const r = await fb.call("copiloto", { action: "analizar", contactId: c.id }); c.ai = r.ai; toast("Análisis listo"); }
+  catch (e) { toast("No se pudo analizar: " + errMsg(e)); }
+  finally { S.cpBusy = null; renderShell(); }
+}
+// Oportunidades con más probabilidad de compra según la IA (vista Hoy)
+function hotStrip() {
+  const hot = S.contacts.filter(c => !c.archived && c.ai && c.ai.probabilidad >= 50 && !["Ganado", "Perdido"].includes(c.stage) && Date.now() - (c.ai.at || 0) < 14 * 864e5)
+    .sort((a, b) => (b.ai.urgente - a.ai.urgente) || b.ai.probabilidad - a.ai.probabilidad).slice(0, 6);
+  if (!hot.length) return "";
+  const total = hot.reduce((n, c) => n + (c.ai.valor || 0), 0);
+  return `<section class="hot"><div class="hot-h">${icon("asesora")}<b>Oportunidades más probables</b><small class="muted">según la IA${total ? " · ≈ " + money(total) + " en juego" : ""}</small></div>
+    <div class="hot-row">${hot.map(c => `<button class="hot-c" data-hot="${c.id}"><span class="aiprob ${probCls(c.ai.probabilidad)}">${c.ai.probabilidad}%</span>
+      <b>${esc(contactName(c))}</b><small>${esc(c.ai.siguiente || c.ai.resumen || "")}</small></button>`).join("")}</div></section>`;
+}
+// Fila del copiloto bajo el cuadro de texto: respuestas sugeridas y mejorar el borrador
+const TONES = [["elegante", "Más elegante"], ["corto", "Más corto"], ["calido", "Más cálido"], ["corregir", "Corregir ortografía"]];
+function copilotRow(c) {
+  const sg = S.cpSug && S.cpSug.cid === c.id ? S.cpSug.list : null, busy = S.cpBusy;
+  return `<div class="cp-row"><button class="btn sm cp" id="cpSug" ${busy ? "disabled" : ""}>${busy === "sug" ? "Pensando…" : "✨ Sugerir respuesta"}</button>
+      <select class="in sm" id="cpTone" aria-label="Cómo mejorar">${TONES.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
+      <button class="btn sm" id="cpImp" ${busy ? "disabled" : ""}>${busy === "imp" ? "Mejorando…" : "Mejorar mi texto"}</button></div>
+    ${sg ? `<div class="cp-sugs">${sg.map((x, i) => `<button class="cp-s" data-sg="${i}"><small>${esc(x.enfoque)}</small><span>${fmtWa(x.texto)}</span></button>`).join("")}
+      <button class="link" id="cpClose">Cerrar sugerencias</button></div>` : ""}`;
+}
+function bindCopilot(c) {
+  if (!$("#cpSug")) return;
+  const put = t => { setDraft(c, t); const x = $("#ctext"); if (x) { x.value = t; x.focus(); } };
+  $("#cpSug").onclick = async () => {
+    S.cpBusy = "sug"; renderShell();
+    try { const r = await fb.call("copiloto", { action: "sugerir", contactId: c.id, text: draftOf(c) }); S.cpSug = { cid: c.id, list: r.sugerencias || [] }; if (!S.cpSug.list.length) toast("La IA no propuso respuestas"); }
+    catch (e) { toast("No se pudo sugerir: " + errMsg(e)); }
+    finally { S.cpBusy = null; renderShell(); }
+  };
+  $("#cpImp").onclick = async () => {
+    const t = draftOf(c).trim(); if (!t) return toast("Escribe primero tu mensaje y luego lo mejoro");
+    S.cpBusy = "imp"; renderShell();
+    try { const r = await fb.call("copiloto", { action: "mejorar", text: t, tone: $("#cpTone").value }); setDraft(c, r.texto || t); }
+    catch (e) { toast("No se pudo mejorar: " + errMsg(e)); }
+    finally { S.cpBusy = null; renderShell(); }
+  };
+  $$("[data-sg]").forEach(b => b.onclick = () => { put(S.cpSug.list[+b.dataset.sg].texto); S.cpSug = null; renderShell(); });
+  if ($("#cpClose")) $("#cpClose").onclick = () => { S.cpSug = null; renderShell(); };
+}
+
 // ======================= Automatizaciones =======================
 const TRIGGERS = {
   nuevo_contacto: "Llega un contacto nuevo",
@@ -1042,6 +1119,7 @@ function viewAsesora(el) {
           ${[["haiku", "Haiku 5.5 · rápido y económico (recomendado) · ≈ US$0,001–0,003 por respuesta"], ["sonnet", "Sonnet 5.5 · más inteligente · ≈ US$0,02–0,05 por respuesta"], ["opus", "Opus 5.5 · el más inteligente · ≈ US$0,05–0,10 por respuesta"]]
             .map(([k, l]) => `<option value="${k}" ${(a.model || "haiku") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       </div>
+      <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Copiloto: analizar solas las conversaciones con mensajes nuevos cada 2 horas (probabilidad de compra, siguiente paso y riesgo) · ≈ US$0,002 por análisis</span></label>
       <div><label class="lb" for="ain">Lo que debe saber del negocio</label>
         <textarea class="in" id="ain" rows="12" ${adm ? "" : "disabled"} placeholder="Ejemplo:&#10;- Horario de atención: lunes a sábado de 8 a.m. a 6 p.m.&#10;- Envíos a todo Colombia por Servientrega; en Medellín entrega en 1 a 2 días.&#10;- Pagos: transferencia Bancolombia o Nequi; pedidos por mayor con 50% de anticipo.&#10;- Medidas de sábanas: sencilla 1.00, semidoble 1.20, doble 1.40, queen 1.60, king 2.00.&#10;- Bordado de logo para hoteles desde 24 unidades.&#10;- No ofrecemos descuentos adicionales sin autorización.">${esc(a.instructions || "")}</textarea>
         <small class="muted">Los precios los toma del Catálogo de Productos. Aquí escribe horarios, envíos, formas de pago, medidas, tiempos y políticas.</small></div>
@@ -1063,7 +1141,7 @@ function viewAsesora(el) {
   $("#aif").onsubmit = async e => {
     e.preventDefault(); if (!adm) return;
     try {
-      await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), model: $("#amd").value,
+      await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), model: $("#amd").value, autoAnalisis: $("#aan").checked,
         instructions: $("#ain").value.trim(), empresa: EMPRESA, ...stamp() });
       toast("Guardado");
     } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
@@ -1190,6 +1268,7 @@ function viewHoy(el) {
         <div class="stat"><span>Por tu equipo</span><b>${team}</b></div>
         <div class="stat money"><span>Vendido hoy</span><b>${money(closed)}</b><small>${ordersToday.length} ${ordersToday.length === 1 ? "venta" : "ventas"}</small></div>
       </div></header>
+    ${hotStrip()}
     <div class="today ${S.sel && innerWidth <= 860 && S.hoyOpen ? "has-sel" : ""}">
       <div class="today-list">
         <div class="hl-head"><b>Pendientes</b><span class="hl-count">${items.length}</span><span class="spacer"></span>
@@ -1207,6 +1286,7 @@ function viewHoy(el) {
       <div class="detail" id="detail"></div>
     </div></div>`;
   $$("[data-sel]", el).forEach(b => b.onclick = () => { S.sel = b.dataset.sel; S.hoyOpen = true; renderShell(); });
+  $$("[data-hot]", el).forEach(b => b.onclick = () => go("conv", b.dataset.hot));
   const it = items.find(i => i.c.id === S.sel);
   renderHoyDetail($("#detail"), it);
 }
@@ -1234,6 +1314,7 @@ function renderHoyDetail(el, it) {
         <div class="hd-meta"><span class="mono">${esc(phoneId(c.phone) || c.phone || "sin teléfono")}</span>${c.company && c.name ? `<span>${esc(c.company)}</span>` : ""}<span>${esc(since)}</span>${c.stage ? `<span class="tag k-stage">${esc(c.stage)}</span>` : ""}</div></div>
       <div class="hd-actions"><button class="btn" id="openContact">Ver ficha</button><button class="btn primary" id="openConv">${icon("conv")}Abrir conversación</button></div>
     </div>
+    ${aiInsight(c, true)}
     <div class="hd-fields">
       <div class="field"><span class="fl">Qué busca</span><div class="fv inline-edit ${c.looking ? "" : "empty-v"}" id="looking" title="Clic para editar">${esc(c.looking || "Sin registrar · clic para escribir")}</div></div>
       <div class="field"><span class="fl">Producto elegido</span><div class="fv">${c.chosenProduct ? `${esc(c.chosenProduct.name)} <b class="mono">${money(c.chosenProduct.price)}</b>` : '<span class="empty-v">Ninguno todavía</span>'}
@@ -1260,6 +1341,7 @@ function renderHoyDetail(el, it) {
   $("#back").onclick = () => { S.hoyOpen = false; renderShell(); };
   $("#openConv").onclick = () => go("conv", c.id);
   $("#openContact").onclick = () => openContact(c.id);
+  bindInsight(c);
   $("#copyMsg").onclick = () => copy(msg);
   if ($("#waOpen")) $("#waOpen").onclick = () => logOutbound(c, msg, "Abierto en WhatsApp");
   if ($("#sendMsg")) $("#sendMsg").onclick = () => sendText(c, msg);
@@ -1489,15 +1571,17 @@ function viewConv(el) {
         <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${chIcon(chOf(c), "inl")} ${CHN[chOf(c)].label}${chOf(c) === "whatsapp" && c.waLine && lines.find(l => l.id === c.waLine) ? " · " + esc(lines.find(l => l.id === c.waLine).name) : ""}${c.phone ? " · " : ""}${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
         ${w.nolimit ? "" : `<span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span>`}</div>
       ${aiBar(c)}
+      <details class="aic-mob" ${S.aicOpen ? "open" : ""}><summary>${icon("asesora")}<b>Análisis con IA</b>${c.ai ? `<span class="aiprob ${probCls(c.ai.probabilidad)}">${c.ai.probabilidad}%</span><span class="aic-mob-next">${esc(c.ai.siguiente || "")}</span>` : '<span class="muted">toca para analizar</span>'}</summary>${aiInsight(c)}</details>
       <div class="msgs" id="msgs">${S.msgsMore ? '<button class="older" id="older">Cargar mensajes anteriores</button>' : ""}${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
       <div class="composer">
-        ${canSend(c) && w.open ? `<div class="row"><button class="iconbtn cpic" id="cprod" type="button" aria-label="Enviar foto de un producto" title="Enviar foto de un producto">${icon("foto")}</button><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
+        ${canSend(c) && w.open ? `<div class="row"><button class="iconbtn cpic" id="cprod" type="button" aria-label="Enviar foto de un producto" title="Enviar foto de un producto">${icon("foto")}</button><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}">${esc(draftOf(c))}</textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
         ${canSend(c) && !w.open && chOf(c) === "whatsapp" ? `<div class="row"><select class="in" id="ctpl">${waTpls.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("") || "<option value=''>No hay plantillas aprobadas</option>"}</select><button class="btn primary" id="ctplsend" ${waTpls.length ? "" : "disabled"}>Enviar plantilla</button></div>
           <small class="muted">Pasaron más de 24 h desde su último mensaje: WhatsApp solo permite plantillas aprobadas por Meta.</small>` : ""}
         ${canSend(c) && !w.open && chOf(c) !== "whatsapp" ? `<small class="muted">Pasaron más de 24 h desde su último mensaje: ${CHN[chOf(c)].label} no deja escribirle hasta que vuelva a escribir.</small>` : ""}
-        ${!canSend(c) && chOf(c) === "whatsapp" ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe el mensaje y ábrelo en WhatsApp"></textarea>
+        ${!canSend(c) && chOf(c) === "whatsapp" ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe el mensaje y ábrelo en WhatsApp">${esc(draftOf(c))}</textarea>
           ${waLink(c.phone) ? `<button class="send" id="cwa" aria-label="Abrir en WhatsApp" title="Abrir en WhatsApp">${icon("send")}</button>` : ""}</div>` : ""}
         ${!canSend(c) && chOf(c) !== "whatsapp" ? `<small class="muted">${CHN[chOf(c)].label} no está conectado. ${isAdmin() ? 'Conéctalo en <a href="#canales">Canales</a>.' : "Pídele a la administradora que lo conecte."}</small>` : ""}
+        ${(canSend(c) && w.open) || (!canSend(c) && chOf(c) === "whatsapp") ? copilotRow(c) : ""}
         <div class="row note-row"><input class="in" id="cnote" placeholder="Nota interna: el cliente no la ve"><button class="btn sm" id="cnotebtn">Guardar nota</button></div>
       </div>` : `<div class="empty" style="margin:auto">Elige una conversación.</div>`}</div>
     ${c ? `<aside class="chat-info">${contactSummary(c)}</aside>` : ""}</div>`;
@@ -1511,10 +1595,13 @@ function viewConv(el) {
   if (S.keepScroll != null) { box.scrollTop = box.scrollHeight - S.keepScroll; S.keepScroll = null; } else box.scrollTop = box.scrollHeight;
   if ($("#older")) $("#older").onclick = () => { S.keepScroll = box.scrollHeight - box.scrollTop; S.msgLimit += 300; S.msgsFor = null; watchConv(c.id); };
   $("#cback").onclick = () => { S.convSel = null; go("conv"); };
-  if ($("#csend")) $("#csend").onclick = async () => { const t = $("#ctext").value.trim(); if (!t) return; $("#csend").disabled = true; await sendText(c, t); $("#ctext").value = ""; };
+  if ($("#csend")) $("#csend").onclick = async () => { const t = $("#ctext").value.trim(); if (!t) return; $("#csend").disabled = true; await sendText(c, t); setDraft(c, ""); $("#ctext").value = ""; };
   if ($("#ctext") && $("#csend")) $("#ctext").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#csend").click(); } };
   if ($("#ctplsend")) $("#ctplsend").onclick = () => sendTemplate(c, byId(S.templates, $("#ctpl").value));
   if ($("#cprod")) $("#cprod").onclick = () => pickProduct(c);
+  if ($("#ctext")) $("#ctext").addEventListener("input", e => setDraft(c, e.target.value));
+  bindCopilot(c);
+  if ($(".aic-mob")) $(".aic-mob").ontoggle = e => { S.aicOpen = e.target.open; };
   if ($("#cwa")) $("#cwa").onclick = async () => { const t = $("#ctext").value.trim(); window.open(waLink(c.phone, t), "_blank"); if (t) { await logOutbound(c, t, "Abierto en WhatsApp"); } };
   if ($("#aiToggle")) $("#aiToggle").onclick = () => setAi(c, $("#aiToggle").dataset.on === "1");
   $("#cnotebtn").onclick = async () => { const t = $("#cnote").value.trim(); if (!t) return; await addNote(c, t); $("#cnote").value = ""; };
@@ -1522,7 +1609,7 @@ function viewConv(el) {
 }
 function contactSummary(c) {
   const qs = S.quotes.filter(q => q.contactId === c.id).slice(0, 5);
-  return `<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+  return `${aiInsight(c)}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option ${c.owner === u.name ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Qué busca</p><div class="inline-edit" id="sLook">${esc(c.looking || "—")}</div></div>
     <div><p class="eyebrow">Producto elegido</p><div>${c.chosenProduct ? esc(c.chosenProduct.name) + " · " + money(c.chosenProduct.price) : "—"}</div><button class="btn sm" id="sProd" style="margin-top:6px">Elegir</button></div>
@@ -1531,6 +1618,7 @@ function contactSummary(c) {
     <button class="btn" id="sCard">Ver ficha completa</button>`;
 }
 function bindSummary(c) {
+  bindInsight(c);
   $("#sStage").onchange = e => setStage(c, e.target.value);
   $("#sOwner").onchange = e => fb.update("contacts/" + c.id, { owner: e.target.value, ...stamp() });
   $("#sLook").onclick = () => editLooking(c);
@@ -1640,7 +1728,7 @@ function viewEmbudo(el) {
   const ot = orderTotals(), val = c => ot[c.id] || qv[c.id] || 0;
   let inPipe = base.filter(c => pipeOf(c).id === pipe.id && (!f.seg || c.segment === f.seg) && (!f.owner || c.owner === f.owner));
   if (q) inPipe = inPipe.filter(c => norm([c.name, c.company, c.phone, c.city, c.lastMessage, c.chosenProduct && c.chosenProduct.name].join(" ")).includes(q));
-  const CHIPS = [["", "Todas", () => true], ["aten", "Requieren atención", needsHuman], ["escribir", "Puedo escribir", c => canSend(c) && winInfo(c).open], ["pedido", "Con pedido", c => !!ot[c.id]], ["sinresp", "Sin responsable", c => !c.owner]];
+  const CHIPS = [["", "Todas", () => true], ["aten", "Requieren atención", needsHuman], ["escribir", "Puedo escribir", c => canSend(c) && winInfo(c).open], ["pedido", "Con pedido", c => !!ot[c.id]], ["sinresp", "Sin responsable", c => !c.owner], ["ia", "✨ Más probables", c => !!c.ai && c.ai.probabilidad >= 60]];
   const chip = CHIPS.find(x => x[0] === (f.chip || "")) || CHIPS[0];
   const list = inPipe.filter(chip[2]);
   const stages = f.showLost ? pipe.stages : pipe.stages.filter(st => st !== "Perdido");
@@ -1658,7 +1746,7 @@ function viewEmbudo(el) {
         <span class="kav avatar c" style="${avColor(contactName(c))}">${esc((contactName(c) || "?")[0].toUpperCase())}</span>
         <span class="kc-id"><b class="nm">${esc(contactName(c))}</b><small>${chIcon(chOf(c), "xs")}${esc((c.phone || "").replace(/^\+/, "") || (CHN[chOf(c)] || CHN.web).label)}</small></span>
         ${(c.unread || 0) > 0 ? `<span class="kun">${c.unread}</span>` : ""}</div>
-      ${prev ? `<p class="kc-msg">${esc(prev)}</p>` : ""}
+      ${c.ai && c.ai.siguiente ? `<p class="kc-ai"><span class="aiprob ${probCls(c.ai.probabilidad)}" title="Probabilidad de compra según la IA">${c.ai.probabilidad}%</span>${esc(c.ai.siguiente)}</p>` : prev ? `<p class="kc-msg">${esc(prev)}</p>` : ""}
       ${c.aiHandoff ? `<p class="kc-note">${esc(aiName())} pasó el chat a una persona${c.aiHandoff.reason ? " — " + esc(c.aiHandoff.reason) : ""}</p>` : ""}
       <div class="kc-meta">${winChip(c)}${v ? `<b class="tabnum kc-val">${money(v)}</b>` : ""}<span class="spacer"></span><span class="kc-time">${shortWhen(last)}</span></div>
       <select class="in kc-stage" data-stage-of="${c.id}" aria-label="Etapa de ${esc(contactName(c))}">${pipe.stages.map(s => `<option ${s === st ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>`;
