@@ -11,7 +11,7 @@ const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "im
 const PATH_RE = /^media\/[\w-]+\/[0-9a-f]{32}\.[a-z0-9]{1,5}$/;
 const extOf = (mime, filename) => EXT[String(mime || "").split(";")[0].trim()] || (String(filename || "").match(/\.([a-z0-9]{1,5})$/i) || [])[1] || "bin";
 
-module.exports = function media({ db, admin, fetchFn = (...a) => fetch(...a), bucketName, graph }) {
+module.exports = function media({ db, admin, fetchFn = (...a) => fetch(...a), bucketName, graph, transcribe }) {
   async function download(url, headers = {}) {
     const r = await fetchFn(url, { headers });
     if (!r.ok) throw new Error("No se pudo descargar el archivo (" + r.status + ")");
@@ -76,6 +76,18 @@ module.exports = function media({ db, admin, fetchFn = (...a) => fetch(...a), bu
       if (!f) return "sin-origen";
       const path = await store(cid, f.buf, f.mime, md.filename);
       await mref.set({ mediaPath: path, mediaMime: String(f.mime || "").split(";")[0], mediaAt: Date.now() }, { merge: true });
+      // Notas de voz y audios: se transcriben para leerlos en el chat y para que la asesora los entienda
+      if (md.kind === "audio" && transcribe) {
+        try {
+          const text = await transcribe(f.buf, path);
+          await mref.set(text ? { transcript: text.slice(0, 4000), transcriptAt: Date.now() } : { transcriptError: "No se entendió el audio." }, { merge: true });
+          if (text) {
+            const cref = db.doc("contacts/" + cid), c = (await cref.get()).data() || {};
+            if (c.lastMessageDir === "in" && (c.lastInboundAt || 0) <= (msg.ts || 0)) await cref.set({ lastMessage: ("🎤 " + text).slice(0, 200) }, { merge: true });
+          }
+          return text ? "guardado y transcrito" : "guardado sin texto";
+        } catch (e) { await mref.set({ transcriptError: String(e.message || e).slice(0, 200) }, { merge: true }); return "guardado, sin transcripción"; }
+      }
       return "guardado";
     } catch (e) {
       await mref.set({ mediaError: String(e.message || e).slice(0, 200) }, { merge: true });
