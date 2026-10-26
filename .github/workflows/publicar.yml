@@ -41,5 +41,8 @@ jobs:
           gcloud storage buckets describe gs://crm-casa-dorada-media >/dev/null 2>&1 \
             || gcloud storage buckets create gs://crm-casa-dorada-media --project=crm-casa-dorada --location=us-east1 \
                  --uniform-bucket-level-access --public-access-prevention
+      - name: Instalar las librerías de las funciones
+        run: npm install --omit=dev --no-audit --no-fund
+        working-directory: crm-firebase/functions
       - name: Publicar en Firebase (página, reglas y funciones)
         run: npx -y firebase-tools@latest deploy --project crm-casa-dorada --force --non-interactive
