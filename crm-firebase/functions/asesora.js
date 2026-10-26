@@ -66,10 +66,11 @@ function systemPrompt(cfg, kb) {
   const name = cfg.name || "Sofía";
   return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis).
 Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de texto):
-- Párrafos de 1 o 2 líneas separados por una línea en blanco. Usa el formato de WhatsApp: *negrita* para nombres de productos y precios, _cursiva_ para detalles suaves. Si enumeras, una opción por línea con "▫️ ". Máximo 1 emoji por párrafo.
+- Párrafos de 1 o 2 líneas separados por una línea en blanco. Usa el formato de WhatsApp: *negrita* para nombres de productos y precios, _cursiva_ para detalles suaves. Si enumeras, una opción por línea con "• ". Máximo 1 emoji por párrafo.
 - En el primer mensaje de la conversación saluda y preséntate en una línea ("¡Hola! Soy ${name}, de ${cfg.empresa || "Casa Dorada"} ✨").
 - Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
-- Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 o 3 líneas con "▫️ " y el precio en negrita (con "Antes ~$X~" si hay descuento).
+- Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 líneas cortas con "• " y el precio en negrita (con "Antes ~$X~" si hay descuento).
+- Color, medida o referencia: si el cliente pide uno que no está en el catálogo (por ejemplo una sábana verde y no hay verde), díselo claro y primero, y pregúntale si quiere ver los colores que sí hay. No envíes la foto de un producto de otro color como si fuera el que pidió; muestra una alternativa (con enviar_foto_producto) solo si te la pide o acepta, aclarando que es de otro color.
 - Cierra con una sola pregunta corta para seguir la conversación (medida, cantidad, ciudad…). Máximo unas 70 palabras en total. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
 Tu trabajo (modo mixto):
@@ -128,10 +129,30 @@ const photoCaption = (p, promos = []) => FICHA.productCard(p, promos);
 const nameTokens = s => norm(s).split(/[^a-z0-9.]+/).filter(w => w.length > 1);
 // Fotos que se envían solas cuando la asesora habla de productos: primero los que nombra en su respuesta,
 // si no nombra ninguno, los mejores resultados de su última búsqueda. Máximo 3, sin repetir fotos enviadas a este cliente en 24 h.
-function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), max = 3 }) {
+// Colores que se mencionan en un texto (para no mandar la foto de un color que el cliente no pidió)
+const COLORS = { verde: /\bverde/, azul: /\bazul/, rojo: /\broj[oa]s?\b/, blanco: /\bblanc[oa]s?\b/, negro: /\bnegr[oa]s?\b/, gris: /\bgris/,
+  beige: /\bbeige\b/, rosa: /\brosad?[oa]?s?\b/, morado: /\bmorad[oa]s?\b|\blila\b|\blavanda\b/, amarillo: /\bamarill[oa]s?\b|\bmostaza\b/,
+  naranja: /\bnaranja/, cafe: /\bcafe\b|\bmarron|\bchocolate\b/, vino: /\bvinotinto\b|\bvino\b|\bburdeos\b/, crema: /\bcrema\b|\bmarfil\b|\bhueso\b|\barena\b/,
+  indigo: /\bindigo\b/, celeste: /\bceleste\b|\bcielo\b/, turquesa: /\bturquesa\b|\baguamarina\b/, menta: /\bmenta\b/, coral: /\bcoral\b|\bsalmon\b/,
+  dorado: /\bdorad[oa]s?\b/, plateado: /\bplatead[oa]s?\b/, terracota: /\bterracota\b/ };
+const colorsIn = s => { const t = norm(s).replace(/casa dorada/g, ""); return Object.keys(COLORS).filter(k => COLORS[k].test(t)); };
+// Lo que el cliente escribió desde la última respuesta (texto y notas de voz)
+function lastAsk(history) {
+  const out = [];
+  for (let i = history.length - 1; i >= 0 && history[i].dir !== "out"; i--) if (history[i].dir === "in") out.unshift((history[i].text || "") + " " + (history[i].transcript || ""));
+  return out.join(" ");
+}
+// La respuesta dice que algo no está disponible: no se pegan fotos automáticas (parecería que manda otro producto)
+const NOT_AVAILABLE = /\bno (lo |la |los |las )?(tengo|tenemos|manejamos|hay|contamos|esta disponible|estan disponibles|viene|vienen|encontre|encuentro)\b|agotad|no disponible|sin existencias|no esta en el catalogo/;
+const saysNotAvailable = text => NOT_AVAILABLE.test(norm(text));
+function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), max = 3, asked = "" }) {
+  if (saysNotAvailable(text)) return [];
   const t = " " + nameTokens(text).join(" ") + " ";
   const fresh = p => !queued.some(q => q.id === p.id) && now - (sentAt[p.id] || 0) > DAY_MS;
-  const withImg = found.filter(p => p.image);
+  // Si el cliente pidió un color, solo productos sin color en el nombre o de ese color
+  const want = colorsIn(asked);
+  const colorOk = p => { if (!want.length) return true; const has = colorsIn(p.name); return !has.length || has.some(c => want.includes(c)); };
+  const withImg = found.filter(p => p.image && colorOk(p));
   const named = withImg.filter(p => { const tk = nameTokens(p.name); return tk.length && tk.filter(w => t.includes(" " + w + " ")).length / tk.length >= 0.7; });
   // Si nombra productos, solo esos (aunque ya se hayan enviado: no se cambia por otro parecido)
   return (named.length ? named : withImg).filter(fresh).slice(0, Math.max(0, max - queued.length));
@@ -376,13 +397,13 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     const fresh = (await cref.get()).data();
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
     // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
-    const auto = hasText && !tools.docs.length && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
+    const auto = hasText && !tools.docs.length && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {}, asked: lastAsk(history) }) : [];
     const photos = [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))];
     const sentNow = {};
     // Un solo mensaje: la primera foto lleva la respuesta + su ficha como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
     // las demás fotos van con su ficha
     const lead = hasText && photos.length ? text + "\n\n" + photos[0].caption : "";
-    const joined = hasText && photos.length && lead.length <= CAPTION_MAX;
+    const joined = hasText && photos.length && lead.length <= CAPTION_MAX && !saysNotAvailable(text);
     if (hasText && !joined) await send({ cref, contact: fresh, text, byName: aiName });
     for (const [i, f] of photos.entries()) {
       try { await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
@@ -409,4 +430,4 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   return hasText || tools.photos.length || tools.docs.length ? "respondido" : "sin-texto";
 }
 
-module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked };
+module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked, colorsIn, saysNotAvailable };

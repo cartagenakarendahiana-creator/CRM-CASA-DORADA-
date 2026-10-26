@@ -1514,9 +1514,13 @@ const info = msg => ask(msg, "Entendido", null);
 // Ficha del producto con el mismo formato que usa la asesora (functions/ficha.js): nombre, puntos clave y precio
 function prodCaption(p) {
   const b = bestPromo(p), before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0;
-  const pts = String(p.desc || "").split(/[.;\n•·]+/).map(x => x.trim().replace(/^[-–]\s*/, "")).filter(x => x.length > 2).slice(0, 3).map(x => "▫️ " + (x[0].toUpperCase() + x.slice(1)).slice(0, 90));
-  const L = [`*${p.name}*`];
-  if (p.category) L.push(`_${p.category}_`);
+  const pts = String(p.desc || "").split(/[.;\n•·▫️]+/).map(x => x.trim()).flatMap(x => (x.length > 90 ? x.split(/,\s*/) : [x]))
+    .map(x => x.trim().replace(/^[-–*]\s*/, "").replace(/^(y|e|junto a)\s+/i, "")).filter(x => x.length > 2 && x.length <= 90).slice(0, 2).map(x => "• " + x[0].toUpperCase() + x.slice(1));
+  const [base, ...rest] = String(p.name || "").split(" · ");
+  const title = base.replace(/\s*[|–-]\s*casa dorada\s*$/i, "").replace(/\s*\|\s*$/, "").replace(/\s{2,}/g, " ").trim();
+  const variant = rest.join(" · ").split(/\s*\/\s*/).map(x => x.trim()).filter(Boolean).join(" · ");
+  const L = [`*${title}*`];
+  if (variant || p.category) L.push(`_${variant || p.category}_`);
   if (pts.length) L.push("", ...pts);
   L.push("", before ? `*${money(b ? b.price : p.priceRetail)}*   Antes ~${money(before)}~` : `*${money(p.priceRetail)}*`);
   if (b) L.push(`🏷️ ${b.promo.name}${b.promo.code ? ` · código *${b.promo.code}*` : ""}`); else if (before) L.push("🏷️ Precio de oferta");
