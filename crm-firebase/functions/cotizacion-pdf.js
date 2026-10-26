@@ -1,12 +1,12 @@
-// Cotización en PDF, seria y elegante, con el logo de Casa Dorada en el encabezado y como marca de agua en el fondo.
+// Cotización en PDF, sobria (negro y grises), con el logo de Casa Dorada sobre fondo blanco en el encabezado
+// y como marca de agua gris muy suave en el fondo.
 // PDF escrito a mano (sin librerías): fuentes estándar Helvetica y Times con codificación WinAnsi (tildes y ñ),
 // tamaño carta, varias páginas si hace falta. pdf({ quote, contact, company }) → Buffer
 const zlib = require("zlib");
 const LOGO = require("./logo-pdf"); // generado por assets/logo-a-pdf.py a partir del logo original
 
 const W = 612, H = 792, M = 54;                     // carta, márgenes de 3/4 de pulgada
-const GOLD = [0.659, 0.478, 0.122], INK = [0.114, 0.106, 0.094], MUTED = [0.435, 0.416, 0.38];
-const LINE = [0.906, 0.886, 0.847], GOLD_SOFT = [0.965, 0.925, 0.839], SOFT = [0.973, 0.965, 0.949], WHITE = [1, 1, 1];
+const INK = [0.1, 0.1, 0.1], MUTED = [0.42, 0.42, 0.42], LINE = [0.86, 0.86, 0.86], SOFT = [0.965, 0.965, 0.965], WHITE = [1, 1, 1];
 const FONTS = { F1: "Helvetica", F2: "Helvetica-Bold", F3: "Times-Bold", F4: "Times-Italic", F5: "Times-Roman" };
 
 // Anchos (milésimas de em) de Helvetica y Helvetica-Bold para ASCII 32–126; las letras con tilde miden como su base
@@ -75,8 +75,8 @@ function page() {
     raw(s) { ops.push(s); },
   };
 }
-// Marca de agua: el logo completo (casa y nombre) en dorado muy suave, centrado
-const LOGO_GOLD = [0.847, 0.714, 0.431];
+// Marca de agua: el logo completo (casa y nombre) en gris muy suave, centrado
+const LOGO_GOLD = [0.847, 0.714, 0.431], WM_GRAY = [0.55, 0.55, 0.55];
 function watermark(p) {
   const w = 430, h = w * LOGO.height / LOGO.width;
   p.raw(`q /GW gs ${f2(w)} 0 0 ${f2(h)} ${f2((W - w) / 2)} ${f2(H / 2 - h / 2 - 30)} cm /LogoW Do Q`);
@@ -87,31 +87,29 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
   const pages = [];
   let p, y;
   const footer = (pg) => {
-    pg.line(M, H - 50, W - M, H - 50, GOLD, 0.6);
+    pg.line(M, H - 50, W - M, H - 50, LINE, 0.6);
     const info = [name, co.nit && "NIT " + co.nit, co.telefono, co.correo, co.web].filter(Boolean).join("  ·  ");
     pg.text(M, H - 34, info, { size: 7.5, color: MUTED });
     if (co.direccion) pg.text(M, H - 24, co.direccion, { size: 7.5, color: MUTED });
   };
   const newPage = first => {
     p = page(); pages.push(p);
-    p.rect(0, 0, W, 5, { fill: GOLD });
-    // Encabezado: el logo tal cual (dorado sobre negro)
-    const lh = 54, lw = lh * LOGO.jpeg.width / LOGO.jpeg.height;
-    p.raw(`q ${f2(lw)} 0 0 ${f2(lh)} ${M} ${f2(H - 50 - lh)} cm /LogoJ Do Q`);
+    // Encabezado: el logo (casa y nombre) en su dorado, sobre fondo blanco
+    const lh = 44, lw = lh * LOGO.width / LOGO.height;
+    p.raw(`q ${f2(lw)} 0 0 ${f2(lh)} ${M} ${f2(H - 56 - lh)} cm /LogoH Do Q`);
     if (co.lema !== "-") p.text(M, 120, co.lema || "Textiles para el hogar y la hotelería", { font: "F4", size: 10, color: MUTED });
-    p.text(W - M, 64, "COTIZACIÓN", { font: "F2", size: 9, color: GOLD, align: "right", tracking: 2.2 });
+    p.text(W - M, 64, "COTIZACIÓN", { font: "F2", size: 9, color: MUTED, align: "right", tracking: 2.2 });
     p.text(W - M, 86, q.number || "", { font: "F2", size: 19, color: INK, align: "right" });
     p.text(W - M, 102, "Fecha: " + longDate(q.sentAt || q.createdAt || Date.now()), { size: 8.5, color: MUTED, align: "right" });
     const vu = isoToDate(q.validUntil);
     if (vu) p.text(W - M, 114, "Válida hasta: " + longDate(vu), { size: 8.5, color: MUTED, align: "right" });
-    p.line(M, 132, W - M, 132, GOLD, 0.9);
-    p.line(M, 135, W - M, 135, GOLD, 0.3);
+    p.line(M, 133, W - M, 133, INK, 0.8);
     y = first ? 158 : 156;
   };
   newPage(true);
 
   // Cliente y asesor
-  const label = (x, yy, t) => p.text(x, yy, t, { font: "F2", size: 7.5, color: GOLD, tracking: 1.4 });
+  const label = (x, yy, t) => p.text(x, yy, t, { font: "F2", size: 7.5, color: MUTED, tracking: 1.4 });
   label(M, y, "PREPARADA PARA");
   const cname = c.name || q.contactName || c.company || "Cliente";
   p.text(M, y + 17, cname, { font: "F2", size: 12.5 });
@@ -147,7 +145,7 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
     if (i % 2 === 1) p.rect(M, y, W - 2 * M, h, { fill: SOFT });
     let ty = y + 17;
     nameLines.forEach(l => { p.text(cols.desc, ty, l, { font: "F2", size: 10 }); ty += 12.5; });
-    subLines.forEach(l => { p.text(cols.desc, ty - 1.5, l, { size: 8, color: it.promo ? GOLD : MUTED }); ty += 10.5; });
+    subLines.forEach(l => { p.text(cols.desc, ty - 1.5, l, { size: 8, color: MUTED }); ty += 10.5; });
     p.text(cols.qty, y + 17, String(it.qty || 0), { size: 10, align: "center" });
     p.text(cols.unit, y + 17, money(it.price), { size: 10, align: "right" });
     p.text(cols.tot, y + 17, money((it.qty || 0) * (it.price || 0)), { font: "F2", size: 10, align: "right" });
@@ -164,11 +162,12 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
   const tx = 360;
   const row = (t, v, o = {}) => { p.text(tx, y, t, { size: 9.5, color: MUTED }); p.text(W - M - 12, y, v, { size: 10, align: "right", ...o }); y += 16; };
   row("Subtotal", money(subtotal));
-  if (discount) row(q.discount ? `Descuento (${q.discount}%)` : "Descuento", "- " + money(discount), { color: GOLD });
+  if (discount) row(q.discount ? `Descuento (${q.discount}%)` : "Descuento", "- " + money(discount));
   if (q.shipping) row("Envío", money(q.shipping));
   y += 2;
-  p.rect(tx - 12, y - 4, W - M - tx + 12, 32, { fill: GOLD_SOFT, stroke: GOLD, lw: 0.8 });
-  p.text(tx, y + 16, "TOTAL", { font: "F2", size: 9, color: GOLD, tracking: 1.6 });
+  p.line(tx - 12, y - 4, W - M, y - 4, INK, 0.8);
+  p.line(tx - 12, y + 28, W - M, y + 28, INK, 0.8);
+  p.text(tx, y + 16, "TOTAL", { font: "F2", size: 9, color: INK, tracking: 1.6 });
   p.text(W - M - 12, y + 17, money(total), { font: "F2", size: 15, align: "right" });
   p.text(tx, y + 42, "Valores en pesos colombianos (COP).", { size: 7.5, color: MUTED });
   y += 62;
@@ -185,7 +184,7 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
   const vu = isoToDate(q.validUntil);
   block("CONDICIONES", (co.condiciones && String(co.condiciones).trim()) ||
     `Cotización válida${vu ? " hasta el " + longDate(vu) : " por 15 días"}. Precios sujetos a disponibilidad de inventario al momento de confirmar el pedido. Los tiempos de entrega y el costo del envío se confirman con tu asesora.`);
-  if (y + 40 < H - 70) p.text(W / 2, Math.max(y + 18, H - 82), "Gracias por tu confianza.", { font: "F4", size: 12, color: GOLD, align: "center" });
+  if (y + 40 < H - 70) p.text(W / 2, Math.max(y + 18, H - 82), "Gracias por tu confianza.", { font: "F4", size: 11, color: MUTED, align: "center" });
   footer(p);
 
   // Ensamble del PDF
@@ -198,11 +197,11 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
   const fontIds = Object.entries(FONTS).map(([k, base]) => [k, add(`<< /Type /Font /Subtype /Type1 /BaseFont /${base} /Encoding /WinAnsiEncoding >>`)]);
   // Logo: JPEG original para el encabezado; para la marca de agua, dorado liso con la máscara de transparencia
   const alpha = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`, stream: Buffer.from(LOGO.alpha, "base64") });
-  const goldPx = Buffer.from(LOGO_GOLD.map(v => Math.round(v * 255)));
-  const logoW = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /SMask ${alpha} 0 R`,
-    stream: zlib.deflateSync(Buffer.concat(Array(LOGO.width * LOGO.height).fill(goldPx))) });
-  const logoJ = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.jpeg.width} /Height ${LOGO.jpeg.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`, stream: Buffer.from(LOGO.jpeg.data, "base64") });
-  const res = `<< /Font << ${fontIds.map(([k, id]) => `/${k} ${id} 0 R`).join(" ")} >> /XObject << /LogoW ${logoW} 0 R /LogoJ ${logoJ} 0 R >> /ExtGState << /GW << /Type /ExtGState /ca 0.11 /CA 0.11 >> >> >>`;
+  // El mismo logo en un color liso: dorado para el encabezado, gris para la marca de agua
+  const solid = color => add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /SMask ${alpha} 0 R`,
+    stream: zlib.deflateSync(Buffer.concat(Array(LOGO.width * LOGO.height).fill(Buffer.from(color.map(v => Math.round(v * 255)))))) });
+  const logoH = solid(LOGO_GOLD), logoW = solid(WM_GRAY);
+  const res = `<< /Font << ${fontIds.map(([k, id]) => `/${k} ${id} 0 R`).join(" ")} >> /XObject << /LogoW ${logoW} 0 R /LogoH ${logoH} 0 R >> /ExtGState << /GW << /Type /ExtGState /ca 0.08 /CA 0.08 >> >> >>`;
   const kids = pages.map(pg => {
     const data = zlib.deflateSync(Buffer.from(pg.ops.join("\n"), "latin1"));
     const cs = add({ dict: "/Filter /FlateDecode", stream: data });
