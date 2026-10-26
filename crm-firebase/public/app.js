@@ -1119,6 +1119,7 @@ function viewAsesora(el) {
           ${[["haiku", "Haiku 5.5 · rápido y económico (recomendado) · ≈ US$0,001–0,003 por respuesta"], ["sonnet", "Sonnet 5.5 · más inteligente · ≈ US$0,02–0,05 por respuesta"], ["opus", "Opus 5.5 · el más inteligente · ≈ US$0,05–0,10 por respuesta"]]
             .map(([k, l]) => `<option value="${k}" ${(a.model || "haiku") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       </div>
+      <label class="switch"><input type="checkbox" id="aqa" ${a.quoteAuto !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Cuando el cliente pida cotización, enviársela de una vez en PDF por el chat (si lo apagas, queda en borrador para que el equipo la revise)</span></label>
       <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Copiloto: analizar solas las conversaciones con mensajes nuevos cada 2 horas (probabilidad de compra, siguiente paso y riesgo) · ≈ US$0,002 por análisis</span></label>
       <div><label class="lb" for="ain">Lo que debe saber del negocio</label>
         <textarea class="in" id="ain" rows="12" ${adm ? "" : "disabled"} placeholder="Ejemplo:&#10;- Horario de atención: lunes a sábado de 8 a.m. a 6 p.m.&#10;- Envíos a todo Colombia por Servientrega; en Medellín entrega en 1 a 2 días.&#10;- Pagos: transferencia Bancolombia o Nequi; pedidos por mayor con 50% de anticipo.&#10;- Medidas de sábanas: sencilla 1.00, semidoble 1.20, doble 1.40, queen 1.60, king 2.00.&#10;- Bordado de logo para hoteles desde 24 unidades.&#10;- No ofrecemos descuentos adicionales sin autorización.">${esc(a.instructions || "")}</textarea>
@@ -1141,7 +1142,7 @@ function viewAsesora(el) {
   $("#aif").onsubmit = async e => {
     e.preventDefault(); if (!adm) return;
     try {
-      await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), model: $("#amd").value, autoAnalisis: $("#aan").checked,
+      await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), model: $("#amd").value, autoAnalisis: $("#aan").checked, quoteAuto: $("#aqa").checked,
         instructions: $("#ain").value.trim(), empresa: EMPRESA, ...stamp() });
       toast("Guardado");
     } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
@@ -1395,7 +1396,8 @@ function bubble(m, tail = true, withDate = true) {
   if (m.dir === "note") return `<div class="bubble note"><small class="bw">Nota interna${m.byName ? " · " + esc(m.byName) : ""}</small><span class="btx">${esc(m.text)}</span>${t}</div>`;
   const out = m.dir === "out";
   const who = out ? `<small class="bw${m.ai || isAiName(m.byName) ? " ai" : ""}">${esc(m.byName || "Equipo")}</small>` : "";
-  const pic = m.image && /^https:\/\//.test(m.image) ? `<a class="bimg" href="${esc(m.image)}" target="_blank" rel="noopener"><img src="${esc(m.image)}" alt="Foto enviada" loading="lazy"></a>` : mediaHtml(m);
+  const pic = m.document && /^https:\/\//.test(m.document.url) ? `<a class="bdoc pdf" href="${esc(m.document.url)}" target="_blank" rel="noopener"><span class="pdf-ic">PDF</span><span>${esc(m.document.filename || "Documento")}</span></a>`
+    : m.image && /^https:\/\//.test(m.image) ? `<a class="bimg" href="${esc(m.image)}" target="_blank" rel="noopener"><img src="${esc(m.image)}" alt="Foto enviada" loading="lazy"></a>` : mediaHtml(m);
   // El texto "[Imagen]" o "[Audio]" sobra cuando ya se ve el archivo; queda solo el pie de foto, si lo hay
   let txt = pic && m.media ? String(m.text || "").replace(/^\[(Imagen|Audio|Nota de voz|Video|Documento|Sticker)\]\s*/, "") : m.text;
   if (pic && m.media && txt.trim() === String(m.media.filename || "").trim()) txt = "";
@@ -1941,14 +1943,35 @@ function openContact(id) {
 function viewCotizaciones(el) {
   const f = S.qF || "";
   const list = S.quotes.filter(q => !f || q.status === f);
-  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Cotizaciones</h1><span class="spacer"></span><button class="btn primary" id="nq">+ Nueva cotización</button></div>
+  el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Cotizaciones</h1><span class="spacer"></span>${isAdmin() ? '<button class="btn" id="qbrand">Diseño del PDF</button>' : ""}<button class="btn primary" id="nq">+ Nueva cotización</button></div>
     <div class="toolbar"><select class="in" id="qf"><option value="">Todos los estados</option>${Q_STATUS.map(s => `<option ${f === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Número</th><th>Cliente</th><th class="num">Total</th><th>Estado</th><th>Creada</th><th>Por</th></tr></thead><tbody>
       ${list.map(q => `<tr data-id="${q.id}"><td class="mono">${esc(q.number)}</td><td>${esc(q.contactName)}</td><td class="num">${money(q.total)}</td><td>${statusPill(q.status)}</td><td>${fmtDT(q.createdAt)}</td><td>${esc(q.createdByName || "")}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty"><p>No hay cotizaciones${f ? " en ese estado" : ""}.</p></div>`}</div>`;
   $("#qf").onchange = e => { S.qF = e.target.value; renderShell(); };
   $("#nq").onclick = () => openQuote(null);
+  if ($("#qbrand")) $("#qbrand").onclick = openQuoteBrand;
   $$("tbody tr", el).forEach(tr => tr.onclick = () => openQuote(tr.dataset.id));
+}
+// Datos de la empresa que salen en la cotización en PDF (settings/cotizacion)
+async function openQuoteBrand() {
+  const m = $("#modal");
+  let d = {};
+  try { d = (await fb.get("settings/cotizacion")) || {}; } catch { }
+  const f = (k, l, ph = "", full) => `<div class="${full ? "full" : ""}"><label class="lb" for="qb_${k}">${l}</label><input class="in" id="qb_${k}" value="${esc(d[k] || "")}" placeholder="${esc(ph)}"></div>`;
+  m.innerHTML = `<div class="mh"><h2>Diseño de la cotización en PDF</h2><button class="iconbtn" id="qbx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><p class="muted" style="margin:0 0 10px">La cotización sale en carta, con el logo de la casa, la marca de agua de ${esc(EMPRESA)} en el fondo y estos datos en el encabezado y el pie.</p>
+      <div class="grid2">${f("nombre", "Nombre de la empresa", EMPRESA)}${f("lema", "Lema", "Textiles para el hogar y la hotelería")}${f("nit", "NIT", "901.234.567-8")}${f("telefono", "Teléfono", "+57 300 000 0000")}
+        ${f("correo", "Correo", "ventas@casadorada.co")}${f("web", "Sitio web", "casadorada.co")}${f("direccion", "Dirección", "Medellín, Colombia", true)}
+        <div class="full"><label class="lb" for="qb_condiciones">Condiciones (opcional)</label><textarea class="in" id="qb_condiciones" rows="4" placeholder="Si lo dejas vacío: validez, disponibilidad de inventario y que la entrega y el envío se confirman con la asesora.">${esc(d.condiciones || "")}</textarea></div></div></div>
+    <div class="mf"><span class="spacer"></span><button class="btn" id="qbc">Cancelar</button><button class="btn primary" id="qbs">Guardar</button></div>`;
+  $("#qbx").onclick = $("#qbc").onclick = () => m.close();
+  $("#qbs").onclick = async () => {
+    const data = Object.fromEntries(["nombre", "lema", "nit", "telefono", "correo", "web", "direccion", "condiciones"].map(k => [k, $("#qb_" + k).value.trim().slice(0, k === "condiciones" ? 1500 : 160)]));
+    try { await fb.set("settings/cotizacion", { ...data, ...stamp() }); toast("Guardado: las próximas cotizaciones salen con estos datos"); m.close(); }
+    catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+  };
+  m.showModal();
 }
 function statusPill(s) {
   const cls = { Borrador: "", Enviada: "blue", Aceptada: "amber", Rechazada: "red", Convertida: "green", Nuevo: "blue", "En preparación": "amber", Enviado: "gold", Entregado: "green", Cancelado: "red", Pendiente: "red", Abono: "amber", Pagado: "green" }[s] || "";
@@ -1990,8 +2013,10 @@ function openQuote(id, contactId) {
       </div>
       <div class="mf">${q0 && isAdmin() && !locked ? '<button class="btn danger" id="qdel">Eliminar</button>' : ""}<span class="spacer"></span>
         <button class="btn" id="qcopy">Copiar texto</button>
+        ${q.id ? '<button class="btn" id="qpdf">Ver PDF</button>' : ""}
+        ${q.id && c && canSend(c) && winInfo(c).open && q.status !== "Convertida" ? '<button class="btn primary" id="qpdfsend">📄 Enviar PDF por chat</button>' : ""}
         ${locked ? "" : `<button class="btn" id="qsave">Guardar</button>`}
-        ${["Borrador"].includes(q.status) ? '<button class="btn primary" id="qsent">Marcar enviada</button>' : ""}
+        ${["Borrador"].includes(q.status) ? `<button class="btn ${q.id && c && canSend(c) && winInfo(c).open ? "" : "primary"}" id="qsent">Marcar enviada</button>` : ""}
         ${q.status === "Enviada" ? '<button class="btn" id="qrej">Rechazada</button><button class="btn primary" id="qacc">Aceptada</button>' : ""}
         ${q.status === "Aceptada" ? '<button class="btn primary" id="qorder">Convertir en pedido</button>' : ""}</div>`;
     const read = () => {
@@ -2038,6 +2063,18 @@ function openQuote(id, contactId) {
     };
     $("#qcopy").onclick = async () => { if (!locked) read(); calc(); const c = byId(S.contacts, q.contactId); copy(quoteText({ ...q, contactName: contactName(c) })); };
     if ($("#qsave")) $("#qsave").onclick = async () => { if (await save()) { toast("Cotización " + q.number + " guardada"); draw(); } };
+    if ($("#qpdf")) $("#qpdf").onclick = async () => {
+      const w = window.open("", "_blank"); // se abre antes de esperar: Safari bloquea ventanas abiertas después de un await
+      try { if (!locked && !await save()) { if (w) w.close(); return; } const r = await fb.call("enviarCotizacion", { quoteId: q.id, action: "link" }); if (w) w.location = r.url; else location.href = r.url; }
+      catch (er) { if (w) w.close(); toast("No se pudo abrir el PDF: " + errMsg(er)); }
+    };
+    if ($("#qpdfsend")) $("#qpdfsend").onclick = async () => {
+      const c = byId(S.contacts, q.contactId);
+      if (!locked && !await save()) return;
+      $("#qpdfsend").disabled = true;
+      try { await fb.call("enviarCotizacion", { quoteId: q.id, action: "send" }); toast(`Cotización ${q.number} enviada en PDF a ${contactName(c)}`); q.status = q.status === "Borrador" ? "Enviada" : q.status; m.close(); }
+      catch (er) { $("#qpdfsend").disabled = false; toast(errMsg(er) === "VENTANA_CERRADA" ? "Pasaron más de 24 h: WhatsApp no deja enviar el PDF hasta que el cliente vuelva a escribir." : "No se pudo enviar: " + errMsg(er)); }
+    };
     if ($("#qsent")) $("#qsent").onclick = async () => {
       if (!await save({ status: "Enviada", sentAt: Date.now() })) return;
       const c = byId(S.contacts, q.contactId), text = quoteText(q);

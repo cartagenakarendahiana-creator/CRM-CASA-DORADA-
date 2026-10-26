@@ -29,6 +29,13 @@
       ],
       "rewrites": [
         {
+          "source": "/api/cotizacion/**",
+          "function": {
+            "functionId": "cotizacionPdf",
+            "region": "us-east1"
+          }
+        },
+        {
           "source": "/api/webchat",
           "function": {
             "functionId": "webchat",
@@ -93,6 +100,13 @@
         }
       ],
       "rewrites": [
+        {
+          "source": "/api/cotizacion/**",
+          "function": {
+            "functionId": "cotizacionPdf",
+            "region": "us-east1"
+          }
+        },
         {
           "source": "/api/webchat",
           "function": {

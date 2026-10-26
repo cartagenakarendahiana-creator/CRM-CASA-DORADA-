@@ -1207,3 +1207,7 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .cp-s:hover{background:var(--gold-soft)}
 .cp-s small{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gold);font-weight:700;white-space:normal}
 .cp-sugs .link{justify-self:start}
+/* Cotización en PDF enviada por el chat */
+.bdoc.pdf{display:flex;gap:10px;min-width:min(250px,62vw);background:var(--bg);border:1px solid var(--line);padding:10px 12px}
+.bdoc.pdf span:last-child{overflow:hidden;text-overflow:ellipsis;font-size:13.5px}
+.pdf-ic{flex:none;display:inline-grid;place-items:center;width:34px;height:40px;border-radius:5px;background:var(--gold);color:#fff;font-size:10px;font-weight:800;letter-spacing:.04em}

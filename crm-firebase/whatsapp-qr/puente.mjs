@@ -133,7 +133,8 @@ async function sendOne(doc) {
     await sleep(Math.min(4000, 800 + String(o.text).length * 25));
     const id = newId(); // se registra antes de enviar: WhatsApp devuelve el eco del mensaje enseguida
     sentByUs.set(id, { cid: o.cid, mid: doc.id }); if (sentByUs.size > 5000) sentByUs.delete(sentByUs.keys().next().value);
-    const content = o.image ? { image: { url: String(o.image) }, caption: String(o.text || "") } : { text: String(o.text) };
+    const content = o.document ? { document: { url: String(o.document) }, mimetype: "application/pdf", fileName: String(o.filename || "documento.pdf"), caption: String(o.text || "") }
+      : o.image ? { image: { url: String(o.image) }, caption: String(o.text || "") } : { text: String(o.text) };
     const sent = await ws.sendMessage(jid, content, { messageId: id });
     const wid = (sent && sent.key && sent.key.id) || id;
     if (wid !== id) sentByUs.set(wid, { cid: o.cid, mid: doc.id });
