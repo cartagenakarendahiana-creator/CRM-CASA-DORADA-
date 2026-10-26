@@ -1,7 +1,8 @@
-// Cotización en PDF, seria y elegante, con marca de agua de Casa Dorada en el fondo.
+// Cotización en PDF, seria y elegante, con el logo de Casa Dorada en el encabezado y como marca de agua en el fondo.
 // PDF escrito a mano (sin librerías): fuentes estándar Helvetica y Times con codificación WinAnsi (tildes y ñ),
 // tamaño carta, varias páginas si hace falta. pdf({ quote, contact, company }) → Buffer
 const zlib = require("zlib");
+const LOGO = require("./logo-pdf"); // generado por assets/logo-a-pdf.py a partir del logo original
 
 const W = 612, H = 792, M = 54;                     // carta, márgenes de 3/4 de pulgada
 const GOLD = [0.659, 0.478, 0.122], INK = [0.114, 0.106, 0.094], MUTED = [0.435, 0.416, 0.38];
@@ -74,21 +75,11 @@ function page() {
     raw(s) { ops.push(s); },
   };
 }
-// Casita de Casa Dorada (trazo), con la esquina superior izquierda en (x, y) y ancho s; en coordenadas PDF si pdfY
-function houseOps(x, Y, s, lw) {
-  // Y = base inferior en coordenadas PDF
-  const r = s / 2;
-  return `${f2(lw)} w 1 J 1 j ${f2(x)} ${f2(Y + s * 0.55)} m ${f2(x + r)} ${f2(Y + s)} l ${f2(x + s)} ${f2(Y + s * 0.55)} l S `
-    + `${f2(x + s * 0.14)} ${f2(Y + s * 0.62)} m ${f2(x + s * 0.14)} ${f2(Y)} l ${f2(x + s * 0.86)} ${f2(Y)} l ${f2(x + s * 0.86)} ${f2(Y + s * 0.62)} l S `
-    + `${f2(x + s * 0.4)} ${f2(Y)} m ${f2(x + s * 0.4)} ${f2(Y + s * 0.32)} l ${f2(x + s * 0.6)} ${f2(Y + s * 0.32)} l ${f2(x + s * 0.6)} ${f2(Y)} l S`;
-}
-// Marca de agua: casa y "CASA DORADA" en diagonal, dorado muy suave
+// Marca de agua: el logo completo (casa y nombre) en dorado muy suave, centrado
+const LOGO_GOLD = [0.847, 0.714, 0.431];
 function watermark(p) {
-  const a = 32 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), word = "CASA DORADA", size = 64, tr = 6;
-  const w = width(word, "F3", size, tr);
-  p.raw(`q /GW gs 1 0 0 1 ${W / 2} ${H / 2 - 20} cm ${f2(c)} ${f2(s)} ${f2(-s)} ${f2(c)} 0 0 cm ${rgb(GOLD, "RG")} ${houseOps(-55, 30, 110, 5)} `
-    + `BT /F3 ${size} Tf ${tr} Tc ${rgb(GOLD, "rg")} ${f2(-w / 2)} -40 Td (${word}) Tj ET `
-    + `BT /F4 18 Tf 4 Tc ${rgb(GOLD, "rg")} ${f2(-width("Textiles para el hogar", "F1", 18, 4) / 2 + 10)} -75 Td (Textiles para el hogar) Tj ET Q`);
+  const w = 430, h = w * LOGO.height / LOGO.width;
+  p.raw(`q /GW gs ${f2(w)} 0 0 ${f2(h)} ${f2((W - w) / 2)} ${f2(H / 2 - h / 2 - 30)} cm /LogoW Do Q`);
 }
 
 function pdf({ quote: q, contact: c = {}, company: co = {} }) {
@@ -103,20 +94,19 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
   };
   const newPage = first => {
     p = page(); pages.push(p);
-    watermark(p);
     p.rect(0, 0, W, 5, { fill: GOLD });
-    // Encabezado
-    p.raw(`q ${rgb(GOLD, "RG")} ${houseOps(M, H - 96, 34, 1.8)} Q`);
-    p.text(M + 46, 84, name, { font: "F3", size: 25, color: INK });
-    p.text(M + 47, 100, co.lema || "Textiles para el hogar y la hotelería", { font: "F4", size: 10.5, color: MUTED });
+    // Encabezado: el logo tal cual (dorado sobre negro)
+    const lh = 54, lw = lh * LOGO.jpeg.width / LOGO.jpeg.height;
+    p.raw(`q ${f2(lw)} 0 0 ${f2(lh)} ${M} ${f2(H - 50 - lh)} cm /LogoJ Do Q`);
+    if (co.lema !== "-") p.text(M, 120, co.lema || "Textiles para el hogar y la hotelería", { font: "F4", size: 10, color: MUTED });
     p.text(W - M, 64, "COTIZACIÓN", { font: "F2", size: 9, color: GOLD, align: "right", tracking: 2.2 });
     p.text(W - M, 86, q.number || "", { font: "F2", size: 19, color: INK, align: "right" });
     p.text(W - M, 102, "Fecha: " + longDate(q.sentAt || q.createdAt || Date.now()), { size: 8.5, color: MUTED, align: "right" });
     const vu = isoToDate(q.validUntil);
     if (vu) p.text(W - M, 114, "Válida hasta: " + longDate(vu), { size: 8.5, color: MUTED, align: "right" });
-    p.line(M, 128, W - M, 128, GOLD, 0.9);
-    p.line(M, 131, W - M, 131, GOLD, 0.3);
-    y = first ? 152 : 150;
+    p.line(M, 132, W - M, 132, GOLD, 0.9);
+    p.line(M, 135, W - M, 135, GOLD, 0.3);
+    y = first ? 158 : 156;
   };
   newPage(true);
 
@@ -200,15 +190,22 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
 
   // Ensamble del PDF
   const n = pages.length;
+  pages.forEach(watermark); // al final, encima de todo y casi transparente: no lo tapan las filas de la tabla
   pages.forEach((pg, i) => { if (n > 1) pg.text(W - M, H - 34, `Página ${i + 1} de ${n}`, { size: 7.5, color: MUTED, align: "right" }); });
   const objs = [];
   const add = s => { objs.push(s); return objs.length; };
   const catalog = add(null), pagesId = add(null);
   const fontIds = Object.entries(FONTS).map(([k, base]) => [k, add(`<< /Type /Font /Subtype /Type1 /BaseFont /${base} /Encoding /WinAnsiEncoding >>`)]);
-  const res = `<< /Font << ${fontIds.map(([k, id]) => `/${k} ${id} 0 R`).join(" ")} >> /ExtGState << /GW << /Type /ExtGState /ca 0.08 /CA 0.08 >> >> >>`;
+  // Logo: JPEG original para el encabezado; para la marca de agua, dorado liso con la máscara de transparencia
+  const alpha = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`, stream: Buffer.from(LOGO.alpha, "base64") });
+  const goldPx = Buffer.from(LOGO_GOLD.map(v => Math.round(v * 255)));
+  const logoW = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /SMask ${alpha} 0 R`,
+    stream: zlib.deflateSync(Buffer.concat(Array(LOGO.width * LOGO.height).fill(goldPx))) });
+  const logoJ = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.jpeg.width} /Height ${LOGO.jpeg.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`, stream: Buffer.from(LOGO.jpeg.data, "base64") });
+  const res = `<< /Font << ${fontIds.map(([k, id]) => `/${k} ${id} 0 R`).join(" ")} >> /XObject << /LogoW ${logoW} 0 R /LogoJ ${logoJ} 0 R >> /ExtGState << /GW << /Type /ExtGState /ca 0.11 /CA 0.11 >> >> >>`;
   const kids = pages.map(pg => {
     const data = zlib.deflateSync(Buffer.from(pg.ops.join("\n"), "latin1"));
-    const cs = add({ stream: data });
+    const cs = add({ dict: "/Filter /FlateDecode", stream: data });
     return add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${H}] /Resources ${res} /Contents ${cs} 0 R >>`);
   });
   objs[catalog - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
@@ -219,7 +216,7 @@ function pdf({ quote: q, contact: c = {}, company: co = {} }) {
   const xref = [];
   objs.forEach((o, i) => {
     const b = typeof o === "string" ? Buffer.from(`${i + 1} 0 obj\n${o}\nendobj\n`, "latin1")
-      : Buffer.concat([Buffer.from(`${i + 1} 0 obj\n<< /Length ${o.stream.length} /Filter /FlateDecode >>\nstream\n`, "latin1"), o.stream, Buffer.from("\nendstream\nendobj\n", "latin1")]);
+      : Buffer.concat([Buffer.from(`${i + 1} 0 obj\n<< /Length ${o.stream.length} ${o.dict} >>\nstream\n`, "latin1"), o.stream, Buffer.from("\nendstream\nendobj\n", "latin1")]);
     xref.push(off); chunks.push(b); off += b.length;
   });
   chunks.push(Buffer.from(`xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${xref.map(x => String(x).padStart(10, "0") + " 00000 n \n").join("")}trailer\n<< /Size ${objs.length + 1} /Root ${catalog} 0 R /Info ${info} 0 R >>\nstartxref\n${off}\n%%EOF\n`, "latin1"));
