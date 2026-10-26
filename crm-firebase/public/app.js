@@ -79,6 +79,7 @@ const ICONS = {
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  foto: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
   ajustes: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 };
@@ -1272,7 +1273,8 @@ function bubble(m, tail = true, withDate = true) {
   if (m.dir === "note") return `<div class="bubble note"><small class="bw">Nota interna${m.byName ? " · " + esc(m.byName) : ""}</small><span class="btx">${esc(m.text)}</span>${t}</div>`;
   const out = m.dir === "out";
   const who = out ? `<small class="bw${m.ai || isAiName(m.byName) ? " ai" : ""}">${esc(m.byName || "Equipo")}</small>` : "";
-  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}">${tail ? who : ""}<span class="btx">${esc(m.text)}</span>${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
+  const pic = m.image && /^https:\/\//.test(m.image) ? `<a class="bimg" href="${esc(m.image)}" target="_blank" rel="noopener"><img src="${esc(m.image)}" alt="Foto enviada" loading="lazy"></a>` : "";
+  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${m.text ? `<span class="btx">${esc(m.text)}</span>` : ""}${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
 }
 function dayLabel(ms) {
   const d = new Date(ms), t = new Date(), y = new Date(Date.now() - DAY), same = (a, b) => a.toDateString() === b.toDateString();
@@ -1350,6 +1352,33 @@ async function sendText(c, text) {
   }
 }
 const info = msg => ask(msg, "Entendido", null);
+// Elegir un producto del catálogo y enviar su foto con nombre y precio como pie de foto
+const prodCaption = p => `${p.name}\n${money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}${p.desc ? "\n" + p.desc : ""}`;
+function pickProduct(c) {
+  const m = $("#modal"); let q = "", sel = null;
+  const draw = () => {
+    const nq = norm(q), list = S.products.filter(p => p.active !== false && (!nq || norm(`${p.name} ${p.category || ""} ${p.sku || ""}`).includes(nq)))
+      .sort((a, b) => (!!b.image - !!a.image) || a.name.localeCompare(b.name)).slice(0, 60);
+    m.innerHTML = sel ? `<div class="mh"><h2>Enviar a ${esc(contactName(c))}</h2><button class="iconbtn" id="ppx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><img class="pp-big" src="${esc(sel.image)}" alt="${esc(sel.name)}"><label class="lb" for="ppcap">Texto que acompaña la foto</label><textarea class="in" id="ppcap" rows="3">${esc(prodCaption(sel))}</textarea></div>
+      <div class="mf"><button class="btn" id="ppback">← Otro producto</button><span class="spacer"></span><button class="btn primary" id="ppsend">Enviar por ${CHN[chOf(c)].label}</button></div>`
+      : `<div class="mh"><h2>Enviar foto de un producto</h2><button class="iconbtn" id="ppx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><input class="in" id="ppq" placeholder="Buscar producto" value="${esc(q)}" autocomplete="off">
+        <div class="pp-grid">${list.map(p => `<button class="pp-item" data-pp="${p.id}" ${p.image ? "" : "disabled"}>${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="pp-noimg">Sin foto</span>'}<b>${esc(p.name)}</b><small class="tabnum">${money(p.priceRetail)}</small></button>`).join("")
+          || '<p class="muted">No hay productos con ese nombre.</p>'}</div>
+        ${S.products.some(p => p.image) ? "" : `<p class="muted">Ningún producto tiene foto todavía. ${isAdmin() ? "Impórtalas desde Shopify en Integraciones › Aplicaciones, o agrega el enlace de la foto en Productos." : ""}</p>`}</div>`;
+    $("#ppx").onclick = () => m.close();
+    if ($("#ppq")) { $("#ppq").oninput = e => { q = e.target.value; draw(); const i = $("#ppq"); i.focus(); i.setSelectionRange(q.length, q.length); }; }
+    $$("[data-pp]", m).forEach(b => b.onclick = () => { sel = byId(S.products, b.dataset.pp); draw(); });
+    if ($("#ppback")) $("#ppback").onclick = () => { sel = null; draw(); };
+    if ($("#ppsend")) $("#ppsend").onclick = async () => {
+      const b = $("#ppsend"); b.disabled = true; b.textContent = "Enviando…";
+      try { await fb.call("sendMessage", { contactId: c.id, text: $("#ppcap").value.trim(), image: sel.image }); m.close(); toast("Foto enviada"); }
+      catch (e) { b.disabled = false; b.textContent = "Enviar"; toast(/VENTANA_CERRADA/.test(errMsg(e)) ? "La ventana de 24 h está cerrada." : "No se pudo enviar: " + errMsg(e)); }
+    };
+  };
+  draw(); m.showModal();
+}
 async function sendTemplate(c, tpl) {
   const params = (tpl.waParams || []).map(k => fillTpl("{" + k + "}", c));
   try { await fb.call("sendWhatsApp", { contactId: c.id, template: { name: tpl.waName, lang: tpl.waLang || "es", params }, preview: fillTpl(tpl.text, c) }); toast("Plantilla enviada"); }
@@ -1408,7 +1437,7 @@ function viewConv(el) {
       ${aiBar(c)}
       <div class="msgs" id="msgs">${S.msgsMore ? '<button class="older" id="older">Cargar mensajes anteriores</button>' : ""}${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
       <div class="composer">
-        ${canSend(c) && w.open ? `<div class="row"><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
+        ${canSend(c) && w.open ? `<div class="row"><button class="iconbtn cpic" id="cprod" type="button" aria-label="Enviar foto de un producto" title="Enviar foto de un producto">${icon("foto")}</button><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}"></textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
         ${canSend(c) && !w.open && chOf(c) === "whatsapp" ? `<div class="row"><select class="in" id="ctpl">${waTpls.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("") || "<option value=''>No hay plantillas aprobadas</option>"}</select><button class="btn primary" id="ctplsend" ${waTpls.length ? "" : "disabled"}>Enviar plantilla</button></div>
           <small class="muted">Pasaron más de 24 h desde su último mensaje: WhatsApp solo permite plantillas aprobadas por Meta.</small>` : ""}
         ${canSend(c) && !w.open && chOf(c) !== "whatsapp" ? `<small class="muted">Pasaron más de 24 h desde su último mensaje: ${CHN[chOf(c)].label} no deja escribirle hasta que vuelva a escribir.</small>` : ""}
@@ -1431,6 +1460,7 @@ function viewConv(el) {
   if ($("#csend")) $("#csend").onclick = async () => { const t = $("#ctext").value.trim(); if (!t) return; $("#csend").disabled = true; await sendText(c, t); $("#ctext").value = ""; };
   if ($("#ctext") && $("#csend")) $("#ctext").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#csend").click(); } };
   if ($("#ctplsend")) $("#ctplsend").onclick = () => sendTemplate(c, byId(S.templates, $("#ctpl").value));
+  if ($("#cprod")) $("#cprod").onclick = () => pickProduct(c);
   if ($("#cwa")) $("#cwa").onclick = async () => { const t = $("#ctext").value.trim(); window.open(waLink(c.phone, t), "_blank"); if (t) { await logOutbound(c, t, "Abierto en WhatsApp"); } };
   if ($("#aiToggle")) $("#aiToggle").onclick = () => setAi(c, $("#aiToggle").dataset.on === "1");
   $("#cnotebtn").onclick = async () => { const t = $("#cnote").value.trim(); if (!t) return; await addNote(c, t); $("#cnote").value = ""; };
@@ -2101,8 +2131,8 @@ function viewProductos(el) {
   const list = S.products.filter(p => !q || norm(p.name + " " + (p.desc || "") + " " + (p.category || "") + " " + (p.sku || "")).includes(q)).sort((a, b) => (a.category || "").localeCompare(b.category || "") || a.name.localeCompare(b.name));
   el.innerHTML = `<div class="page" style="max-width:none"><div class="page-head"><h1>Productos</h1><span class="sub tabnum">${S.products.length}</span><span class="spacer"></span><button class="btn primary" id="np">+ Nuevo producto</button></div>
     <div class="toolbar"><input class="in" id="pq" placeholder="Buscar producto" value="${esc(S.pQ || "")}"></div>
-    ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Producto</th><th>Categoría</th><th>Descripción</th><th class="num">Precio detal</th><th class="num">Precio por mayor</th><th class="num">Mayor desde</th><th>Estado</th></tr></thead><tbody>
-      ${list.map(p => `<tr data-id="${p.id}"><td><b>${esc(p.name)}</b></td><td>${esc(p.category || "")}</td><td>${esc(p.desc || "")}</td><td class="num">${money(p.priceRetail)}</td><td class="num">${p.priceWholesale ? money(p.priceWholesale) : ""}</td><td class="num">${p.minWholesale || ""}</td><td>${p.active === false ? '<span class="pill">Inactivo</span>' : '<span class="pill green">Activo</span>'}</td></tr>`).join("")}</tbody></table></div>`
+    ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th></th><th>Producto</th><th>Categoría</th><th>Descripción</th><th class="num">Precio detal</th><th class="num">Precio por mayor</th><th class="num">Mayor desde</th><th>Estado</th></tr></thead><tbody>
+      ${list.map(p => `<tr data-id="${p.id}"><td class="pthumb">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : ""}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.category || "")}</td><td>${esc(p.desc || "")}</td><td class="num">${money(p.priceRetail)}</td><td class="num">${p.priceWholesale ? money(p.priceWholesale) : ""}</td><td class="num">${p.minWholesale || ""}</td><td>${p.active === false ? '<span class="pill">Inactivo</span>' : '<span class="pill green">Activo</span>'}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty"><p><b>Tu catálogo está vacío.</b></p><p>Agrega tus productos con precio al detal y al por mayor, por ejemplo una sábana para cama de 1.40.</p></div>`}</div>`;
   $("#pq").oninput = e => { S.pQ = e.target.value; renderShell(); };
   $("#np").onclick = () => openProduct(null);
@@ -2117,6 +2147,7 @@ function openProduct(id) {
       <div><label class="lb" for="pc">Categoría</label><input class="in" id="pc" list="pcl" value="${esc(p.category || "")}" placeholder="Sábanas, protectores…"><datalist id="pcl">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
       <div><label class="lb" for="psku">Referencia</label><input class="in" id="psku" value="${esc(p.sku || "")}"></div>
       <div class="full"><label class="lb" for="pd">Descripción corta</label><input class="in" id="pd" value="${esc(p.desc || "")}" placeholder="Ej: 50% microfibra, 50% algodón"></div>
+      <div class="full pimg-row">${p.image ? `<img class="pimg" src="${esc(p.image)}" alt="">` : ""}<div style="flex:1"><label class="lb" for="pimg">Foto (enlace https)</label><input class="in" id="pimg" type="url" value="${esc(p.image || "")}" placeholder="https://… (se llena sola al importar de Shopify)"></div></div>
       <div><label class="lb" for="pr">Precio al detal</label><input class="in tabnum" id="pr" inputmode="numeric" required value="${p.priceRetail || ""}"></div>
       <div><label class="lb" for="pw">Precio por mayor</label><input class="in tabnum" id="pw" inputmode="numeric" value="${p.priceWholesale || ""}"></div>
       <div><label class="lb" for="pm">Por mayor desde (unidades)</label><input class="in tabnum" id="pm" type="number" min="1" value="${p.minWholesale || ""}"></div>
@@ -2127,7 +2158,9 @@ function openProduct(id) {
   if ($("#pdel")) $("#pdel").onclick = async () => { if (!await ask("¿Eliminar " + p.name + "?", "Eliminar")) return; await fb.remove("products/" + id); m.close(); };
   $("#pf2").onsubmit = async e => {
     e.preventDefault();
-    const data = { name: $("#pn").value.trim(), category: $("#pc").value.trim(), sku: $("#psku").value.trim(), desc: $("#pd").value.trim(),
+    const img = $("#pimg").value.trim();
+    if (img && !/^https:\/\/\S+$/.test(img)) return toast("La foto debe ser un enlace que empiece por https://");
+    const data = { name: $("#pn").value.trim(), category: $("#pc").value.trim(), sku: $("#psku").value.trim(), desc: $("#pd").value.trim(), image: img,
       priceRetail: num($("#pr").value), priceWholesale: num($("#pw").value), minWholesale: Number($("#pm").value) || 0, active: $("#pa").value === "1", ...stamp() };
     try { id ? await fb.update("products/" + id, data) : await fb.add("products", { ...data, createdAt: Date.now() }); m.close(); toast("Producto guardado"); }
     catch (er) { toast(/permission/i.test(errMsg(er)) ? "Solo la administradora puede cambiar productos." : "No se pudo guardar: " + errMsg(er)); }

@@ -232,15 +232,18 @@ async function waPost(payload, line, cid) {
 }
 // WhatsApp por código QR: el puente (carpeta whatsapp-qr) escucha waOutbox y envía desde el celular vinculado
 async function waQueue(payload, cid) {
-  if (payload.type !== "text") throw new Error("Con WhatsApp por QR solo se envían mensajes de texto, no plantillas.");
+  if (payload.type !== "text" && payload.type !== "image") throw new Error("Con WhatsApp por QR solo se envían textos y fotos, no plantillas.");
   const ref = db.collection("waOutbox").doc();
-  await ref.set({ cid: cid || "wa_" + payload.to, to: payload.to || "", text: payload.text.body, status: "pendiente", createdAt: Date.now() });
+  await ref.set({ cid: cid || "wa_" + payload.to, to: payload.to || "", status: "pendiente", createdAt: Date.now(),
+    ...(payload.type === "image" ? { image: payload.image.link, text: payload.image.caption || "" } : { text: payload.text.body }) });
   return ref.id;
 }
-const waText = contact => async (body, cid) => {
+// Texto, o foto con pie de foto (image = enlace https)
+const waText = contact => async (body, cid, image) => {
   const to = phoneId(contact.phone) || (contact.waJid && cid ? String((contact.channels || {}).whatsapp || "") : "");
   if (!to) throw new Error("El contacto no tiene WhatsApp.");
-  return waPost({ messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } }, contact.waLine, cid);
+  return waPost(image ? { messaging_product: "whatsapp", to, type: "image", image: { link: image, ...(body ? { caption: body.slice(0, 1024) } : {}) } }
+    : { messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } }, contact.waLine, cid);
 };
 // Envía por la API de WhatsApp y registra el mensaje saliente en el contacto
 async function waSend(cref, payload, msg, extra = {}, line) {
@@ -258,7 +261,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   if (!m || m.dir !== "in") return;
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(),
-    send: ({ cref, contact, text, byName }) => CH.deliver({ cref, contact, text, channel: m.channel || contact.lastChannel,
+    send: ({ cref, contact, text, byName, image }) => CH.deliver({ cref, contact, text, image, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
 });
@@ -266,8 +269,8 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
 // Enviar texto por el canal del contacto (o el indicado)
 exports.sendMessage = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
   const me = await requireMember(req);
-  const { contactId, text, channel } = req.data || {};
-  if (!contactId || !String(text || "").trim()) throw new HttpsError("invalid-argument", "Falta el contacto o el mensaje.");
+  const { contactId, text, channel, image } = req.data || {};
+  if (!contactId || (!String(text || "").trim() && !image)) throw new HttpsError("invalid-argument", "Falta el contacto o el mensaje.");
   const cref = db.doc("contacts/" + contactId), c = await cref.get();
   if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
   const contact = c.data();
@@ -277,7 +280,7 @@ exports.sendMessage = onCall({ region: REGION, invoker: "public", secrets: [WA_T
   const ai = await db.doc("settings/asesora").get();
   const pauseH = ai.exists ? Number(ai.get("pauseHours")) || 12 : 12;
   try {
-    return await CH.deliver({ cref, contact, text: String(text), channel: ch, msg: { by: req.auth.uid, byName: me.name || "" },
+    return await CH.deliver({ cref, contact, text: String(text || ""), image: image ? String(image) : undefined, channel: ch, msg: { by: req.auth.uid, byName: me.name || "" },
       extra: { unread: 0, aiPausedUntil: Date.now() + pauseH * 3600 * 1000 }, sendWhatsApp: waText(contact) });
   } catch (e) { throw new HttpsError("internal", e.message); }
 });
