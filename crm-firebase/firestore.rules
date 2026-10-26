@@ -39,6 +39,8 @@ service cloud.firestore {
     match /waOutbox/{id} { allow read, write: if false; }
     // Dispositivos suscritos a las notificaciones push: solo las funciones
     match /pushSubs/{id} { allow read, write: if false; }
+    // A qué ficha pertenece cada mensaje de WhatsApp enviado (para los vistos): solo las funciones
+    match /waIds/{id} { allow read, write: if false; }
     match /automations/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /knowledge/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /forms/{id} { allow read: if member(); allow write: if isAdmin(); }

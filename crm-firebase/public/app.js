@@ -1424,7 +1424,15 @@ function bubble(m, tail = true, withDate = true) {
   // El texto "[Imagen]" o "[Audio]" sobra cuando ya se ve el archivo; queda solo el pie de foto, si lo hay
   let txt = pic && m.media ? String(m.text || "").replace(/^\[(Imagen|Audio|Nota de voz|Video|Documento|Sticker)\]\s*/, "") : m.text;
   if (pic && m.media && txt.trim() === String(m.media.filename || "").trim()) txt = "";
-  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${fmtWa(txt)}</span>` : ""}${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
+  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${fmtWa(txt)}</span>` : ""}${t}${m.status === "failed" ? `<span class="bfail">⚠ No se entregó${m.error ? ": " + esc(failText(m.error)) : ""}</span>` : ""}</div>`;
+}
+// Motivo de un mensaje no entregado, en palabras simples
+function failText(e) {
+  const s = String(e || "");
+  if (/re-?engagement|24 ?hours|window/i.test(s)) return "pasaron más de 24 h desde su último mensaje; usa una plantilla aprobada";
+  if (/not a valid whatsapp|undeliverable|not.*whatsapp user/i.test(s)) return "el número no tiene WhatsApp o no se pudo entregar";
+  if (/spam|quality|limit/i.test(s)) return "WhatsApp limitó los envíos de este número; intenta más tarde";
+  return s.slice(0, 140);
 }
 function dayLabel(ms) {
   const d = new Date(ms), t = new Date(), y = new Date(Date.now() - DAY), same = (a, b) => a.toDateString() === b.toDateString();

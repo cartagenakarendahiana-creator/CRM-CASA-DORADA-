@@ -313,6 +313,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   if (!cfg.enabled || !apiKey) return "apagada";
   const msnap = await cref.collection("messages").doc(mid).get();
   if (!msnap.exists || msnap.get("dir") !== "in") return "no-entrante";
+  if (msnap.get("type") === "reaction") return "reaccion"; // un 👍 no necesita respuesta
   const ts = msnap.get("ts") || 0;
   if (debounce) await wait(debounce);
   // Si el cliente mandó una foto, espera (hasta ~10 s) a que guardarMedia la deje lista para verla

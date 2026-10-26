@@ -47,6 +47,9 @@ function phoneId(v) {
   return d;
 }
 
+// Id de documento para un mensaje de WhatsApp (los wamid pueden traer "/", que Firestore no admite en un id)
+const msgDocId = id => String(id || "").replace(/\//g, "_");
+
 // Archivo de un mensaje de WhatsApp (se descarga después en guardarMedia)
 function waMedia(m) {
   const kind = { image: "image", sticker: "image", audio: "audio", video: "video", document: "document" }[m.type];
@@ -125,7 +128,8 @@ async function saveInbound(m, profileName, line) {
   const ts = Number(m.timestamp) * 1000 || Date.now();
   const text = textOf(m);
   const cref = db.doc("contacts/" + cid);
-  const mref = cref.collection("messages").doc(m.id);
+  const mref = cref.collection("messages").doc(msgDocId(m.id));
+  const reaction = m.type === "reaction"; // 👍❤️ a un mensaje: queda en el chat, pero no cuenta como mensaje por responder
   await db.runTransaction(async t => {
     const [snap, msnap] = await Promise.all([t.get(cref), t.get(mref)]);
     if (msnap.exists) return; // Meta puede reenviar el mismo mensaje
@@ -136,6 +140,7 @@ async function saveInbound(m, profileName, line) {
       createdAt: ts, stageAt: ts, source: "WhatsApp" + (lineCfg && lineCfg.name ? " · " + lineCfg.name : "") }, lineCfg && lineCfg.owner ? { owner: lineCfg.owner } : {},
       dest && dest !== "ventas" ? { pipeline: dest } : {});
     else if (!snap.get("name") && profileName) patch.name = profileName;
+    if (reaction && snap.exists) ["lastInboundAt", "lastMessage", "lastMessageDir", "unread"].forEach(k => delete patch[k]);
     t.set(cref, patch, { merge: true });
     const md = waMedia(m);
     t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}), ...(md ? { media: md } : {}) });
@@ -175,11 +180,19 @@ exports.waStatus = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKE
   return waCheck();
 });
 
+// Estado de un mensaje enviado (enviado, entregado, leído, fallido). Si se envió desde una ficha cuyo id no es
+// wa_{número} (contactos creados a mano o duplicados), waIds dice a qué ficha pertenece.
 async function saveStatus(s) {
-  const cid = "wa_" + phoneId(s.recipient_id);
-  const ref = db.doc(`contacts/${cid}/messages/${s.id}`);
+  const mid = msgDocId(s.id);
+  const map = await db.doc("waIds/" + mid).get();
+  const cid = map.exists ? map.get("cid") : "wa_" + phoneId(s.recipient_id);
+  const ref = db.doc(`contacts/${cid}/messages/${mid}`);
+  if (!map.exists) {
+    const [m, c] = await Promise.all([ref.get(), db.doc("contacts/" + cid).get()]);
+    if (!m.exists && !c.exists) return; // mensaje que no es de House Chat: no crear fichas ni mensajes vacíos
+  }
   const patch = { status: s.status, statusAt: Number(s.timestamp) * 1000 || Date.now() };
-  if (s.errors && s.errors[0]) patch.error = s.errors[0].title || s.errors[0].message || "";
+  if (s.errors && s.errors[0]) patch.error = String(s.errors[0].error_data && s.errors[0].error_data.details || s.errors[0].title || s.errors[0].message || "").slice(0, 300);
   await ref.set(patch, { merge: true });
 }
 
@@ -239,7 +252,10 @@ async function waPost(payload, line, cid) {
   });
   const out = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((out.error && (out.error.error_user_msg || out.error.message)) || "WhatsApp rechazó el mensaje.");
-  return out.messages && out.messages[0] && out.messages[0].id;
+  const id = out.messages && out.messages[0] && out.messages[0].id;
+  // Ficha con id distinto de wa_{número}: se anota a cuál pertenece para que lleguen los vistos ✓✓
+  if (id && cid && cid !== "wa_" + phoneId(payload.to)) await db.doc("waIds/" + msgDocId(id)).set({ cid, at: Date.now() }).catch(e => console.error("waIds", e.message));
+  return id;
 }
 // WhatsApp por código QR: el puente (carpeta whatsapp-qr) escucha waOutbox y envía desde el celular vinculado
 async function waQueue(payload, cid) {
@@ -262,7 +278,7 @@ const waText = contact => async (body, cid, image, doc) => {
 async function waSend(cref, payload, msg, extra = {}, line) {
   const id = await waPost(payload, line, cref.id);
   const now = Date.now();
-  await cref.collection("messages").doc(id || db.collection("x").doc().id).set({ dir: "out", ts: now, channel: "whatsapp", ...msg }, { merge: true }); // merge: el estado puede haber llegado antes
+  await cref.collection("messages").doc(id ? msgDocId(id) : db.collection("x").doc().id).set({ dir: "out", ts: now, channel: "whatsapp", ...msg }, { merge: true }); // merge: el estado puede haber llegado antes
   await cref.set({ lastOutboundAt: now, lastOutboundBy: msg.byName, lastMessage: msg.text.slice(0, 200), lastMessageDir: "out", updatedAt: now, updatedBy: msg.byName, ...extra }, { merge: true });
   return id;
 }
@@ -565,7 +581,10 @@ exports.createTeamUser = onCall({ region: REGION, invoker: "public" }, async req
   let user;
   try { user = await admin.auth().createUser({ email, password, displayName: name }); }
   catch (e) {
-    if (e.code === "auth/email-already-exists") user = await admin.auth().getUserByEmail(email);
+    if (e.code === "auth/email-already-exists") { // ya tuvo cuenta: se reactiva con la contraseña y el nombre nuevos
+      user = await admin.auth().getUserByEmail(email);
+      await admin.auth().updateUser(user.uid, { password: String(password), displayName: name, disabled: false });
+    }
     else throw new HttpsError("invalid-argument", e.message);
   }
   await db.doc("users/" + user.uid).set({ name, email, role: role === "admin" ? "admin" : "asesor", active: true, createdAt: Date.now() }, { merge: true });
