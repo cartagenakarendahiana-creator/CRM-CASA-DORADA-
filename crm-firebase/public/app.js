@@ -1284,7 +1284,8 @@ function mediaHtml(m) {
   if (!p) return `<span class="bmedia-wait">${m.mediaError ? "⚠ No se pudo cargar el archivo" : md.kind === "audio" ? "🎤 Cargando audio…" : md.kind === "image" ? "🖼 Cargando foto…" : "📎 Cargando archivo…"}</span>`;
   const mime = m.mediaMime || "";
   if (md.kind === "image" || /^image\//.test(mime)) return `<a class="bimg" data-mpath="${p}" target="_blank" rel="noopener"><img data-mpath="${p}" alt="Foto del cliente"></a>`;
-  if (md.kind === "audio") return `<div class="baudio"><audio controls preload="metadata" data-mpath="${p}"></audio><a data-mpath="${p}" download="audio.${esc((p.split(".").pop()))}">Descargar audio</a></div>`;
+  if (md.kind === "audio") return `<div class="baudio"><audio controls preload="metadata" data-mpath="${p}"></audio><a data-mpath="${p}" download="audio.${esc((p.split(".").pop()))}">Descargar audio</a>${m.transcript
+    ? `<div class="btrans"><b>📝 Transcripción</b>${esc(m.transcript)}</div>` : m.transcriptError ? `<div class="btrans off">No se pudo transcribir este audio.</div>` : `<div class="btrans off">📝 Transcribiendo…</div>`}</div>`;
   if (md.kind === "video") return `<video class="bvideo" controls preload="metadata" data-mpath="${p}"></video>`;
   return `<a class="bdoc" data-mpath="${p}" target="_blank" rel="noopener" download="${esc(md.filename || "documento")}">📄 ${esc(md.filename || "Abrir documento")}</a>`;
 }

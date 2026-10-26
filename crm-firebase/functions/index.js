@@ -275,8 +275,12 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
 });
 
 // Fotos, audios, videos y documentos que mandan los clientes: se descargan y se guardan para verlos en el chat
-const MEDIA = require("./media")({ db, admin, graph: GRAPH, bucketName: (PROJECT || "crm-casa-dorada") + "-media" });
-exports.guardarMedia = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", region: REGION, secrets: [WA_TOKEN], memory: "512MiB", timeoutSeconds: 120 }, async event => {
+const MEDIA_BUCKET = (PROJECT || "crm-casa-dorada") + "-media";
+// Transcripción de audios con Speech-to-Text (cuenta de servicio de las funciones, sin claves)
+const STT = require("./transcribir")({ project: PROJECT || "crm-casa-dorada", bucketName: MEDIA_BUCKET,
+  getToken: async () => (await admin.credential.applicationDefault().getAccessToken()).access_token });
+const MEDIA = require("./media")({ db, admin, graph: GRAPH, bucketName: MEDIA_BUCKET, transcribe: (buf, path) => STT.transcribe(buf, path) });
+exports.guardarMedia = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", region: REGION, secrets: [WA_TOKEN], memory: "512MiB", timeoutSeconds: 300 }, async event => {
   const msg = event.data && event.data.data();
   if (!msg || msg.dir !== "in" || !msg.media) return;
   const tgToken = msg.channel === "telegram" ? ((await CH.privateCfg()).telegram || {}).token : "";

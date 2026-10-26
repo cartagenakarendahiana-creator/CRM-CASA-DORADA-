@@ -81,7 +81,7 @@ Tu trabajo (modo mixto):
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
 - Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Si un producto está en_oferta, cuéntale que antes costaba precio_antes_de_la_oferta y ahora precio_detal. Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
 - Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide un descuento distinto o mayor a las promociones vigentes o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
-- Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Si recibes un audio, video o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
+- Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Las notas de voz te llegan transcritas: respóndelas como si el cliente hubiera escrito (si la transcripción parece incompleta o confusa, pídele que confirme). Si recibes un audio sin transcripción, un video o un documento que no puedes ver, pídele amablemente que te lo escriba en texto.
 - No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega.
 
 Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por el mismo chat: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
@@ -108,7 +108,8 @@ function toMessages(msgs) {
   for (const m of msgs) {
     if (m.dir !== "in" && m.dir !== "out") continue;
     const role = m.dir === "in" ? "user" : "assistant";
-    const blocks = [{ type: "text", text: String(m.text || "").trim() || "[mensaje vacío]" }];
+    const said = m.transcript ? `${String(m.text || "[Nota de voz]").trim()} — transcripción: "${m.transcript}"` : String(m.text || "").trim();
+    const blocks = [{ type: "text", text: said || "[mensaje vacío]" }];
     if (seen.has(m)) blocks.push({ type: "image", source: { type: "base64", media_type: m.mediaMime, data: m.imageData } });
     const last = out[out.length - 1];
     if (last && last.role === role) {
@@ -289,9 +290,11 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
   const ts = msnap.get("ts") || 0;
   if (debounce) await wait(debounce);
   // Si el cliente mandó una foto, espera (hasta ~10 s) a que guardarMedia la deje lista para verla
-  for (let i = 0; i < 5 && msnap.get("media") && msnap.get("media").kind === "image"; i++) {
+  // Fotos: espera (~10 s) a que guardarMedia la deje lista. Audios: espera (~30 s) la transcripción.
+  const mk = msnap.get("media") && msnap.get("media").kind;
+  for (let i = 0; i < (mk === "audio" ? 15 : mk === "image" ? 5 : 0); i++) {
     const cur = await cref.collection("messages").doc(mid).get();
-    if (cur.get("mediaPath") || cur.get("mediaError")) break;
+    if (cur.get("mediaError") || (mk === "image" ? cur.get("mediaPath") : cur.get("transcript") || cur.get("transcriptError"))) break;
     await wait(2000);
   }
 

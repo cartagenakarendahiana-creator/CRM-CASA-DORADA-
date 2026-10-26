@@ -1146,3 +1146,7 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .bubble.has-img .bimg img{max-width:100%;width:100%;max-height:420px;object-fit:cover}
 .bubble.has-img .btx,.bubble.has-img .bw{display:block;padding:0 6px}
 .bubble .btx{white-space:pre-wrap}
+/* Transcripción de notas de voz */
+.btrans{margin-top:4px;padding:7px 10px;border-radius:10px;background:var(--soft,rgba(0,0,0,.04));border-left:3px solid var(--gold);font-size:13px;line-height:1.45;white-space:pre-wrap}
+.btrans b{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:2px}
+.btrans.off{background:none;border-left:0;padding:0;font-size:12px;color:var(--muted)}
