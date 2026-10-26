@@ -349,8 +349,8 @@ exports.copiloto = onCall({ region: REGION, invoker: "public", secrets: [ANTHROP
   } catch (e) { console.error("copiloto", action, e); throw new HttpsError("internal", e.message || "No se pudo completar."); }
   throw new HttpsError("invalid-argument", "Acción desconocida.");
 });
-// Cada 2 horas analiza las conversaciones con mensajes nuevos (probabilidad, siguiente paso, riesgo…)
-exports.analizarConversaciones = onSchedule({ schedule: "every 120 minutes", timeZone: "America/Bogota", region: REGION, secrets: [ANTHROPIC_API_KEY],
+// Cada 10 minutos analiza las conversaciones con mensajes nuevos o sin analizar (probabilidad, siguiente paso, riesgo…)
+exports.analizarConversaciones = onSchedule({ schedule: "every 10 minutes", timeZone: "America/Bogota", region: REGION, secrets: [ANTHROPIC_API_KEY],
   timeoutSeconds: 540, memory: "512MiB" }, async () => {
   const cfg = await db.doc("settings/asesora").get();
   if (!ANTHROPIC_API_KEY.value() || (cfg.exists && cfg.get("autoAnalisis") === false)) return;

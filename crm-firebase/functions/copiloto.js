@@ -3,7 +3,7 @@
 //              etapa sugerida, siguiente paso, riesgo, objeciones, productos de interés y valor estimado
 //   sugerir  → 3 respuestas listas para enviar (con precios y promociones reales del catálogo)
 //   mejorar  → reescribe el borrador de la persona (elegante, más corto, más cálido o solo corregir)
-// También se analiza solo, cada 2 horas, cada conversación que tuvo mensajes nuevos (barrido()).
+// También se analiza solo, cada 10 minutos, cada conversación con mensajes nuevos o sin analizar (barrido()).
 const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
 const { stripFormat } = require("./ficha");
@@ -103,7 +103,7 @@ Hoy es ${new Date().toLocaleDateString("es-CO", { timeZone: "America/Bogota", we
       etapa: ctx.stages.includes(a.etapa_sugerida) ? a.etapa_sugerida : "", siguiente: String(a.siguiente_paso || "").slice(0, 300),
       riesgo: String(a.riesgo || "").slice(0, 300), objeciones: (a.objeciones || []).slice(0, 4).map(x => String(x).slice(0, 120)),
       productos: (a.productos || []).slice(0, 5).map(x => String(x).slice(0, 80)), valor: Math.max(0, Math.round(Number(a.valor_estimado) || 0)),
-      urgente: !!a.urgente, at: Date.now(), hasta: Math.max(...ctx.msgs.map(m => m.ts || 0)),
+      urgente: !!a.urgente, at: Date.now(), hasta: Math.max(ctx.contact.lastInboundAt || 0, ctx.contact.lastOutboundAt || 0, ...ctx.msgs.map(m => m.ts || 0)), // así no se repite sin mensajes nuevos
     };
     await ctx.cref.set({ ai, ...(!ctx.contact.temperature && ai.temperatura ? { temperature: ai.temperatura } : {}) }, { merge: true });
     return ai;
@@ -136,11 +136,15 @@ Mantén exactamente los datos (precios, cantidades, nombres, fechas, códigos); 
     return String(r.texto || "").trim();
   }
 
-  // Analiza las conversaciones con mensajes nuevos de los últimos 7 días (máximo `max` por vuelta)
-  async function barrido(max = 25) {
-    const snap = await db.collection("contacts").where("lastInboundAt", ">", Date.now() - 7 * DAY).orderBy("lastInboundAt", "desc").limit(300).get();
-    const due = snap.docs.filter(d => { const c = d.data(); return !c.archived && (c.lastInboundAt || 0) > ((c.ai && c.ai.hasta) || 0) && Date.now() - (c.lastInboundAt || 0) > 10 * 60 * 1000; })
-      .slice(0, max);
+  // Analiza los chats de los últimos 30 días con mensajes nuevos desde su último análisis (o sin analizar),
+  // cuando llevan 3 minutos quietos (para no analizar a mitad de la conversación). Máximo `max` por vuelta.
+  async function barrido(max = 40) {
+    const now = Date.now();
+    const snap = await db.collection("contacts").where("lastInboundAt", ">", now - 30 * DAY).orderBy("lastInboundAt", "desc").limit(500).get();
+    const due = snap.docs.filter(d => {
+      const c = d.data(), last = Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0);
+      return !c.archived && last > ((c.ai && c.ai.hasta) || 0) && now - last > 3 * 60 * 1000 && now - ((c.ai && c.ai.at) || 0) > 3 * 60 * 1000;
+    }).slice(0, max);
     let ok = 0, fail = 0;
     for (const d of due) { try { await analizar(d.id); ok++; } catch (e) { fail++; console.error("análisis", d.id, e.message); } }
     return { revisados: due.length, ok, fail };

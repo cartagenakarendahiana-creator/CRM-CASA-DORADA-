@@ -331,8 +331,8 @@ const SENT_ICON = { Positivo: "🙂", Neutral: "😐", Negativo: "🙁" };
 function aiInsight(c, wide) {
   const a = c.ai, busy = S.cpBusy === "an:" + c.id;
   if (!a) return `<div class="aicard empty${wide ? " wide" : ""}"><div class="aic-h">${icon("asesora")}<b>Análisis con IA</b></div>
-    <p class="muted">Lee la conversación y te dice qué tan probable es la venta, qué necesita el cliente y qué hacer ahora.</p>
-    <button class="btn sm" data-cp-an="${c.id}" ${busy ? "disabled" : ""}>${busy ? "Analizando…" : "✨ Analizar conversación"}</button></div>`;
+    <p class="muted">${busy ? "Analizando la conversación…" : c.lastInboundAt ? "Se analiza solo en unos minutos." : "Se analiza solo cuando el cliente escriba."}</p>
+    ${busy || !c.lastInboundAt ? "" : `<button class="btn sm quiet" data-cp-an="${c.id}">Analizar ahora</button>`}</div>`;
   const stale = (c.lastInboundAt || 0) > (a.hasta || 0);
   const canMove = a.etapa && a.etapa !== (c.stage || "Nuevo") && stagesOf(c).includes(a.etapa) && !["Ganado", "Perdido"].includes(c.stage);
   return `<div class="aicard${wide ? " wide" : ""}">
@@ -348,14 +348,25 @@ function aiInsight(c, wide) {
     ${(a.productos || []).length ? `<div class="aic-list"><span class="fl">Le interesa</span><div class="aic-tags">${a.productos.map(x => `<span class="pill">${esc(x)}</span>`).join("")}</div></div>` : ""}
     ${canMove ? `<button class="btn sm" data-cp-stage="${c.id}">Mover a «${esc(a.etapa)}»</button>` : ""}</div>`;
 }
+// Al abrir un chat sin análisis o con mensajes nuevos, se analiza solo (una vez por chat y por sesión)
+function autoAnalyze(c) {
+  const a = c.ai, last = Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0);
+  if (!c.lastInboundAt || (a && last <= (a.hasta || 0)) || S.cpBusy) return;
+  const auto = S.autoAn || (S.autoAn = {});
+  if (auto[c.id] && Date.now() - auto[c.id] < 5 * 60 * 1000) return;
+  if (S.ai && S.ai.autoAnalisis === false) return;
+  auto[c.id] = Date.now();
+  setTimeout(() => runAnalyze(c, true), 0);
+}
 function bindInsight(c) {
+  autoAnalyze(c);
   $$(`[data-cp-an="${c.id}"]`).forEach(b => b.onclick = () => runAnalyze(c));
   $$(`[data-cp-stage="${c.id}"]`).forEach(b => b.onclick = () => moveStage(c, c.ai.etapa));
 }
-async function runAnalyze(c) {
+async function runAnalyze(c, quiet) {
   S.cpBusy = "an:" + c.id; renderShell();
-  try { const r = await fb.call("copiloto", { action: "analizar", contactId: c.id }); c.ai = r.ai; toast("Análisis listo"); }
-  catch (e) { toast("No se pudo analizar: " + errMsg(e)); }
+  try { const r = await fb.call("copiloto", { action: "analizar", contactId: c.id }); c.ai = r.ai; if (!quiet) toast("Análisis listo"); }
+  catch (e) { if (!quiet) toast("No se pudo analizar: " + errMsg(e)); else console.warn("análisis automático", e); }
   finally { S.cpBusy = null; renderShell(); }
 }
 // Oportunidades con más probabilidad de compra según la IA (vista Hoy)
@@ -371,7 +382,7 @@ function hotStrip() {
 // Fila del copiloto bajo el cuadro de texto: respuestas sugeridas y mejorar el borrador
 const TONES = [["elegante", "Más elegante"], ["corto", "Más corto"], ["calido", "Más cálido"], ["corregir", "Corregir ortografía"]];
 function copilotRow(c) {
-  const sg = S.cpSug && S.cpSug.cid === c.id ? S.cpSug.list : null, busy = S.cpBusy;
+  const sg = S.cpSug && S.cpSug.cid === c.id ? S.cpSug.list : null, busy = ["sug", "imp"].includes(S.cpBusy) ? S.cpBusy : null;
   return `<div class="cp-row"><button class="btn sm cp" id="cpSug" ${busy ? "disabled" : ""}>${busy === "sug" ? "Pensando…" : "✨ Sugerir respuesta"}</button>
       <select class="in sm" id="cpTone" aria-label="Cómo mejorar">${TONES.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
       <button class="btn sm" id="cpImp" ${busy ? "disabled" : ""}>${busy === "imp" ? "Mejorando…" : "Mejorar mi texto"}</button></div>
@@ -1120,7 +1131,7 @@ function viewAsesora(el) {
             .map(([k, l]) => `<option value="${k}" ${(a.model || "haiku") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       </div>
       <label class="switch"><input type="checkbox" id="aqa" ${a.quoteAuto !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Cuando el cliente pida cotización, enviársela de una vez en PDF por el chat (si lo apagas, queda en borrador para que el equipo la revise)</span></label>
-      <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Copiloto: analizar solas las conversaciones con mensajes nuevos cada 2 horas (probabilidad de compra, siguiente paso y riesgo) · ≈ US$0,002 por análisis</span></label>
+      <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Copiloto: analizar solas las conversaciones, sin dar clic (cada 10 minutos y al abrir un chat) (probabilidad de compra, siguiente paso y riesgo) · ≈ US$0,002 por análisis</span></label>
       <div><label class="lb" for="ain">Lo que debe saber del negocio</label>
         <textarea class="in" id="ain" rows="12" ${adm ? "" : "disabled"} placeholder="Ejemplo:&#10;- Horario de atención: lunes a sábado de 8 a.m. a 6 p.m.&#10;- Envíos a todo Colombia por Servientrega; en Medellín entrega en 1 a 2 días.&#10;- Pagos: transferencia Bancolombia o Nequi; pedidos por mayor con 50% de anticipo.&#10;- Medidas de sábanas: sencilla 1.00, semidoble 1.20, doble 1.40, queen 1.60, king 2.00.&#10;- Bordado de logo para hoteles desde 24 unidades.&#10;- No ofrecemos descuentos adicionales sin autorización.">${esc(a.instructions || "")}</textarea>
         <small class="muted">Los precios los toma del Catálogo de Productos. Aquí escribe horarios, envíos, formas de pago, medidas, tiempos y políticas.</small></div>
@@ -1573,7 +1584,7 @@ function viewConv(el) {
         <div style="flex:1;min-width:0"><b class="ct-name">${esc(contactName(c))}</b><div class="ct-sub tabnum">${chIcon(chOf(c), "inl")} ${CHN[chOf(c)].label}${chOf(c) === "whatsapp" && c.waLine && lines.find(l => l.id === c.waLine) ? " · " + esc(lines.find(l => l.id === c.waLine).name) : ""}${c.phone ? " · " : ""}${esc(c.phone || "")}${c.company ? " · " + esc(c.company) : ""}</div></div>
         ${w.nolimit ? "" : `<span class="pill ${w.open ? "green" : "red"}">${w.open ? "Ventana abierta · cierra " + whenLabel(w.closesAt) : "Ventana cerrada"}</span>`}</div>
       ${aiBar(c)}
-      <details class="aic-mob" ${S.aicOpen ? "open" : ""}><summary>${icon("asesora")}<b>Análisis con IA</b>${c.ai ? `<span class="aiprob ${probCls(c.ai.probabilidad)}">${c.ai.probabilidad}%</span><span class="aic-mob-next">${esc(c.ai.siguiente || "")}</span>` : '<span class="muted">toca para analizar</span>'}</summary>${aiInsight(c)}</details>
+      <details class="aic-mob" ${S.aicOpen ? "open" : ""}><summary>${icon("asesora")}<b>Análisis con IA</b>${c.ai ? `<span class="aiprob ${probCls(c.ai.probabilidad)}">${c.ai.probabilidad}%</span><span class="aic-mob-next">${esc(c.ai.siguiente || "")}</span>` : `<span class="muted">${S.cpBusy === "an:" + c.id ? "analizando…" : "pendiente"}</span>`}</summary>${aiInsight(c)}</details>
       <div class="msgs" id="msgs">${S.msgsMore ? '<button class="older" id="older">Cargar mensajes anteriores</button>' : ""}${chatHtml(S.msgs) || '<div class="daychip">Sin mensajes todavía</div>'}</div>
       <div class="composer">
         ${canSend(c) && w.open ? `<div class="row"><button class="iconbtn cpic" id="cprod" type="button" aria-label="Enviar foto de un producto" title="Enviar foto de un producto">${icon("foto")}</button><textarea class="in" id="ctext" rows="1" placeholder="Escribe un mensaje por ${CHN[chOf(c)].label}">${esc(draftOf(c))}</textarea><button class="send" id="csend" aria-label="Enviar" title="Enviar">${icon("send")}</button></div>` : ""}
