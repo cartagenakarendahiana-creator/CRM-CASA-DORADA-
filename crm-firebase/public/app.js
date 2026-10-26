@@ -77,6 +77,8 @@ const ICONS = {
   integraciones: '<path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/>',
   canales: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.3 11l7.4-3.8M8.3 13l7.4 3.8"/>',
   asesora: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  sonido: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>',
+  mudo: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9l5 6M21 9l-5 6"/>',
   salir: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   buscar: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
@@ -219,7 +221,8 @@ function renderLogin(err) {
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
     e => toast("No se pudo leer " + name + ": " + errMsg(e))));
-  w("contacts", "contacts");
+  S.unsubs.push(fb.watch("contacts", list => { inboundAlert(S.loaded.contacts ? S.contacts : null, list); S.contacts = list; S.loaded.contacts = true; S.syncedAt = Date.now(); scheduleRender(); }, undefined,
+    e => toast("No se pudo leer contacts: " + errMsg(e))));
   w("quotes", "quotes", { orderBy: ["createdAt", "desc"] });
   w("orders", "orders", { orderBy: ["createdAt", "desc"] });
   w("products", "products");
@@ -268,6 +271,7 @@ function renderShell() {
   const active = document.activeElement && document.activeElement.id;
   const caret = active && document.activeElement.selectionStart;
   const pend = pendingCount(), unread = S.contacts.filter(c => c.unread > 0).length;
+  document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME; // la pestaña muestra cuántos chats tienen mensajes sin leer
   root.innerHTML = `<div class="app">
     <aside class="side" id="side">
       <div class="side-top">
@@ -278,6 +282,7 @@ function renderShell() {
         `<button data-go="${k}" class="${navOn(k) ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
       <div class="side-user"><button class="acc-btn" id="myAcc" title="Mi cuenta: cambiar contraseña"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div></button>
+        <button class="iconbtn" id="soundBtn" title="${soundOn() ? "Sonido de mensajes nuevos: activado" : "Sonido de mensajes nuevos: desactivado"}" aria-label="Sonido de mensajes nuevos">${icon(soundOn() ? "sonido" : "mudo")}</button>
         <button class="iconbtn ${S.pushOn ? "push-on" : ""}" id="pushBtn" title="${S.pushOn ? "Notificaciones activadas en este dispositivo" : "Activar notificaciones"}" aria-label="Notificaciones">${icon("campana")}</button>
         <button class="iconbtn" id="logout" title="Salir" aria-label="Salir">${icon("salir")}</button></div>
     </aside>
@@ -289,6 +294,7 @@ function renderShell() {
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
   $("#logout").onclick = () => fb.logout();
   $("#pushBtn").onclick = () => S.pushOn ? openPushMenu() : enablePush();
+  $("#soundBtn").onclick = () => { const on = !soundOn(); try { localStorage.setItem("crm-sound", on ? "1" : "0"); } catch { } if (on) { unlockAudio(); ding(); } toast(on ? "Sonará cada vez que un cliente escriba" : "Sonido de mensajes desactivado"); renderShell(); };
   if ($("#pushOnB")) $("#pushOnB").onclick = enablePush;
   if ($("#pushX")) $("#pushX").onclick = () => { try { localStorage.setItem("crm-push-dismiss", String(Date.now())); } catch { } renderShell(); };
   initPush();
@@ -2519,6 +2525,51 @@ function viewEquipo(el) {
 const AUTH_ERR = { "auth/wrong-password": "La contraseña actual no es correcta.", "auth/invalid-credential": "La contraseña actual no es correcta.",
   "auth/weak-password": "La contraseña nueva es muy débil: usa al menos 6 caracteres.", "auth/too-many-requests": "Demasiados intentos. Espera unos minutos y vuelve a intentar.",
   "auth/requires-recent-login": "Por seguridad, sal y vuelve a entrar, y luego cambia la contraseña.", "auth/network-request-failed": "Sin conexión a internet." };
+// ======================= Aviso con sonido (con House Chat abierto) =======================
+// Cuando llega un mensaje nuevo de un cliente: suena una campanita y aparece un aviso arriba; al tocarlo se abre el chat.
+// Safari solo deja sonar después de que la persona toca la pantalla una vez: el primer toque "desbloquea" el audio.
+const soundOn = () => { try { return localStorage.getItem("crm-sound") !== "0"; } catch { return true; } };
+let AC = null;
+function unlockAudio() {
+  try {
+    if (!AC) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return; AC = new C(); }
+    if (AC.state === "suspended") AC.resume();
+    const b = AC.createBuffer(1, 1, 22050), s = AC.createBufferSource(); s.buffer = b; s.connect(AC.destination); s.start(0); // Safari iOS
+  } catch { }
+}
+["pointerdown", "keydown", "touchend"].forEach(ev => addEventListener(ev, unlockAudio, { passive: true }));
+function ding() {
+  if (!AC || !soundOn()) return;
+  try {
+    if (AC.state === "suspended") AC.resume();
+    const t = AC.currentTime;
+    [[880, 0], [1318.5, 0.14]].forEach(([f, d]) => {
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + d); g.gain.exponentialRampToValueAtTime(0.35, t + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.7);
+      o.connect(g); g.connect(AC.destination); o.start(t + d); o.stop(t + d + 0.75);
+    });
+  } catch { }
+}
+// Compara la lista anterior de contactos con la nueva y avisa de los mensajes entrantes nuevos
+function inboundAlert(prev, list) {
+  if (!prev) return;
+  const before = new Map(prev.map(c => [c.id, c.lastInboundAt || 0]));
+  const fresh = list.filter(c => (c.lastInboundAt || 0) > (before.get(c.id) || 0) && Date.now() - (c.lastInboundAt || 0) < 5 * 60 * 1000)
+    .sort((a, b) => b.lastInboundAt - a.lastInboundAt);
+  if (!fresh.length) return;
+  ding();
+  const c = fresh[0];
+  if (S.view === "conv" && S.convSel === c.id && document.visibilityState === "visible") return; // ya lo está viendo
+  let box = $("#inAlert");
+  if (!box) { box = document.createElement("button"); box.id = "inAlert"; box.className = "in-alert"; document.body.appendChild(box); }
+  const text = c.lastMessageDir === "in" ? stripWa(c.lastMessage || "") : "Mensaje nuevo";
+  box.innerHTML = `<span class="ia-ic">${chIcon(chOf(c), "inl")}</span><span class="ia-tx"><b>${esc(contactName(c))}${fresh.length > 1 ? ` <small>+${fresh.length - 1} más</small>` : ""}</b><span>${esc(text.slice(0, 140))}</span></span>`;
+  box.onclick = () => { box.classList.remove("show"); go("conv", c.id); };
+  box.classList.add("show");
+  clearTimeout(box._t); box._t = setTimeout(() => box.classList.remove("show"), 7000);
+}
+
 // ======================= Notificaciones push =======================
 // Cada mensaje de un cliente avisa en este dispositivo (función notificarMensaje). En iPhone/iPad Apple solo lo permite
 // con House Chat agregado a la pantalla de inicio.
@@ -2533,7 +2584,7 @@ function pushState() {
 const b64uBytes = s => { const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)); return Uint8Array.from(b, ch => ch.charCodeAt(0)); };
 function pushBanner() {
   const st = pushState();
-  if (!["off", "instalar"].includes(st) || !S.pushInitDone) return "";
+  if (st !== "off" || !S.pushInitDone) return "";
   let dis = 0; try { dis = Number(localStorage.getItem("crm-push-dismiss")) || 0; } catch { }
   if (Date.now() - dis < 7 * 864e5) return "";
   return `<div class="banner push-banner"><span>${icon("campana")} Activa las notificaciones para enterarte cada vez que un cliente te escriba.</span>
