@@ -5,6 +5,7 @@
 // - createTeamUser: la administradora crea cuentas para su equipo
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
+// - copiloto, analizarConversaciones: copiloto de ventas con IA para el equipo y análisis automático de cada chat (ver copiloto.js)
 // - guardarMedia: descarga las fotos, audios, videos y documentos que mandan los clientes (ver media.js)
 // - sendMessage: envía texto por el canal del contacto (WhatsApp, Telegram, Messenger, Instagram o chat web)
 // - telegramWebhook, webchat, connectTelegram, connectMeta, disconnectChannel: otros canales (ver canales.js)
@@ -272,6 +273,28 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
     send: ({ cref, contact, text, byName, image }) => CH.deliver({ cref, contact, text, image, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
+});
+
+// Copiloto de ventas: análisis de la conversación, respuestas sugeridas y mejorar el texto del equipo
+const COPILOTO = require("./copiloto")({ db, apiKey: () => ANTHROPIC_API_KEY.value() });
+exports.copiloto = onCall({ region: REGION, invoker: "public", secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: "512MiB" }, async req => {
+  await requireMember(req);
+  const { action, contactId, text, tone } = req.data || {};
+  if (!ANTHROPIC_API_KEY.value()) throw new HttpsError("failed-precondition", "Falta la clave de Claude (ANTHROPIC_API_KEY).");
+  try {
+    if (action === "mejorar") return { texto: await COPILOTO.mejorar(text, tone) };
+    if (!contactId) throw new Error("Falta el contacto.");
+    if (action === "analizar") return { ai: await COPILOTO.analizar(String(contactId)) };
+    if (action === "sugerir") return { sugerencias: await COPILOTO.sugerir(String(contactId), String(text || "").slice(0, 1000)) };
+  } catch (e) { console.error("copiloto", action, e); throw new HttpsError("internal", e.message || "No se pudo completar."); }
+  throw new HttpsError("invalid-argument", "Acción desconocida.");
+});
+// Cada 2 horas analiza las conversaciones con mensajes nuevos (probabilidad, siguiente paso, riesgo…)
+exports.analizarConversaciones = onSchedule({ schedule: "every 120 minutes", timeZone: "America/Bogota", region: REGION, secrets: [ANTHROPIC_API_KEY],
+  timeoutSeconds: 540, memory: "512MiB" }, async () => {
+  const cfg = await db.doc("settings/asesora").get();
+  if (!ANTHROPIC_API_KEY.value() || (cfg.exists && cfg.get("autoAnalisis") === false)) return;
+  console.log("análisis automático", await COPILOTO.barrido());
 });
 
 // Fotos, audios, videos y documentos que mandan los clientes: se descargan y se guardan para verlos en el chat
