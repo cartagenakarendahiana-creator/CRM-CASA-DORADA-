@@ -84,7 +84,7 @@ module.exports = function notificaciones({ db, fetchFn = (...a) => fetch(...a) }
 
   // Mensaje entrante → avisa al responsable del contacto y a las administradoras (o a todo el equipo si no tiene responsable)
   async function onInbound(cid, msg) {
-    if (!msg || msg.dir !== "in") return { enviadas: 0 };
+    if (!msg || msg.dir !== "in" || msg.type === "reaction") return { enviadas: 0 };
     const [c, us] = await Promise.all([db.doc("contacts/" + cid).get(), db.collection("users").get()]);
     const contact = c.exists ? c.data() : {};
     const team = us.docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.active !== false);
