@@ -71,7 +71,7 @@ Tu trabajo (modo mixto):
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
 - Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
-- Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
+- Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Si un producto está en_oferta, cuéntale que antes costaba precio_antes_de_la_oferta y ahora precio_detal. Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
 - Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide un descuento distinto o mayor a las promociones vigentes o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
 - Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Si recibes un audio, video o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
 - No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega.
@@ -115,8 +115,8 @@ function toMessages(msgs) {
 
 // Pie de foto de un producto: nombre y precio (y por mayor, si aplica)
 function photoCaption(p, promos = []) {
-  const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos);
-  const price = b.promo ? `Antes ${money(p.priceRetail)} · Ahora ${money(b.price)} (${b.promo.name})` : money(p.priceRetail);
+  const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos), before = p.compareAt > p.priceRetail ? p.compareAt : b.promo ? p.priceRetail : 0;
+  const price = before ? `Antes ${money(before)} · Ahora ${money(b.price)} (${b.promo ? b.promo.name : "Oferta"})` : money(p.priceRetail);
   return `${p.name} · ${price}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}`;
 }
 const nameTokens = s => norm(s).split(/[^a-z0-9.]+/).filter(w => w.length > 1);
@@ -137,6 +137,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
     const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos), other = PROMOS.promosFor(p, promos).filter(x => x !== b.promo);
     return { id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
       precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null, tiene_foto: !!p.image,
+      ...(p.compareAt > p.priceRetail ? { en_oferta: true, precio_antes_de_la_oferta: p.compareAt } : {}),
       ...(b.promo ? { precio_con_promocion: b.price, promocion: `${b.promo.name}: ${PROMOS.conditionText(b.promo)}` } : {}),
       ...(other.length ? { otras_promociones: other.map(x => `${x.name}: ${PROMOS.conditionText(x)}`) } : {}) };
   };

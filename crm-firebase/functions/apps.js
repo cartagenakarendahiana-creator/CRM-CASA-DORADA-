@@ -120,8 +120,10 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", updatedAt: Date.now(), updatedBy: "Shopify" };
     for (const v of multi ? vs : [vs[0]]) {
       const vt = multi && v.title && v.title !== "Default Title" ? " · " + v.title : "";
-      await db.doc("products/shp_" + p.id + (multi ? "_" + v.id : "")).set({ ...base, name: p.title + vt, priceRetail: Math.round(Number(v.price) || 0), sku: v.sku || "",
-        image: shopifyImage(p, multi ? v : {}) }, { merge: true });
+      const price = Math.round(Number(v.price) || 0), before = Math.round(Number(v.compare_at_price) || 0);
+      // compareAt: "precio de comparación" de Shopify (producto en oferta: antes compareAt, ahora priceRetail)
+      await db.doc("products/shp_" + p.id + (multi ? "_" + v.id : "")).set({ ...base, name: p.title + vt, priceRetail: price, sku: v.sku || "",
+        compareAt: before > price ? before : 0, image: shopifyImage(p, multi ? v : {}) }, { merge: true });
     }
     return multi ? vs.length : 1;
   }
@@ -155,6 +157,80 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     }
     await setPub({ shopify: { productsAt: Date.now(), products: n } });
     return { products: n };
+  }
+
+  // Descuentos de Shopify (automáticos y códigos) → promociones de House Chat. Requiere token de Admin con read_discounts.
+  const gid = s => String(s || "").split("/").pop();
+  const DISC_QUERY = `query($after: String) { discountNodes(first: 25, after: $after) { pageInfo { hasNextPage endCursor } nodes { id discount { __typename
+    ... on DiscountAutomaticBasic { title status startsAt endsAt minimumRequirement { ...Min } customerGets { ...Gets } }
+    ... on DiscountCodeBasic { title status startsAt endsAt codes(first: 1) { nodes { code } } minimumRequirement { ...Min } customerGets { ...Gets } }
+    ... on DiscountAutomaticFreeShipping { title status startsAt endsAt minimumRequirement { ...Min } }
+    ... on DiscountCodeFreeShipping { title status startsAt endsAt codes(first: 1) { nodes { code } } minimumRequirement { ...Min } }
+    ... on DiscountAutomaticBxgy { title status startsAt endsAt }
+    ... on DiscountCodeBxgy { title status startsAt endsAt codes(first: 1) { nodes { code } } } } } } }
+  fragment Min on DiscountMinimumRequirement { ... on DiscountMinimumQuantity { greaterThanOrEqualToQuantity } ... on DiscountMinimumSubtotal { greaterThanOrEqualToSubtotal { amount } } }
+  fragment Gets on DiscountCustomerGets { value { ... on DiscountPercentage { percentage } ... on DiscountAmount { amount { amount } appliesOnEachItem } }
+    items { ... on AllDiscountItems { allItems } ... on DiscountProducts { products(first: 30) { nodes { id } } productVariants(first: 30) { nodes { product { id } } } }
+      ... on DiscountCollections { collections(first: 5) { nodes { id title } } } } }`;
+  async function shopifyGql(c, query, variables) {
+    const r = await fetchFn(`https://${c.shop}/admin/api/${SHOPIFY_API}/graphql.json`, { method: "POST",
+      headers: { "X-Shopify-Access-Token": c.token, "Content-Type": "application/json" }, body: JSON.stringify({ query, variables }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401 || r.status === 403) throw new Error("Shopify rechazó el token: necesita el permiso read_discounts (y read_products).");
+    if (!r.ok || j.errors) throw new Error("Shopify respondió: " + ((j.errors && (j.errors[0] && j.errors[0].message || JSON.stringify(j.errors).slice(0, 200))) || r.status));
+    return j.data;
+  }
+  async function collectionProducts(c, id) {
+    const d = await shopifyGql(c, "query($id: ID!) { collection(id: $id) { products(first: 250) { nodes { id } } } }", { id });
+    return ((d.collection && d.collection.products.nodes) || []).map(n => "shp_" + gid(n.id));
+  }
+  // Convierte un descuento de Shopify en promoción (null si no se puede representar)
+  async function mapDiscount(c, node) {
+    const d = node.discount || {}, t = d.__typename || "";
+    if (!d.title || d.status === "EXPIRED") return null;
+    const min = d.minimumRequirement || {}, code = d.codes && d.codes.nodes[0] && d.codes.nodes[0].code;
+    const promo = { name: d.title, source: "Shopify", shopifyId: node.id, on: true, scope: "todo", categories: [], productIds: [], code: code || "",
+      minQty: Number(min.greaterThanOrEqualToQuantity) || 0, start: d.startsAt ? String(d.startsAt).slice(0, 10) : "", end: d.endsAt ? String(d.endsAt).slice(0, 10) : "",
+      desc: min.greaterThanOrEqualToSubtotal ? `Compra mínima de $${Math.round(Number(min.greaterThanOrEqualToSubtotal.amount) || 0).toLocaleString("es-CO")}` : "" };
+    if (/FreeShipping/.test(t)) return { ...promo, type: "envio", value: 0 };
+    if (/Bxgy/.test(t)) return { ...promo, type: "otro", value: 0, desc: [promo.desc, "Promoción de compra uno y lleva otro (revisa las condiciones en Shopify)"].filter(Boolean).join(". ") };
+    const g = d.customerGets || {}, v = g.value || {}, items = g.items || {};
+    if (v.percentage != null) Object.assign(promo, { type: "porcentaje", value: Math.round(Number(v.percentage) * 1000) / 10 });
+    else if (v.amount) Object.assign(promo, v.appliesOnEachItem ? { type: "valor", value: Math.round(Number(v.amount.amount) || 0) }
+      : { type: "otro", value: 0, desc: [promo.desc, `$${Math.round(Number(v.amount.amount) || 0).toLocaleString("es-CO")} de descuento en el total del pedido`].filter(Boolean).join(". ") });
+    else return null;
+    if (items.products || items.productVariants) {
+      promo.scope = "productos";
+      promo.productIds = [...new Set([...((items.products && items.products.nodes) || []).map(n => "shp_" + gid(n.id)), ...((items.productVariants && items.productVariants.nodes) || []).map(n => "shp_" + gid(n.product && n.product.id))])];
+    } else if (items.collections) {
+      promo.scope = "productos";
+      for (const col of items.collections.nodes || []) promo.productIds.push(...await collectionProducts(c, col.id));
+      promo.productIds = [...new Set(promo.productIds)];
+      promo.desc = [promo.desc, "En: " + (items.collections.nodes || []).map(x => x.title).join(", ")].filter(Boolean).join(". ");
+    }
+    if (promo.scope === "productos" && !promo.productIds.length) return null;
+    return promo;
+  }
+  async function shopifyDiscounts() {
+    const c = (await cfg(true)).shopify || {};
+    if (!c.shop) throw new Error("Primero conecta la tienda de Shopify.");
+    if (!c.token) throw new Error("Para leer los descuentos y códigos de Shopify hace falta un token de Admin con el permiso read_discounts. Las ofertas con precio de comparación sí se importan con Importar productos.");
+    const keep = new Set(); let after = null, pages = 0, n = 0;
+    do {
+      const d = await shopifyGql(c, DISC_QUERY, { after });
+      for (const node of d.discountNodes.nodes) {
+        const promo = await mapDiscount(c, node);
+        if (!promo) continue;
+        const id = "shp_disc_" + gid(node.id); keep.add(id); n++;
+        await db.doc("promos/" + id).set({ ...promo, updatedAt: Date.now(), updatedBy: "Shopify" });
+      }
+      after = d.discountNodes.pageInfo.hasNextPage ? d.discountNodes.pageInfo.endCursor : null;
+    } while (after && ++pages < 10);
+    // Los descuentos que ya no existen en Shopify se quitan de House Chat
+    const old = await db.collection("promos").where("source", "==", "Shopify").get();
+    for (const doc of old.docs) if (!keep.has(doc.id)) await doc.ref.delete();
+    await setPub({ shopify: { promosAt: Date.now(), promos: n } });
+    return { promos: n };
   }
 
   // ---------- Siigo ----------
@@ -235,6 +311,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       return { ok: true };
     }
     if (action === "importShopify") return shopifyImport();
+    if (action === "importShopifyPromos") return shopifyDiscounts();
     if (action === "saveSiigo") {
       const prev = (await cfg(true)).siigo || {};
       const c = { ...prev, username: String(d.username || prev.username || "").trim(), accessKey: String(d.accessKey || "").trim() || prev.accessKey, partnerId: String(d.partnerId || prev.partnerId || "").trim(),
@@ -258,5 +335,5 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     throw new Error("Acción desconocida.");
   }
 
-  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, siigoInvoice, manage };
+  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, mapDiscount, siigoInvoice, manage };
 };
