@@ -5,6 +5,7 @@
 // - createTeamUser: la administradora crea cuentas para su equipo
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
+// - cotizacionPdf, enviarCotizacion: cotización en PDF con marca de agua, enviada por el chat (ver cotizacion-pdf.js)
 // - copiloto, analizarConversaciones: copiloto de ventas con IA para el equipo y análisis automático de cada chat (ver copiloto.js)
 // - guardarMedia: descarga las fotos, audios, videos y documentos que mandan los clientes (ver media.js)
 // - sendMessage: envía texto por el canal del contacto (WhatsApp, Telegram, Messenger, Instagram o chat web)
@@ -241,16 +242,18 @@ async function waPost(payload, line, cid) {
 }
 // WhatsApp por código QR: el puente (carpeta whatsapp-qr) escucha waOutbox y envía desde el celular vinculado
 async function waQueue(payload, cid) {
-  if (payload.type !== "text" && payload.type !== "image") throw new Error("Con WhatsApp por QR solo se envían textos y fotos, no plantillas.");
+  if (!["text", "image", "document"].includes(payload.type)) throw new Error("Con WhatsApp por QR solo se envían textos, fotos y documentos, no plantillas.");
   const ref = db.collection("waOutbox").doc();
   await ref.set({ cid: cid || "wa_" + payload.to, to: payload.to || "", status: "pendiente", createdAt: Date.now(),
-    ...(payload.type === "image" ? { image: payload.image.link, text: payload.image.caption || "" } : { text: payload.text.body }) });
+    ...(payload.type === "image" ? { image: payload.image.link, text: payload.image.caption || "" }
+      : payload.type === "document" ? { document: payload.document.link, filename: payload.document.filename || "", text: payload.document.caption || "" } : { text: payload.text.body }) });
   return ref.id;
 }
 // Texto, o foto con pie de foto (image = enlace https)
-const waText = contact => async (body, cid, image) => {
+const waText = contact => async (body, cid, image, doc) => {
   const to = phoneId(contact.phone) || (contact.waJid && cid ? String((contact.channels || {}).whatsapp || "") : "");
   if (!to) throw new Error("El contacto no tiene WhatsApp.");
+  if (doc) return waPost({ messaging_product: "whatsapp", to, type: "document", document: { link: doc.url, filename: doc.filename || "documento.pdf", ...(body ? { caption: body.slice(0, 1024) } : {}) } }, contact.waLine, cid);
   return waPost(image ? { messaging_product: "whatsapp", to, type: "image", image: { link: image, ...(body ? { caption: body.slice(0, 1024) } : {}) } }
     : { messaging_product: "whatsapp", to, type: "text", text: { body: body.slice(0, 4096) } }, contact.waLine, cid);
 };
@@ -270,9 +273,66 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   if (!m || m.dir !== "in") return;
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(), loadMedia: p => MEDIA.read(p),
-    send: ({ cref, contact, text, byName, image }) => CH.deliver({ cref, contact, text, image, channel: m.channel || contact.lastChannel,
+    quoteLink,
+    send: ({ cref, contact, text, byName, image, document }) => CH.deliver({ cref, contact, text, image, document, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
+});
+
+// Cotización en PDF: se genera al vuelo desde la base de datos y se comparte con un enlace secreto por cotización
+// (WhatsApp, Telegram y Messenger descargan el archivo desde ese enlace). Datos de la empresa en settings/cotizacion.
+const QPDF = require("./cotizacion-pdf");
+const PUBLIC_URL = "https://housechat.web.app";
+async function quoteLink(qid) {
+  const ref = db.doc("quotes/" + qid), q = await ref.get();
+  if (!q.exists) throw new Error("La cotización no existe.");
+  let token = q.get("pdfToken");
+  if (!token) { token = crypto.randomBytes(16).toString("hex"); await ref.set({ pdfToken: token }, { merge: true }); }
+  const file = String(q.get("number") || "cotizacion").replace(/[^\w-]/g, "") + ".pdf";
+  return { url: `${PUBLIC_URL}/api/cotizacion/${qid}/${token}/${file}`, filename: `Cotización ${q.get("number") || ""} - Casa Dorada.pdf`.replace(/\s+-/, " -"), quote: { id: qid, ...q.data() } };
+}
+async function quotePdf(q) {
+  const [c, co] = await Promise.all([q.contactId ? db.doc("contacts/" + q.contactId).get() : null, db.doc("settings/cotizacion").get()]);
+  return QPDF.pdf({ quote: q, contact: c && c.exists ? c.data() : {}, company: co.exists ? co.data() : {} });
+}
+exports.cotizacionPdf = onRequest({ region: REGION, invoker: "public", memory: "256MiB" }, async (req, res) => {
+  const [, qid, token] = (String(req.path || "").match(/cotizacion\/([\w-]{1,64})\/([0-9a-f]{32})/) || []);
+  if (!qid) return res.sendStatus(404);
+  try {
+    const q = await db.doc("quotes/" + qid).get();
+    const ok = q.exists && q.get("pdfToken") && crypto.timingSafeEqual(Buffer.from(String(q.get("pdfToken"))), Buffer.from(token));
+    if (!ok) return res.sendStatus(404);
+    const buf = await quotePdf(q.data());
+    res.set("Content-Type", "application/pdf");
+    res.set("Content-Disposition", `inline; filename="${String(q.get("number") || "cotizacion").replace(/[^\w-]/g, "")}.pdf"`);
+    res.set("Cache-Control", "private, max-age=60");
+    return res.status(200).send(buf);
+  } catch (e) { console.error("pdf", e); return res.sendStatus(500); }
+});
+// El equipo: action "link" (ver el PDF) o "send" (enviarlo por el chat del cliente, con un texto opcional)
+exports.enviarCotizacion = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
+  const me = await requireMember(req);
+  const { quoteId, action, text } = req.data || {};
+  if (!quoteId) throw new HttpsError("invalid-argument", "Falta la cotización.");
+  let link;
+  try { link = await quoteLink(String(quoteId)); } catch (e) { throw new HttpsError("not-found", e.message); }
+  if (action !== "send") return { url: link.url };
+  const q = link.quote;
+  if (!q.contactId) throw new HttpsError("failed-precondition", "La cotización no tiene cliente.");
+  const cref = db.doc("contacts/" + q.contactId), c = await cref.get();
+  if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
+  const contact = c.data();
+  const ch = contact.lastChannel || (contact.phone ? "whatsapp" : "");
+  if (!CH.CHANNELS[ch]) throw new HttpsError("failed-precondition", "El contacto no tiene un canal para escribirle.");
+  if (!CH.windowOpen(contact, ch, ch === "whatsapp" && await CH.waQrOn())) throw new HttpsError("failed-precondition", "VENTANA_CERRADA");
+  const caption = String(text || "").trim() || `Te comparto tu cotización *${q.number}* por *$${Math.round(q.total || 0).toLocaleString("es-CO")}* ✨`;
+  try {
+    await CH.deliver({ cref, contact, text: caption, document: { url: link.url, filename: link.filename }, channel: ch, msg: { by: req.auth.uid, byName: me.name || "", quoteId: q.id },
+      extra: { unread: 0 }, sendWhatsApp: waText(contact) });
+  } catch (e) { throw new HttpsError("internal", e.message); }
+  const now = Date.now();
+  await db.doc("quotes/" + q.id).set({ ...(q.status === "Borrador" ? { status: "Enviada" } : {}), sentAt: now, sentByName: me.name || "", updatedAt: now, updatedBy: me.name || "" }, { merge: true });
+  return { ok: true, url: link.url };
 });
 
 // Copiloto de ventas: análisis de la conversación, respuestas sugeridas y mejorar el texto del equipo

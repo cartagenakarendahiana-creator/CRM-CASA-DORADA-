@@ -50,20 +50,24 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     return { cid, created };
   }
 
-  // Envía texto (o una foto con su texto como pie) por el canal del contacto y lo registra
-  async function deliver({ cref, contact, text, msg = {}, extra = {}, channel, sendWhatsApp, image }) {
+  // Envía texto (o una foto o un documento PDF con su texto como pie) por el canal del contacto y lo registra
+  // document: { url (https), filename }
+  async function deliver({ cref, contact, text, msg = {}, extra = {}, channel, sendWhatsApp, image, document }) {
     const ch = channel || contact.lastChannel || (contact.phone ? "whatsapp" : null);
     if (!CHANNELS[ch]) throw new Error("El contacto no tiene un canal para escribirle.");
     if (image && !/^https:\/\/\S+$/.test(image)) throw new Error("La foto debe ser un enlace https.");
+    if (document && !/^https:\/\/\S+$/.test(document.url || "")) throw new Error("El documento debe ser un enlace https.");
+    if (document) image = undefined;
     const extId = (contact.channels || {})[ch];
     const body = String(text || "").slice(0, image ? 1000 : 4000);
     let id = null;
-    if (ch === "whatsapp") id = await sendWhatsApp(body, cref.id, image);
+    if (ch === "whatsapp") id = await sendWhatsApp(body, cref.id, image, document);
     else if (ch === "telegram") {
       const cfg = (await privateCfg()).telegram || {};
       if (!cfg.token) throw new Error("Telegram no está conectado.");
-      const r = await fetchFn(`https://api.telegram.org/bot${cfg.token}/${image ? "sendPhoto" : "sendMessage"}`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(image ? { chat_id: extId, photo: image, caption: toTelegramHtml(body), parse_mode: "HTML" } : { chat_id: extId, text: toTelegramHtml(body), parse_mode: "HTML" }) });
+      const r = await fetchFn(`https://api.telegram.org/bot${cfg.token}/${document ? "sendDocument" : image ? "sendPhoto" : "sendMessage"}`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(document ? { chat_id: extId, document: document.url, caption: toTelegramHtml(body), parse_mode: "HTML" }
+          : image ? { chat_id: extId, photo: image, caption: toTelegramHtml(body), parse_mode: "HTML" } : { chat_id: extId, text: toTelegramHtml(body), parse_mode: "HTML" }) });
       const out = await r.json().catch(() => ({}));
       if (!out.ok) throw new Error(out.description || "Telegram rechazó el mensaje.");
       id = "tg" + out.result.message_id;
@@ -78,12 +82,15 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         return out.message_id;
       };
       if (image) id = await post({ attachment: { type: "image", payload: { url: image, is_reusable: true } } }); // Meta no admite pie de foto: el texto va aparte
-      if (body) id = await post({ text: stripFormat(body).slice(0, 1000) }); // Messenger e Instagram no muestran *negrita*
+      if (document && ch === "messenger") id = await post({ attachment: { type: "file", payload: { url: document.url, is_reusable: true } } });
+      const txt = stripFormat(body) + (document && ch === "instagram" ? "\n\n" + document.url : ""); // Instagram no recibe archivos: va el enlace
+      if (txt.trim()) id = await post({ text: txt.slice(0, 1000) }); // Messenger e Instagram no muestran *negrita*
     }
     // web: no hay envío externo, el widget lee el mensaje
-    const now = Date.now(), shown = image ? "📷 " + (body || "Foto") : body;
+    const now = Date.now(), shown = document ? "📄 " + (document.filename || "Documento") : image ? "📷 " + (body || "Foto") : body;
     const docId = String(id || db.collection("x").doc().id).replace(/[\/]/g, "_");
-    await cref.collection("messages").doc(docId).set({ dir: "out", ts: now, text: body, type: image ? "image" : "text", channel: ch, ...(image ? { image } : {}), ...msg }, { merge: true });
+    await cref.collection("messages").doc(docId).set({ dir: "out", ts: now, text: body, type: document ? "document" : image ? "image" : "text", channel: ch, ...(image ? { image } : {}),
+      ...(document ? { document: { url: document.url, filename: document.filename || "documento.pdf" } } : {}), ...msg }, { merge: true });
     await cref.set({ lastOutboundAt: now, lastOutboundBy: msg.byName || "", lastMessage: shown.slice(0, 200), lastMessageDir: "out", updatedAt: now, updatedBy: msg.byName || "", ...extra }, { merge: true });
     return { id: docId, channel: ch };
   }
@@ -182,7 +189,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     if (req.method === "GET") {
       const after = Number(req.query.after) || 0;
       const snap = await cref.collection("messages").where("ts", ">", after).orderBy("ts").limit(50).get();
-      const msgs = snap.docs.map(d => d.data()).filter(m => m.dir === "in" || m.dir === "out").map(m => ({ dir: m.dir, text: m.text, ts: m.ts, by: m.dir === "out" ? (m.byName || "").replace(/ · IA$/, "") : "", ...(m.image ? { image: m.image } : {}) }));
+      const msgs = snap.docs.map(d => d.data()).filter(m => m.dir === "in" || m.dir === "out").map(m => ({ dir: m.dir, text: m.text, ts: m.ts, by: m.dir === "out" ? (m.byName || "").replace(/ · IA$/, "") : "", ...(m.image ? { image: m.image } : {}), ...(m.document ? { document: m.document } : {}) }));
       return res.json({ msgs });
     }
     if (req.method !== "POST") return res.sendStatus(405);

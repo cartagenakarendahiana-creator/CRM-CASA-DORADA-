@@ -77,7 +77,7 @@ Tu trabajo (modo mixto):
 - Explica el precio por mayor cuando aplique ("desde X unidades queda a $Y").
 - Cuando hables de un producto, su foto con el precio se envía sola después de tu mensaje (no hace falta pedirla). Usa enviar_foto_producto solo si el cliente pide la foto de un producto que no nombraste. Nunca pegues enlaces de imágenes en el texto ni digas que no puedes enviar fotos.
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
-- Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
+${cfg.quoteAuto !== false ? "- Si pide cotización, precio formal o el total por cantidades, usa crear_cotizacion de una vez con los productos y cantidades que te dijo: el sistema le envía la cotización formal en PDF en este chat. Si no sabes su nombre o empresa, pregúntaselo antes (en el mismo mensaje en que confirmas cantidades) para que la cotización salga a su nombre, y guárdalo con actualizar_ficha." : "- Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma."}
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
 - Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Si un producto está en_oferta, cuéntale que antes costaba precio_antes_de_la_oferta y ahora precio_detal. Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
 - Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide un descuento distinto o mayor a las promociones vigentes o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
@@ -137,7 +137,7 @@ function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), m
   return (named.length ? named : withImg).filter(fresh).slice(0, Math.max(0, max - queued.length));
 }
 
-function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [] }) {
+function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false }) {
   const active = products.filter(p => p.active !== false);
   const pub = p => {
     const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos), other = PROMOS.promosFor(p, promos).filter(x => x !== b.promo);
@@ -149,6 +149,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
   };
   const done = []; // lo que hizo la asesora, para la nota interna
   const photos = []; // fotos de productos para enviar después del texto
+  const docs = []; // cotizaciones en PDF para enviar después del texto
   const found = []; // productos de la última búsqueda, en orden de relevancia (para adjuntar sus fotos)
   const run = {
     async buscar_conocimiento({ consulta }) {
@@ -212,15 +213,17 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         t.set(cr, { n });
         const promoNote = [...new Set(lines.filter(l => l.promo).map(l => l.promo))].map(n => "Promoción aplicada: " + n).join("\n");
         t.set(qref, { contactId: cref.id, contactName: contact.name || contact.company || contact.phone || "", items: lines, subtotal, discount: 0, total: subtotal,
-          status: "Borrador", validUntil: isoDay(now + 15 * 864e5), notes: [String(notas || ""), promoNote].filter(Boolean).join("\n").slice(0, 1000), number: num, aiCreated: true,
+          status: quoteAuto ? "Enviada" : "Borrador", ...(quoteAuto ? { sentAt: now, sentByName: aiName } : {}), validUntil: isoDay(now + 15 * 864e5), notes: [String(notas || ""), promoNote].filter(Boolean).join("\n").slice(0, 1000), number: num, aiCreated: true,
           createdAt: now, createdBy: "asesora", createdByName: aiName, updatedAt: now, updatedBy: aiName });
         return num;
       });
       const first = lines[0], p = active.find(x => x.id === first.productId);
       await cref.set({ chosenProduct: { id: first.productId, name: first.name, price: first.price, desc: p.desc || "" }, updatedAt: now, updatedBy: aiName }, { merge: true });
-      done.push(`preparó la cotización ${number} por ${money(subtotal)} (borrador para revisar)`);
+      if (quoteAuto) docs.push({ quoteId: qref.id, number, total: subtotal });
+      done.push(quoteAuto ? `preparó la cotización ${number} por ${money(subtotal)} y la envía en PDF` : `preparó la cotización ${number} por ${money(subtotal)} (borrador para revisar)`);
       return { ok: true, numero: number, lineas: lines.map(l => ({ producto: l.name, cantidad: l.qty, precio_unitario: l.price, ...(l.promo ? { promocion: l.promo, precio_sin_promocion: l.listPrice } : {}), subtotal: l.qty * l.price })), total: subtotal,
-        aviso: "Queda en borrador: dile al cliente el total aproximado y que una asesora del equipo se la confirma." };
+        aviso: quoteAuto ? `La cotización formal ${number} en PDF se le envía en este mismo chat justo después de tu mensaje. Dile en 1 o 2 líneas que ahí va su cotización con el total (${money(subtotal)}) y pregúntale si desea confirmar el pedido. No repitas la lista de productos ni prometas tiempos de entrega.`
+          : "Queda en borrador: dile al cliente el total aproximado y que una asesora del equipo se la confirma." };
     },
     async agendar_seguimiento({ fecha, accion }) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || "") || fecha < isoDay(Date.now())) return { error: "La fecha debe ser AAAA-MM-DD y no puede estar en el pasado." };
@@ -235,7 +238,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, found, kb, promos };
+  return { run, done, photos, docs, found, kb, promos };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -280,7 +283,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
 }
 
 // Decide si responde, arma el contexto, llama a Claude y envía la respuesta
-async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
   const cref = db.doc("contacts/" + cid);
   const cfgSnap = await db.doc("settings/asesora").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
@@ -330,7 +333,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
   }
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
-  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos });
+  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
 
   let res;
   try { res = await think({ apiKey, cfg, contact, history, tools }); }
@@ -344,12 +347,12 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
     tools.done.push("no pudo responder y pasó el chat a una persona");
   }
   const text = (res.text || "").trim(), hasText = text && text !== "[SIN RESPUESTA]";
-  if (hasText || tools.photos.length) {
+  if (hasText || tools.photos.length || tools.docs.length) {
     // Si una persona respondió mientras la IA pensaba, no enviar
     const fresh = (await cref.get()).data();
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
     // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
-    const auto = hasText && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
+    const auto = hasText && !tools.docs.length && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
     const photos = [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))];
     const sentNow = {};
     // Un solo mensaje: la primera foto lleva la respuesta + su ficha como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
@@ -365,11 +368,21 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
       }
     }
     if (auto.length) tools.done.push("envió la foto de " + auto.map(p => p.name).join(", "));
+    // Cotizaciones en PDF (con marca de agua), después de la respuesta
+    for (const d of tools.docs) {
+      try {
+        const link = await quoteLink(d.quoteId);
+        await send({ cref, contact: fresh, text: `*Cotización ${d.number}*\nTotal: *${money(d.total)}*`, document: { url: link.url, filename: link.filename }, byName: aiName });
+      } catch (e) {
+        console.error("cotización pdf", d.quoteId, e); tools.done.push(`no pudo enviar el PDF de ${d.number} (${e.message || e}); quedó en borrador`);
+        await db.doc("quotes/" + d.quoteId).set({ status: "Borrador" }, { merge: true });
+      }
+    }
     if (Object.keys(sentNow).length) await cref.set({ aiPhotos: sentNow }, { merge: true });
     if ((fresh.stage || "Nuevo") === "Nuevo") await cref.set({ stage: "Contactado", stageAt: Date.now() }, { merge: true });
   }
   if (tools.done.length) await cref.collection("messages").add({ dir: "note", text: `${aiName}: ` + tools.done.join("; ") + ".", ts: Date.now(), by: "asesora", byName: aiName });
-  return hasText || tools.photos.length ? "respondido" : "sin-texto";
+  return hasText || tools.photos.length || tools.docs.length ? "respondido" : "sin-texto";
 }
 
 module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption };
