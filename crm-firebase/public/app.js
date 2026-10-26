@@ -2641,9 +2641,11 @@ function openPushMenu() {
 function showInstallHelp() {
   const m = $("#modal");
   m.innerHTML = `<div class="mh"><h2>Notificaciones en ${/iPhone/.test(navigator.userAgent) ? "iPhone" : "iPad"}</h2><button class="iconbtn" id="ix" aria-label="Cerrar">✕</button></div>
-    <div class="mb"><p style="margin:0 0 10px">Apple solo permite notificaciones cuando House Chat está en tu pantalla de inicio. Es un minuto:</p>
-      <ol class="steps"><li>En Safari, toca el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba).</li>
-        <li>Elige <b>Agregar a pantalla de inicio</b> y toca <b>Agregar</b>.</li>
+    <div class="mb"><p style="margin:0 0 10px">En iPhone y iPad, Apple solo permite notificaciones (en Safari y también en Chrome) cuando House Chat está en tu pantalla de inicio. Mientras tanto, con la página abierta te avisa con sonido. Para recibirlas aunque esté cerrada:</p>
+      <ol class="steps">${/CriOS|EdgiOS|FxiOS/.test(navigator.userAgent)
+        ? `<li>En ${/CriOS/.test(navigator.userAgent) ? "Chrome" : /EdgiOS/.test(navigator.userAgent) ? "Edge" : "Firefox"}, toca el botón <b>Compartir</b> (el cuadrado con la flecha, arriba a la derecha en la barra de la dirección; si no lo ves, está en el menú <b>⋯</b>).</li>`
+        : `<li>En Safari, toca el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba).</li>`}
+        <li>Elige <b>Agregar a pantalla de inicio</b> (o <b>Agregar a inicio</b>) y toca <b>Agregar</b>.</li>
         <li>Abre <b>House Chat</b> desde el ícono nuevo e inicia sesión.</li>
         <li>Toca <b>Activar</b> en el aviso de notificaciones (o la campana del menú) y permite las notificaciones.</li></ol></div>
     <div class="mf"><span class="spacer"></span><button class="btn primary" id="iok">Entendido</button></div>`;
