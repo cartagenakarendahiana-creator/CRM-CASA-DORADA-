@@ -77,7 +77,7 @@ Tu trabajo (modo mixto):
 - Explica el precio por mayor cuando aplique ("desde X unidades queda a $Y").
 - Cuando hables de un producto, su foto con el precio se envía sola después de tu mensaje (no hace falta pedirla). Usa enviar_foto_producto solo si el cliente pide la foto de un producto que no nombraste. Nunca pegues enlaces de imágenes en el texto ni digas que no puedes enviar fotos.
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
-${cfg.quoteAuto !== false ? "- Si pide cotización, precio formal o el total por cantidades, usa crear_cotizacion de una vez con los productos y cantidades que te dijo: el sistema le envía la cotización formal en PDF en este chat. Si no sabes su nombre o empresa, pregúntaselo antes (en el mismo mensaje en que confirmas cantidades) para que la cotización salga a su nombre, y guárdalo con actualizar_ficha." : "- Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma."}
+${cfg.quoteAuto !== false ? "- COTIZACIÓN: si el cliente dice cotización, cotizar, cotízame, presupuesto o proforma (o pide el precio formal o el total por cantidades), en esa MISMA respuesta usa crear_cotizacion con los productos de los que se ha hablado en la conversación (búscalos con buscar_productos si no tienes el id). Si no dijo cantidad usa 1 unidad; si mencionó medida o referencia, usa esa. No preguntes nada antes de enviarla: el sistema le envía la cotización formal en PDF en este chat, y después puedes ofrecerle ajustarla (cantidades, medidas, otros productos). Solo si en toda la conversación no se ha mencionado ningún producto, pregúntale en una línea qué producto quiere cotizar." : "- Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma."}
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
 - Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Si un producto está en_oferta, cuéntale que antes costaba precio_antes_de_la_oferta y ahora precio_detal. Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
 - Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide un descuento distinto o mayor a las promociones vigentes o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
@@ -150,6 +150,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
   const done = []; // lo que hizo la asesora, para la nota interna
   const photos = []; // fotos de productos para enviar después del texto
   const docs = []; // cotizaciones en PDF para enviar después del texto
+  const quoteTried = []; // si la IA intentó crear una cotización en este turno
   const found = []; // productos de la última búsqueda, en orden de relevancia (para adjuntar sus fotos)
   const run = {
     async buscar_conocimiento({ consulta }) {
@@ -196,6 +197,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       return { ok: true, guardado: Object.keys(patch) };
     },
     async crear_cotizacion({ items, notas }) {
+      quoteTried.push(1);
       const lines = [];
       for (const it of items || []) {
         const p = active.find(x => x.id === it.producto_id), qty = Math.max(1, Math.round(Number(it.cantidad) || 0));
@@ -238,7 +240,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, found, kb, promos };
+  return { run, done, photos, docs, found, kb, promos, quoteAuto, quoteTried };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -247,6 +249,15 @@ function validInput(name, input) {
   const req = { enviar_foto_producto: ["producto_id"], buscar_productos: ["consulta"], buscar_conocimiento: ["consulta"], crear_cotizacion: ["items"], agendar_seguimiento: ["fecha", "accion"], pasar_a_humano: ["motivo", "resumen"] }[name] || [];
   return req.every(k => input[k] !== undefined) && (name !== "crear_cotizacion" || Array.isArray(input.items));
 }
+
+// ¿El cliente pidió una cotización en sus mensajes desde la última respuesta? (texto o nota de voz transcrita)
+const QUOTE_RE = /cotiz|presupuest|proforma/;
+function quoteAsked(history) {
+  const last = [];
+  for (let i = history.length - 1; i >= 0 && history[i].dir !== "out"; i--) if (history[i].dir === "in") last.push(history[i]);
+  return QUOTE_RE.test(norm(last.map(m => (m.text || "") + " " + (m.transcript || "")).join(" ")));
+}
+const QUOTE_NUDGE = "(Aviso del sistema, no lo menciones) El cliente pidió una cotización y todavía no la creaste. Créala ahora con crear_cotizacion usando los productos de los que se habló en la conversación (si no dijo cantidad, usa 1). Solo si nunca se ha mencionado ningún producto, pregúntale en una línea cuál quiere cotizar.";
 
 // Corre a Claude con herramientas y devuelve el texto final para el cliente
 async function think({ apiKey, cfg, contact, history, tools }) {
@@ -257,6 +268,9 @@ async function think({ apiKey, cfg, contact, history, tools }) {
     { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
     { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) },
   ];
+  const wantsQuote = tools.quoteAuto && quoteAsked(history);
+  if (wantsQuote) system[1].text += "\n\nEl cliente acaba de pedir una cotización: créala en esta respuesta con crear_cotizacion.";
+  let nudged = false;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const key = MODELS[cfg.model] ? cfg.model : DEFAULT_MODEL;
     const params = { model: MODELS[key], max_tokens: 8000, system, messages, tools: TOOLS, output_config: { effort: "medium" } };
@@ -267,7 +281,16 @@ async function think({ apiKey, cfg, contact, history, tools }) {
     if (r.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: r.content }); continue; }
     const uses = r.content.filter(b => b.type === "tool_use");
     const text = r.content.filter(b => b.type === "text").map(b => b.text).join("").trim();
-    if (r.stop_reason !== "tool_use" || !uses.length) return { text };
+    if (r.stop_reason !== "tool_use" || !uses.length) {
+      // Pidió cotización y la IA respondió sin crearla: se le insiste una vez (ese texto no se envía)
+      if (wantsQuote && !nudged && !tools.quoteTried.length && !tools.done.some(d => /pasó el chat/.test(d)) && round < MAX_ROUNDS - 2) {
+        nudged = true;
+        messages.push({ role: "assistant", content: r.content.length ? r.content : [{ type: "text", text: text || "…" }] });
+        messages.push({ role: "user", content: [{ type: "text", text: QUOTE_NUDGE }] });
+        continue;
+      }
+      return { text };
+    }
     messages.push({ role: "assistant", content: r.content });
     const results = [];
     for (const u of uses) {
@@ -385,4 +408,4 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   return hasText || tools.photos.length || tools.docs.length ? "respondido" : "sin-texto";
 }
 
-module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption };
+module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked };
