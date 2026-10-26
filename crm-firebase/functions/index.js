@@ -6,6 +6,7 @@
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
 // - cotizacionPdf, enviarCotizacion: cotización en PDF con marca de agua, enviada por el chat (ver cotizacion-pdf.js)
+// - notificaciones, notificarMensaje: notificaciones push al equipo cuando un cliente escribe (ver notificaciones.js)
 // - copiloto, analizarConversaciones: copiloto de ventas con IA para el equipo y análisis automático de cada chat (ver copiloto.js)
 // - guardarMedia: descarga las fotos, audios, videos y documentos que mandan los clientes (ver media.js)
 // - sendMessage: envía texto por el canal del contacto (WhatsApp, Telegram, Messenger, Instagram o chat web)
@@ -333,6 +334,25 @@ exports.enviarCotizacion = onCall({ region: REGION, invoker: "public", secrets: 
   const now = Date.now();
   await db.doc("quotes/" + q.id).set({ ...(q.status === "Borrador" ? { status: "Enviada" } : {}), sentAt: now, sentByName: me.name || "", updatedAt: now, updatedBy: me.name || "" }, { merge: true });
   return { ok: true, url: link.url };
+});
+
+// Notificaciones push: cada mensaje entrante avisa al equipo en sus dispositivos
+const PUSH = require("./notificaciones")({ db });
+exports.notificaciones = onCall({ region: REGION, invoker: "public" }, async req => {
+  const me = await requireMember(req);
+  const { action, subscription, endpoint } = req.data || {};
+  try {
+    if (action === "key") return { publicKey: (await PUSH.keys()).publicKey };
+    if (action === "subscribe") { await PUSH.subscribe(req.auth.uid, me, subscription, req.rawRequest && req.rawRequest.get && req.rawRequest.get("user-agent")); return { ok: true }; }
+    if (action === "unsubscribe") { await PUSH.unsubscribe(endpoint); return { ok: true }; }
+    if (action === "test") return await PUSH.test(req.auth.uid);
+  } catch (e) { console.error("notificaciones", action, e); throw new HttpsError("internal", e.message); }
+  throw new HttpsError("invalid-argument", "Acción desconocida.");
+});
+exports.notificarMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", region: REGION }, async event => {
+  const m = event.data && event.data.data();
+  if (!m || m.dir !== "in") return;
+  console.log("push", event.params.cid, await PUSH.onInbound(event.params.cid, m));
 });
 
 // Copiloto de ventas: análisis de la conversación, respuestas sugeridas y mejorar el texto del equipo

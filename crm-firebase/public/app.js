@@ -53,6 +53,7 @@ async function copy(text) {
 const errMsg = e => (e && (e.message || e.code)) || String(e);
 
 const ICONS = {
+  campana: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   hoy: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   conv: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
   embudo: '<rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/>',
@@ -277,15 +278,20 @@ function renderShell() {
         `<button data-go="${k}" class="${navOn(k) ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
       <div class="side-user"><button class="acc-btn" id="myAcc" title="Mi cuenta: cambiar contraseña"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div></button>
+        <button class="iconbtn ${S.pushOn ? "push-on" : ""}" id="pushBtn" title="${S.pushOn ? "Notificaciones activadas en este dispositivo" : "Activar notificaciones"}" aria-label="Notificaciones">${icon("campana")}</button>
         <button class="iconbtn" id="logout" title="Salir" aria-label="Salir">${icon("salir")}</button></div>
     </aside>
     <main class="main">
       <div class="topbar-mobile"><button class="iconbtn" id="menuBtn" aria-label="Menú">${icon("menu")}</button><img class="brand-logo sm" src="logo-hc.svg" alt=""><b class="brand-name">${APP_NAME}</b></div>
-      ${waAlert()}${!anyChannel() ? `<div class="banner"><span>Aún no hay canales conectados: los mensajes se abren en tu WhatsApp y los registras aquí. ${isAdmin() ? '<a href="#canales">Conectar canales</a>' : ""}</span></div>` : ""}
+      ${pushBanner()}${waAlert()}${!anyChannel() ? `<div class="banner"><span>Aún no hay canales conectados: los mensajes se abren en tu WhatsApp y los registras aquí. ${isAdmin() ? '<a href="#canales">Conectar canales</a>' : ""}</span></div>` : ""}
       <div class="view" id="view"></div>
     </main></div>`;
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
   $("#logout").onclick = () => fb.logout();
+  $("#pushBtn").onclick = () => S.pushOn ? openPushMenu() : enablePush();
+  if ($("#pushOnB")) $("#pushOnB").onclick = enablePush;
+  if ($("#pushX")) $("#pushX").onclick = () => { try { localStorage.setItem("crm-push-dismiss", String(Date.now())); } catch { } renderShell(); };
+  initPush();
   $("#myAcc").onclick = () => { $("#side").classList.remove("open"); openAccount(); };
   $$("[data-grp]").forEach(b => b.onclick = () => { const k = "crm-nav-" + b.dataset.grp; try { localStorage.setItem(k, navClosed(b.dataset.grp) ? "0" : "1"); } catch { } renderShell(); });
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
@@ -2513,6 +2519,87 @@ function viewEquipo(el) {
 const AUTH_ERR = { "auth/wrong-password": "La contraseña actual no es correcta.", "auth/invalid-credential": "La contraseña actual no es correcta.",
   "auth/weak-password": "La contraseña nueva es muy débil: usa al menos 6 caracteres.", "auth/too-many-requests": "Demasiados intentos. Espera unos minutos y vuelve a intentar.",
   "auth/requires-recent-login": "Por seguridad, sal y vuelve a entrar, y luego cambia la contraseña.", "auth/network-request-failed": "Sin conexión a internet." };
+// ======================= Notificaciones push =======================
+// Cada mensaje de un cliente avisa en este dispositivo (función notificarMensaje). En iPhone/iPad Apple solo lo permite
+// con House Chat agregado a la pantalla de inicio.
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = () => (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function pushState() {
+  if (!pushSupported()) return isIOS() && !isStandalone() ? "instalar" : "nosoportado";
+  if (Notification.permission === "denied") return "bloqueado";
+  return S.pushOn ? "on" : "off";
+}
+const b64uBytes = s => { const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)); return Uint8Array.from(b, ch => ch.charCodeAt(0)); };
+function pushBanner() {
+  const st = pushState();
+  if (!["off", "instalar"].includes(st) || !S.pushInitDone) return "";
+  let dis = 0; try { dis = Number(localStorage.getItem("crm-push-dismiss")) || 0; } catch { }
+  if (Date.now() - dis < 7 * 864e5) return "";
+  return `<div class="banner push-banner"><span>${icon("campana")} Activa las notificaciones para enterarte cada vez que un cliente te escriba.</span>
+    <span class="pb-act"><button class="btn sm primary" id="pushOnB">Activar</button><button class="iconbtn" id="pushX" aria-label="Ahora no" title="Ahora no">✕</button></span></div>`;
+}
+// Al cargar: si ya hay permiso, registra el service worker y vuelve a enviar la suscripción (por si cambió)
+async function initPush() {
+  if (S.pushInit) return; S.pushInit = true;
+  if (!pushSupported()) { S.pushInitDone = true; renderShell(); return; }
+  navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "open") { const h = new URL(e.data.url).hash; if (h) location.hash = h; } });
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("/");
+    const sub = reg && Notification.permission === "granted" ? await reg.pushManager.getSubscription() : null;
+    if (sub) { S.pushOn = true; await reg.update().catch(() => { }); fb.call("notificaciones", { action: "subscribe", subscription: sub.toJSON() }).catch(() => { }); }
+  } catch (e) { console.warn("notificaciones", e); }
+  S.pushInitDone = true; renderShell();
+}
+async function enablePush() {
+  const st = pushState();
+  if (st === "instalar") return showInstallHelp();
+  if (st === "nosoportado") return toast("Este navegador no permite notificaciones. Usa Chrome, Edge o Safari actualizado.");
+  if (st === "bloqueado") return toast("Las notificaciones están bloqueadas: permítelas para House Chat en los ajustes del navegador o del iPad.");
+  const perm = await Notification.requestPermission(); // primero, dentro del toque (Safari lo exige)
+  if (perm !== "granted") return toast("No se activaron las notificaciones.");
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+    const { publicKey } = await fb.call("notificaciones", { action: "key" });
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(publicKey) });
+    await fb.call("notificaciones", { action: "subscribe", subscription: sub.toJSON() });
+    S.pushOn = true; renderShell();
+    await fb.call("notificaciones", { action: "test" });
+    toast("Notificaciones activadas en este dispositivo ✅");
+  } catch (e) { toast("No se pudieron activar: " + errMsg(e)); }
+}
+function openPushMenu() {
+  const m = $("#modal");
+  m.innerHTML = `<div class="mh"><h2>Notificaciones</h2><button class="iconbtn" id="px" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><p style="margin:0">Están <b>activadas en este dispositivo</b>: te avisamos cada vez que un cliente escribe${S.me.role === "admin" ? "" : " (los chats asignados a ti y los que no tienen responsable)"}.</p></div>
+    <div class="mf"><button class="btn" id="poff">Desactivar aquí</button><span class="spacer"></span><button class="btn" id="ptest">Enviar prueba</button><button class="btn primary" id="pok">Listo</button></div>`;
+  $("#px").onclick = $("#pok").onclick = () => m.close();
+  $("#ptest").onclick = async () => { try { const r = await fb.call("notificaciones", { action: "test" }); toast(r.enviadas ? "Prueba enviada" : "No hay dispositivos activos"); } catch (e) { toast(errMsg(e)); } };
+  $("#poff").onclick = async () => {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/"), sub = reg && await reg.pushManager.getSubscription();
+      if (sub) { await fb.call("notificaciones", { action: "unsubscribe", endpoint: sub.endpoint }); await sub.unsubscribe(); }
+      S.pushOn = false; m.close(); renderShell(); toast("Notificaciones desactivadas en este dispositivo");
+    } catch (e) { toast(errMsg(e)); }
+  };
+  m.showModal();
+}
+// iPhone/iPad: primero hay que agregar House Chat a la pantalla de inicio
+function showInstallHelp() {
+  const m = $("#modal");
+  m.innerHTML = `<div class="mh"><h2>Notificaciones en ${/iPhone/.test(navigator.userAgent) ? "iPhone" : "iPad"}</h2><button class="iconbtn" id="ix" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><p style="margin:0 0 10px">Apple solo permite notificaciones cuando House Chat está en tu pantalla de inicio. Es un minuto:</p>
+      <ol class="steps"><li>En Safari, toca el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba).</li>
+        <li>Elige <b>Agregar a pantalla de inicio</b> y toca <b>Agregar</b>.</li>
+        <li>Abre <b>House Chat</b> desde el ícono nuevo e inicia sesión.</li>
+        <li>Toca <b>Activar</b> en el aviso de notificaciones (o la campana del menú) y permite las notificaciones.</li></ol></div>
+    <div class="mf"><span class="spacer"></span><button class="btn primary" id="iok">Entendido</button></div>`;
+  $("#ix").onclick = $("#iok").onclick = () => m.close();
+  m.showModal();
+}
+
 function openAccount() {
   const m = $("#modal");
   m.innerHTML = `<form id="af"><div class="mh"><h2>Mi cuenta</h2><button class="iconbtn" type="button" id="ax" aria-label="Cerrar">✕</button></div>
