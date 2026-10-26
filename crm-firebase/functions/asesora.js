@@ -3,6 +3,7 @@
 // pasa a una persona los cierres de pedido, negociaciones y quejas.
 const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
+const FICHA = require("./ficha");
 
 // Modelo de la asesora: Haiku 5.5 por defecto (rápido y económico); se puede cambiar en Asesora virtual
 const MODELS = { haiku: "claude-haiku-5-5", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
@@ -64,11 +65,12 @@ function kbText(kb = []) {
 function systemPrompt(cfg, kb) {
   const name = cfg.name || "Sofía";
   return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis).
-Cuando hablas de un producto, tu mensaje va como pie de su foto, así que escríbelo en párrafos cortos separados por una línea en blanco:
-1) en el primer mensaje de la conversación, un saludo y tu nombre ("¡Hola! ¿Cómo estás? Hablas con ${name} de ${cfg.empresa || "Casa Dorada"}.");
-2) cómo es el producto: "Así se ve la …" con material y para qué sirve, con 1 emoji;
-3) el precio: si tiene promoción u oferta, "queda en $X con el descuento incluido (antes $Y)"; si no, el precio normal (y el de por mayor si aplica).
-Máximo unas 80 palabras. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
+Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de texto):
+- Párrafos de 1 o 2 líneas separados por una línea en blanco. Usa el formato de WhatsApp: *negrita* para nombres de productos y precios, _cursiva_ para detalles suaves. Si enumeras, una opción por línea con "▫️ ". Máximo 1 emoji por párrafo.
+- En el primer mensaje de la conversación saluda y preséntate en una línea ("¡Hola! Soy ${name}, de ${cfg.empresa || "Casa Dorada"} ✨").
+- Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
+- Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 o 3 líneas con "▫️ " y el precio en negrita (con "Antes ~$X~" si hay descuento).
+- Cierra con una sola pregunta corta para seguir la conversación (medida, cantidad, ciudad…). Máximo unas 70 palabras en total. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
 Tu trabajo (modo mixto):
 - Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
@@ -120,11 +122,8 @@ function toMessages(msgs) {
 }
 
 // Pie de foto de un producto: nombre y precio (y por mayor, si aplica)
-function photoCaption(p, promos = []) {
-  const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos), before = p.compareAt > p.priceRetail ? p.compareAt : b.promo ? p.priceRetail : 0;
-  const price = before ? `Antes ${money(before)} · Ahora ${money(b.price)} (${b.promo ? b.promo.name : "Oferta"})` : money(p.priceRetail);
-  return `${p.name} · ${price}${p.priceWholesale && p.minWholesale ? ` · por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)}` : ""}`;
-}
+// Pie de cada foto: la ficha del producto (nombre, puntos clave, precio con descuento y por mayor)
+const photoCaption = (p, promos = []) => FICHA.productCard(p, promos);
 const nameTokens = s => norm(s).split(/[^a-z0-9.]+/).filter(w => w.length > 1);
 // Fotos que se envían solas cuando la asesora habla de productos: primero los que nombra en su respuesta,
 // si no nombra ninguno, los mejores resultados de su última búsqueda. Máximo 3, sin repetir fotos enviadas a este cliente en 24 h.
@@ -350,12 +349,13 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wai
     const auto = hasText && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {} }) : [];
     const photos = [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))];
     const sentNow = {};
-    // Un solo mensaje: la primera foto lleva la respuesta completa como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
-    // las demás fotos van con su nombre y precio
-    const joined = hasText && photos.length && text.length <= CAPTION_MAX;
+    // Un solo mensaje: la primera foto lleva la respuesta + su ficha como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
+    // las demás fotos van con su ficha
+    const lead = hasText && photos.length ? text + "\n\n" + photos[0].caption : "";
+    const joined = hasText && photos.length && lead.length <= CAPTION_MAX;
     if (hasText && !joined) await send({ cref, contact: fresh, text, byName: aiName });
     for (const [i, f] of photos.entries()) {
-      try { await send({ cref, contact: fresh, text: joined && i === 0 ? text : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
+      try { await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
       catch (e) {
         console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e));
         if (joined && i === 0) await send({ cref, contact: fresh, text, byName: aiName }); // la respuesta no se pierde si la foto falla
