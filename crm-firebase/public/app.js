@@ -1303,6 +1303,10 @@ function hydrateMedia(root) {
     catch { if (el.tagName === "IMG") el.alt = "No se pudo cargar la foto"; }
   });
 }
+// Formato de WhatsApp en las burbujas: *negrita*, _cursiva_, ~tachado~ (sobre texto ya escapado)
+const WA_MARK = /(^|[\s(¡¿"'])([*_~])([^\s*_~](?:[^*_~\n]*[^\s*_~])?)\2(?=$|[\s).,!?:;"'])/g;
+const fmtWa = t => esc(t).replace(WA_MARK, (m, pre, k, x) => `${pre}<${{ "*": "b", "_": "i", "~": "s" }[k]}>${x}</${{ "*": "b", "_": "i", "~": "s" }[k]}>`);
+const stripWa = t => String(t || "").replace(WA_MARK, "$1$3");
 function bubble(m, tail = true, withDate = true) {
   const t = `<span class="bt">${m.ts ? (withDate ? fmtDT(m.ts) : fmtTime(m.ts)) : ""}${m.dir === "out" ? ticks(m.status) : ""}</span>`;
   if (m.dir === "note") return `<div class="bubble note"><small class="bw">Nota interna${m.byName ? " · " + esc(m.byName) : ""}</small><span class="btx">${esc(m.text)}</span>${t}</div>`;
@@ -1312,7 +1316,7 @@ function bubble(m, tail = true, withDate = true) {
   // El texto "[Imagen]" o "[Audio]" sobra cuando ya se ve el archivo; queda solo el pie de foto, si lo hay
   let txt = pic && m.media ? String(m.text || "").replace(/^\[(Imagen|Audio|Nota de voz|Video|Documento|Sticker)\]\s*/, "") : m.text;
   if (pic && m.media && txt.trim() === String(m.media.filename || "").trim()) txt = "";
-  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${esc(txt)}</span>` : ""}${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
+  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${fmtWa(txt)}</span>` : ""}${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
 }
 function dayLabel(ms) {
   const d = new Date(ms), t = new Date(), y = new Date(Date.now() - DAY), same = (a, b) => a.toDateString() === b.toDateString();
@@ -1391,10 +1395,18 @@ async function sendText(c, text) {
 }
 const info = msg => ask(msg, "Entendido", null);
 // Elegir un producto del catálogo y enviar su foto con nombre y precio como pie de foto
-// Pie de foto en párrafos, como lo escribe la asesora: producto y descripción, luego el precio (con "antes" si hay descuento)
-const prodCaption = p => { const b = bestPromo(p), before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0, now = b ? b.price : p.priceRetail;
-  return `Te muestro: ${p.name} 😊${p.desc ? "\n" + p.desc + "." : ""}\n\n${before ? `Queda en ${money(now)} con el descuento incluido (antes ${money(before)}).` : `Su precio es ${money(p.priceRetail)}.`}`
-    + (p.priceWholesale && p.minWholesale ? `\nPor mayor, desde ${p.minWholesale} unidades: ${money(p.priceWholesale)} c/u.` : ""); };
+// Ficha del producto con el mismo formato que usa la asesora (functions/ficha.js): nombre, puntos clave y precio
+function prodCaption(p) {
+  const b = bestPromo(p), before = p.compareAt > p.priceRetail ? p.compareAt : b ? p.priceRetail : 0;
+  const pts = String(p.desc || "").split(/[.;\n•·]+/).map(x => x.trim().replace(/^[-–]\s*/, "")).filter(x => x.length > 2).slice(0, 3).map(x => "▫️ " + (x[0].toUpperCase() + x.slice(1)).slice(0, 90));
+  const L = [`*${p.name}*`];
+  if (p.category) L.push(`_${p.category}_`);
+  if (pts.length) L.push("", ...pts);
+  L.push("", before ? `*${money(b ? b.price : p.priceRetail)}*   Antes ~${money(before)}~` : `*${money(p.priceRetail)}*`);
+  if (b) L.push(`🏷️ ${b.promo.name}${b.promo.code ? ` · código *${b.promo.code}*` : ""}`); else if (before) L.push("🏷️ Precio de oferta");
+  if (p.priceWholesale && p.minWholesale) L.push(`Por mayor: desde ${p.minWholesale} unidades a ${money(p.priceWholesale)} c/u`);
+  return L.join("\n");
+}
 function pickProduct(c) {
   const m = $("#modal"); let q = "", sel = null;
   const draw = () => {
@@ -1468,7 +1480,7 @@ function viewConv(el) {
       <div class="ch-tabs"><button data-ch="" class="${!S.convCh ? "on" : ""}">Todos</button>${Object.keys(CHN).map(k => `<button data-ch="${k}" class="${S.convCh === k ? "on" : ""}" title="${CHN[k].label}">${chIcon(k)}</button>`).join("")}</div>
       ${list.map(x => { const last = Math.max(x.lastInboundAt || 0, x.lastOutboundAt || 0); return `<button class="conv ${c && x.id === c.id ? "on" : ""}" data-c="${x.id}">
         <span class="av-wrap"><span class="avatar c" style="${avColor(contactName(x))}">${esc((contactName(x) || "?")[0].toUpperCase())}</span>${chIcon(chOf(x), "badge")}</span><div class="meta"><div class="l1"><b>${esc(contactName(x))}</b><small class="tm ${x.unread ? "new" : ""}">${last ? whenLabel(last).replace(/^hoy /, "") : ""}</small></div>
-        <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? (isAiName(x.lastOutboundBy) ? "✨ " : ticks("sent")) : ""}${esc(x.lastMessage || "")}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
+        <div class="l1"><span class="l2">${x.lastMessageDir === "out" ? (isAiName(x.lastOutboundBy) ? "✨ " : ticks("sent")) : ""}${esc(stripWa(x.lastMessage || ""))}</span>${x.unread ? `<span class="unread">${x.unread}</span>` : ""}</div></div></button>`; }).join("")
         || `<div class="empty"><p>${anyChannel() ? "Aún no hay conversaciones. Cuando un cliente escriba por un canal conectado aparecerá aquí." : "Aquí verás las conversaciones de WhatsApp, Instagram, Messenger, Telegram y el chat web cuando los conectes en Canales."}</p></div>`}
     </div>
     <div class="chat-pane">${c ? `

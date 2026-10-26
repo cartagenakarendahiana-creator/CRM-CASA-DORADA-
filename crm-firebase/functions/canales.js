@@ -2,6 +2,7 @@
 // Los tokens viven en private/channels (las reglas impiden leerlo desde la app);
 // lo público (si está conectado, nombre del bot, colores del chat web) vive en settings/channels.
 const crypto = require("crypto");
+const { toTelegramHtml, stripFormat } = require("./ficha");
 
 const CHANNELS = {
   whatsapp: { prefix: "wa_", label: "WhatsApp", window: true },
@@ -62,7 +63,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
       const cfg = (await privateCfg()).telegram || {};
       if (!cfg.token) throw new Error("Telegram no está conectado.");
       const r = await fetchFn(`https://api.telegram.org/bot${cfg.token}/${image ? "sendPhoto" : "sendMessage"}`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(image ? { chat_id: extId, photo: image, caption: body } : { chat_id: extId, text: body }) });
+        body: JSON.stringify(image ? { chat_id: extId, photo: image, caption: toTelegramHtml(body), parse_mode: "HTML" } : { chat_id: extId, text: toTelegramHtml(body), parse_mode: "HTML" }) });
       const out = await r.json().catch(() => ({}));
       if (!out.ok) throw new Error(out.description || "Telegram rechazó el mensaje.");
       id = "tg" + out.result.message_id;
@@ -77,7 +78,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         return out.message_id;
       };
       if (image) id = await post({ attachment: { type: "image", payload: { url: image, is_reusable: true } } }); // Meta no admite pie de foto: el texto va aparte
-      if (body) id = await post({ text: body.slice(0, 1000) });
+      if (body) id = await post({ text: stripFormat(body).slice(0, 1000) }); // Messenger e Instagram no muestran *negrita*
     }
     // web: no hay envío externo, el widget lee el mensaje
     const now = Date.now(), shown = image ? "📷 " + (body || "Foto") : body;

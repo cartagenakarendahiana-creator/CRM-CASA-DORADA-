@@ -53,9 +53,11 @@
   function fmt(ts) { var d = new Date(ts); return d.toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" }); }
   function draw() {
     var html = '<div class="m out">' + esc(cfg.greeting) + '</div>';
-    msgs.forEach(function (m) { html += '<div class="m ' + m.dir + '">' + (m.dir === "out" && m.by ? '<span class="by">' + esc(m.by) + '</span>' : "") + (m.image && /^https:\/\//.test(m.image) ? '<a href="' + esc(m.image) + '" target="_blank" rel="noopener"><img class="pic" src="' + esc(m.image) + '" alt="Foto del producto" loading="lazy"></a>' : "") + esc(m.text) + '<small>' + fmt(m.ts) + '</small></div>'; });
+    msgs.forEach(function (m) { html += '<div class="m ' + m.dir + '">' + (m.dir === "out" && m.by ? '<span class="by">' + esc(m.by) + '</span>' : "") + (m.image && /^https:\/\//.test(m.image) ? '<a href="' + esc(m.image) + '" target="_blank" rel="noopener"><img class="pic" src="' + esc(m.image) + '" alt="Foto del producto" loading="lazy"></a>' : "") + fmt2(m.text) + '<small>' + fmt(m.ts) + '</small></div>'; });
     body.innerHTML = html; body.scrollTop = body.scrollHeight;
   }
+  // Formato de WhatsApp (*negrita*, _cursiva_, ~tachado~) sobre texto escapado
+  function fmt2(s) { return esc(s).replace(/(^|[\s(¡¿"'])([*_~])([^\s*_~](?:[^*_~\n]*[^\s*_~])?)\2(?=$|[\s).,!?:;"'])/g, function (m, pre, k, x) { var t = { "*": "b", "_": "i", "~": "s" }[k]; return pre + "<" + t + ">" + x + "</" + t + ">"; }); }
   function esc(s) { return String(s || "").replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   function poll() {
     fetch(API + "?sid=" + sid + "&after=" + last).then(function (r) { return r.json(); }).then(function (d) {
