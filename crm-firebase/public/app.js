@@ -291,6 +291,7 @@ function renderShell() {
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
     pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
+  hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
   if (active && $("#" + active)) { const el = $("#" + active); el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch { } }
 }
@@ -1268,13 +1269,44 @@ function renderHoyDetail(el, it) {
 const TICK1 = '<svg viewBox="0 0 16 11" class="tk"><path d="M1 5.5l3.5 3.5L11 2.5"/></svg>';
 const TICK2 = '<svg viewBox="0 0 18 11" class="tk"><path d="M1 5.5l3.5 3.5L11 2.5M7.5 8.5l.6.6L14.6 2.5"/></svg>';
 function ticks(st) { return st === "read" ? `<span class="tks read" title="Leído">${TICK2}</span>` : st === "delivered" ? `<span class="tks" title="Entregado">${TICK2}</span>` : st === "failed" ? "" : `<span class="tks" title="Enviado">${TICK1}</span>`; }
+// Archivo que mandó el cliente (lo guarda la función guardarMedia en un bucket privado): foto, audio con reproductor,
+// video o documento. El HTML lleva data-mpath y hydrateMedia lo descarga con la sesión de la persona.
+function mediaHtml(m) {
+  const md = m.media;
+  if (!md) return "";
+  const p = m.mediaPath && /^media\//.test(m.mediaPath) ? esc(m.mediaPath) : "";
+  if (!p) return `<span class="bmedia-wait">${m.mediaError ? "⚠ No se pudo cargar el archivo" : md.kind === "audio" ? "🎤 Cargando audio…" : md.kind === "image" ? "🖼 Cargando foto…" : "📎 Cargando archivo…"}</span>`;
+  const mime = m.mediaMime || "";
+  if (md.kind === "image" || /^image\//.test(mime)) return `<a class="bimg" data-mpath="${p}" target="_blank" rel="noopener"><img data-mpath="${p}" alt="Foto del cliente"></a>`;
+  if (md.kind === "audio") return `<div class="baudio"><audio controls preload="metadata" data-mpath="${p}"></audio><a data-mpath="${p}" download="audio.${esc((p.split(".").pop()))}">Descargar audio</a></div>`;
+  if (md.kind === "video") return `<video class="bvideo" controls preload="metadata" data-mpath="${p}"></video>`;
+  return `<a class="bdoc" data-mpath="${p}" target="_blank" rel="noopener" download="${esc(md.filename || "documento")}">📄 ${esc(md.filename || "Abrir documento")}</a>`;
+}
+const MEDIA_CACHE = new Map(); // ruta → URL local (blob) ya descargada
+async function mediaBlobUrl(path) {
+  if (!MEDIA_CACHE.has(path)) MEDIA_CACHE.set(path, (async () => {
+    const r = await fetch("/api/media?p=" + encodeURIComponent(path), { headers: { Authorization: "Bearer " + await fb.idToken() } });
+    if (!r.ok) throw new Error("media " + r.status);
+    return URL.createObjectURL(await r.blob());
+  })().catch(e => { MEDIA_CACHE.delete(path); throw e; }));
+  return MEDIA_CACHE.get(path);
+}
+function hydrateMedia(root) {
+  $$("[data-mpath]", root).forEach(async el => {
+    try { const u = await mediaBlobUrl(el.dataset.mpath); if (el.tagName === "A") el.href = u; else el.src = u; }
+    catch { if (el.tagName === "IMG") el.alt = "No se pudo cargar la foto"; }
+  });
+}
 function bubble(m, tail = true, withDate = true) {
   const t = `<span class="bt">${m.ts ? (withDate ? fmtDT(m.ts) : fmtTime(m.ts)) : ""}${m.dir === "out" ? ticks(m.status) : ""}</span>`;
   if (m.dir === "note") return `<div class="bubble note"><small class="bw">Nota interna${m.byName ? " · " + esc(m.byName) : ""}</small><span class="btx">${esc(m.text)}</span>${t}</div>`;
   const out = m.dir === "out";
   const who = out ? `<small class="bw${m.ai || isAiName(m.byName) ? " ai" : ""}">${esc(m.byName || "Equipo")}</small>` : "";
-  const pic = m.image && /^https:\/\//.test(m.image) ? `<a class="bimg" href="${esc(m.image)}" target="_blank" rel="noopener"><img src="${esc(m.image)}" alt="Foto enviada" loading="lazy"></a>` : "";
-  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${m.text ? `<span class="btx">${esc(m.text)}</span>` : ""}${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
+  const pic = m.image && /^https:\/\//.test(m.image) ? `<a class="bimg" href="${esc(m.image)}" target="_blank" rel="noopener"><img src="${esc(m.image)}" alt="Foto enviada" loading="lazy"></a>` : mediaHtml(m);
+  // El texto "[Imagen]" o "[Audio]" sobra cuando ya se ve el archivo; queda solo el pie de foto, si lo hay
+  let txt = pic && m.media ? String(m.text || "").replace(/^\[(Imagen|Audio|Nota de voz|Video|Documento|Sticker)\]\s*/, "") : m.text;
+  if (pic && m.media && txt.trim() === String(m.media.filename || "").trim()) txt = "";
+  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${esc(txt)}</span>` : ""}${t}${m.status === "failed" ? '<span class="bfail">⚠ No se entregó</span>' : ""}</div>`;
 }
 function dayLabel(ms) {
   const d = new Date(ms), t = new Date(), y = new Date(Date.now() - DAY), same = (a, b) => a.toDateString() === b.toDateString();
@@ -1764,7 +1796,7 @@ function openContact(id) {
     </div>
     <div class="mf">${id && isAdmin() ? '<button class="btn danger" type="button" id="cdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="cc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
   let unsub = null;
-  if (id) unsub = fb.watch(`contacts/${id}/messages`, list => { const h = $("#chist"); if (h) h.innerHTML = list.map(m => bubble(m)).join("") || '<span class="muted">Sin mensajes ni notas.</span>'; }, { orderBy: ["ts", "desc"], limit: 50 });
+  if (id) unsub = fb.watch(`contacts/${id}/messages`, list => { const h = $("#chist"); if (h) { h.innerHTML = list.map(m => bubble(m)).join("") || '<span class="muted">Sin mensajes ni notas.</span>'; hydrateMedia(h); } }, { orderBy: ["ts", "desc"], limit: 50 });
   const close = () => { unsub && unsub(); m.close(); };
   m.onclose = () => { unsub && unsub(); };
   $("#cx").onclick = $("#cc").onclick = close;

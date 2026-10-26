@@ -70,7 +70,7 @@ Tu trabajo (modo mixto):
 - Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
 - Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide descuento o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
-- Si recibes un audio, imagen o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
+- Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Si recibes un audio, video o documento que no puedes ver, pídele amablemente que te lo escriba en texto.
 - No des descuentos, no confirmes pedidos, pagos, envíos ni fechas de entrega.
 
 Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por el mismo chat: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
@@ -89,16 +89,24 @@ function contactText(c) {
 }
 
 // Historial de WhatsApp → turnos user/assistant (las notas internas no se incluyen)
+// Historial para Claude. Las fotos que mandó el cliente (las 3 más recientes, ya leídas en m.imageData) van como imágenes para que la asesora las vea.
+const IMG_MIME = /^image\/(jpeg|png|gif|webp)$/;
+const isImg = m => m.dir === "in" && m.mediaPath && IMG_MIME.test(m.mediaMime || "");
 function toMessages(msgs) {
-  const out = [];
+  const out = [], seen = new Set(msgs.filter(m => isImg(m) && m.imageData).slice(-3));
   for (const m of msgs) {
     if (m.dir !== "in" && m.dir !== "out") continue;
     const role = m.dir === "in" ? "user" : "assistant";
-    const text = String(m.text || "").trim() || "[mensaje vacío]";
+    const blocks = [{ type: "text", text: String(m.text || "").trim() || "[mensaje vacío]" }];
+    if (seen.has(m)) blocks.push({ type: "image", source: { type: "base64", media_type: m.mediaMime, data: m.imageData } });
     const last = out[out.length - 1];
-    if (last && last.role === role) last.content += "\n" + text; else out.push({ role, content: text });
+    if (last && last.role === role) {
+      const prev = last.content[last.content.length - 1];
+      if (prev.type === "text" && blocks[0].type === "text") { prev.text += "\n" + blocks[0].text; last.content.push(...blocks.slice(1)); }
+      else last.content.push(...blocks);
+    } else out.push({ role, content: blocks });
   }
-  if (out.length && out[0].role === "assistant") out.unshift({ role: "user", content: "(Inicio de la conversación)" });
+  if (out.length && out[0].role === "assistant") out.unshift({ role: "user", content: [{ type: "text", text: "(Inicio de la conversación)" }] });
   return out;
 }
 
@@ -235,7 +243,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
 }
 
 // Decide si responde, arma el contexto, llama a Claude y envía la respuesta
-async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
   const cref = db.doc("contacts/" + cid);
   const cfgSnap = await db.doc("settings/asesora").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
@@ -244,6 +252,12 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => n
   if (!msnap.exists || msnap.get("dir") !== "in") return "no-entrante";
   const ts = msnap.get("ts") || 0;
   if (debounce) await wait(debounce);
+  // Si el cliente mandó una foto, espera (hasta ~10 s) a que guardarMedia la deje lista para verla
+  for (let i = 0; i < 5 && msnap.get("media") && msnap.get("media").kind === "image"; i++) {
+    const cur = await cref.collection("messages").doc(mid).get();
+    if (cur.get("mediaPath") || cur.get("mediaError")) break;
+    await wait(2000);
+  }
 
   // Reclama el turno: solo responde al último mensaje y una sola vez (los disparadores pueden repetirse)
   const claim = await db.runTransaction(async t => {
@@ -268,6 +282,11 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => n
   ]);
   const kb = ks.docs.map(d => d.data()).filter(k => k.on !== false && k.title).sort((a, b) => String(a.title).localeCompare(String(b.title)));
   const history = hs.docs.map(d => d.data()).reverse();
+  // Lee del bucket privado las 3 fotos más recientes del cliente (Claude acepta hasta ~5 MB por imagen)
+  if (loadMedia) for (const m of history.filter(isImg).slice(-3)) {
+    try { const f = await loadMedia(m.mediaPath); if (f.buf.length <= 4.5 * 1024 * 1024) m.imageData = f.buf.toString("base64"); }
+    catch (e) { console.error("foto del cliente", e.message); }
+  }
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
   const tools = makeTools({ db, admin, cref, contact, products, aiName, kb });

@@ -1,0 +1,45 @@
+# Publica House Chat en Firebase cada vez que cambia main (o a mano desde la pestaña Actions).
+# Entra a Google sin claves guardadas (Workload Identity Federation): el permiso se crea una sola vez
+# con crm-firebase/scripts/configurar-publicacion.sh en Cloud Shell.
+name: Publicar House Chat
+
+on:
+  push:
+    branches: [main]
+    paths: ["crm-firebase/**", ".github/workflows/publicar.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: crm-firebase
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/370958688712/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-deploy@crm-casa-dorada.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Datos públicos de WhatsApp para las funciones
+        run: printf 'WA_PHONE_ID=1306214379253026\nWA_WABA_ID=1144012024856265\n' > functions/.env
+      - name: Bucket privado para las fotos y audios de los clientes
+        run: |
+          gcloud storage buckets describe gs://crm-casa-dorada-media >/dev/null 2>&1 \
+            || gcloud storage buckets create gs://crm-casa-dorada-media --project=crm-casa-dorada --location=us-east1 \
+                 --uniform-bucket-level-access --public-access-prevention
+      - name: Publicar en Firebase (página, reglas y funciones)
+        run: npx -y firebase-tools@latest deploy --project crm-casa-dorada --force --non-interactive
