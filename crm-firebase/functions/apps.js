@@ -104,6 +104,15 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const out = await shopifyEvent(String(req.get("x-shopify-topic") || ""), req.body || {});
     res.status(200).json({ ok: true, out });
   }
+  // Foto de la variante (si tiene una propia) o la principal del producto; el CDN de Shopify la entrega a 1200 px
+  function shopifyImage(p, v = {}) {
+    const imgs = p.images || [];
+    const src = (v.featured_image && v.featured_image.src) || (v.image_id && (imgs.find(i => i.id === v.image_id) || {}).src)
+      || (imgs.find(i => (i.variant_ids || []).includes(v.id)) || {}).src || (p.image && p.image.src) || (imgs[0] || {}).src || "";
+    if (!src) return "";
+    const url = src.startsWith("//") ? "https:" + src : src;
+    return /cdn\.shopify\.com/.test(url) && !/[?&]width=/.test(url) ? url + (url.includes("?") ? "&" : "?") + "width=1200" : url;
+  }
   // Guarda un producto de Shopify. Si tiene variantes con precios distintos (tallas, medidas), crea una ficha por variante.
   async function saveShopifyProduct(p, active) {
     const vs = (p.variants || []).length ? p.variants : [{}];
@@ -111,7 +120,8 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", updatedAt: Date.now(), updatedBy: "Shopify" };
     for (const v of multi ? vs : [vs[0]]) {
       const vt = multi && v.title && v.title !== "Default Title" ? " · " + v.title : "";
-      await db.doc("products/shp_" + p.id + (multi ? "_" + v.id : "")).set({ ...base, name: p.title + vt, priceRetail: Math.round(Number(v.price) || 0), sku: v.sku || "" }, { merge: true });
+      await db.doc("products/shp_" + p.id + (multi ? "_" + v.id : "")).set({ ...base, name: p.title + vt, priceRetail: Math.round(Number(v.price) || 0), sku: v.sku || "",
+        image: shopifyImage(p, multi ? v : {}) }, { merge: true });
     }
     return multi ? vs.length : 1;
   }
@@ -248,5 +258,5 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     throw new Error("Acción desconocida.");
   }
 
-  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, siigoInvoice, manage };
+  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, siigoInvoice, manage };
 };

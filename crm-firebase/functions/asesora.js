@@ -45,6 +45,8 @@ const TOOLS = [
   { name: "pasar_a_humano", description: "Pasa la conversación a una persona del equipo y deja de responder en este chat. Úsala para: cerrar un pedido (datos de envío, pago, confirmación), negociar precio o descuentos, quejas o reclamos, garantías, preguntas que el catálogo y las instrucciones no responden, o si el cliente pide hablar con una persona.",
     input_schema: obj({ motivo: { type: "string", enum: ["Cerrar pedido", "Negociación", "Queja o reclamo", "Pide una persona", "No sé la respuesta", "Otro"] },
       resumen: { type: "string", description: "Resumen para la persona que toma el chat: qué quiere el cliente y qué falta" } }, ["motivo", "resumen"]) },
+  { name: "enviar_foto_producto", description: "Envía al cliente la foto de un producto del catálogo, con su nombre y precio como pie de foto. Úsala cuando pida ver el producto o cuando una foto ayude a decidir, solo con productos que tengan tiene_foto=true. Máximo 3 fotos por respuesta. La foto llega después de tu mensaje de texto.",
+    input_schema: obj({ producto_id: { type: "string", description: "id del producto (de buscar_productos)" } }, ["producto_id"]) },
   { name: "buscar_conocimiento", description: "Busca en la base de conocimiento de la empresa (políticas, envíos, garantías, cuidados de productos, preguntas frecuentes). Úsala antes de responder algo que no esté en el catálogo.",
     input_schema: obj({ consulta: { type: "string", description: "Tema a buscar, ej. 'garantía' o 'envíos a Cali'" } }, ["consulta"]) },
 ].map(t => ({ ...t, strict: true }));
@@ -63,6 +65,7 @@ function systemPrompt(cfg, kb) {
 Tu trabajo (modo mixto):
 - Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
 - Explica el precio por mayor cuando aplique ("desde X unidades queda a $Y").
+- Si el cliente quiere ver un producto, o una foto le ayuda a decidir, envíala con enviar_foto_producto (si el producto tiene foto). Nunca pegues enlaces de imágenes en el texto.
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
 - Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma.
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
@@ -102,8 +105,9 @@ function toMessages(msgs) {
 function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
   const active = products.filter(p => p.active !== false);
   const pub = p => ({ id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
-    precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null });
+    precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null, tiene_foto: !!p.image });
   const done = []; // lo que hizo la asesora, para la nota interna
+  const photos = []; // fotos de productos para enviar después del texto
   const run = {
     async buscar_conocimiento({ consulta }) {
       if (!kb.length) return { articulos: [], aviso: "La empresa no ha cargado base de conocimiento." };
@@ -111,6 +115,16 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       const scored = kb.map(k => { const hay = norm(k.title + " " + k.content); return [k, words.filter(w => hay.includes(w)).length + (norm(k.title).includes(norm(consulta)) ? 3 : 0)]; })
         .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
       return scored.length ? { articulos: scored.map(([k]) => ({ titulo: k.title, contenido: String(k.content).slice(0, 4000) })) } : { articulos: [], aviso: "No hay nada sobre eso en la base de conocimiento." };
+    },
+    async enviar_foto_producto({ producto_id }) {
+      const p = active.find(x => x.id === producto_id);
+      if (!p) return { error: "Ese id no existe en el catálogo. Búscalo con buscar_productos." };
+      if (!p.image) return { error: "Ese producto no tiene foto cargada. Descríbelo con palabras." };
+      if (photos.some(f => f.id === p.id)) return { ok: true, aviso: "Esa foto ya está en la lista para enviar." };
+      if (photos.length >= 3) return { error: "Ya vas a enviar 3 fotos en esta respuesta; no envíes más." };
+      photos.push({ id: p.id, image: p.image, caption: `${p.name} · ${money(p.priceRetail)}${p.priceWholesale && p.minWholesale ? ` (por mayor desde ${p.minWholesale}: ${money(p.priceWholesale)})` : ""}` });
+      done.push("envió la foto de " + p.name);
+      return { ok: true, aviso: "La foto se enviará justo después de tu mensaje. No pegues enlaces en el texto." };
     },
     async buscar_productos({ consulta }) {
       const words = norm(consulta).split(/\s+/).filter(w => w.length > 1);
@@ -176,13 +190,13 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [] }) {
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, kb };
+  return { run, done, photos, kb };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
 function validInput(name, input) {
   if (!input || typeof input !== "object") return false;
-  const req = { buscar_productos: ["consulta"], buscar_conocimiento: ["consulta"], crear_cotizacion: ["items"], agendar_seguimiento: ["fecha", "accion"], pasar_a_humano: ["motivo", "resumen"] }[name] || [];
+  const req = { enviar_foto_producto: ["producto_id"], buscar_productos: ["consulta"], buscar_conocimiento: ["consulta"], crear_cotizacion: ["items"], agendar_seguimiento: ["fecha", "accion"], pasar_a_humano: ["motivo", "resumen"] }[name] || [];
   return req.every(k => input[k] !== undefined) && (name !== "crear_cotizacion" || Array.isArray(input.items));
 }
 
@@ -269,16 +283,20 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, wait = ms => n
     await cref.set({ aiHandoff: { reason: "Otro", summary: "La asesora virtual no pudo responder este mensaje.", at: Date.now() } }, { merge: true });
     tools.done.push("no pudo responder y pasó el chat a una persona");
   }
-  const text = (res.text || "").trim();
-  if (text && text !== "[SIN RESPUESTA]") {
+  const text = (res.text || "").trim(), hasText = text && text !== "[SIN RESPUESTA]";
+  if (hasText || tools.photos.length) {
     // Si una persona respondió mientras la IA pensaba, no enviar
     const fresh = (await cref.get()).data();
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
-    await send({ cref, contact: fresh, text, byName: aiName });
+    if (hasText) await send({ cref, contact: fresh, text, byName: aiName });
+    for (const f of tools.photos) {
+      try { await send({ cref, contact: fresh, text: f.caption, image: f.image, byName: aiName }); }
+      catch (e) { console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e)); }
+    }
     if ((fresh.stage || "Nuevo") === "Nuevo") await cref.set({ stage: "Contactado", stageAt: Date.now() }, { merge: true });
   }
   if (tools.done.length) await cref.collection("messages").add({ dir: "note", text: `${aiName}: ` + tools.done.join("; ") + ".", ts: Date.now(), by: "asesora", byName: aiName });
-  return text && text !== "[SIN RESPUESTA]" ? "respondido" : "sin-texto";
+  return hasText || tools.photos.length ? "respondido" : "sin-texto";
 }
 
 module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS };

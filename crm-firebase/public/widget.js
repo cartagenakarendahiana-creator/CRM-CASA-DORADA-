@@ -38,6 +38,7 @@
     '.foot button:disabled{opacity:.5}.foot button svg{width:18px;height:18px}' +
     '.ask{padding:14px;display:grid;gap:8px;background:#fff;border-top:1px solid #eee}.ask input{border:1px solid #ddd;border-radius:10px;padding:9px 12px;font-size:14px}' +
     '.ask button{border:0;border-radius:10px;padding:10px;background:var(--c);color:#fff;font-weight:600;cursor:pointer}.ask p{margin:0;font-size:13px;color:#555}' +
+    '.m .pic{display:block;width:100%;max-width:240px;border-radius:8px;margin:2px 0 6px}' +
     '.brand{text-align:center;font-size:10.5px;color:#999;padding:4px 0 6px;background:#f7f7f7}' +
     '</style>' +
     '<div class="panel" part="panel"><div class="head"><div class="dot">CD</div><div><b class="t"></b><small>Respondemos en minutos</small></div><button class="x" aria-label="Cerrar">×</button></div>' +
@@ -52,7 +53,7 @@
   function fmt(ts) { var d = new Date(ts); return d.toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" }); }
   function draw() {
     var html = '<div class="m out">' + esc(cfg.greeting) + '</div>';
-    msgs.forEach(function (m) { html += '<div class="m ' + m.dir + '">' + (m.dir === "out" && m.by ? '<span class="by">' + esc(m.by) + '</span>' : "") + esc(m.text) + '<small>' + fmt(m.ts) + '</small></div>'; });
+    msgs.forEach(function (m) { html += '<div class="m ' + m.dir + '">' + (m.dir === "out" && m.by ? '<span class="by">' + esc(m.by) + '</span>' : "") + (m.image && /^https:\/\//.test(m.image) ? '<a href="' + esc(m.image) + '" target="_blank" rel="noopener"><img class="pic" src="' + esc(m.image) + '" alt="Foto del producto" loading="lazy"></a>' : "") + esc(m.text) + '<small>' + fmt(m.ts) + '</small></div>'; });
     body.innerHTML = html; body.scrollTop = body.scrollHeight;
   }
   function esc(s) { return String(s || "").replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
