@@ -354,7 +354,7 @@ async function productPhoto(url, px) {
 const cardHash = (p, d) => crypto.createHash("sha1").update([d.now, d.before, d.promo && d.promo.id, d.promo && d.promo.code, d.promo && d.promo.end, p.name, p.image].join("|")).digest("hex").slice(0, 12);
 async function renderCard(p, d, photo) {
   const n = FICHA.splitName(p.name), co = await db.doc("settings/cotizacion").get();
-  return TARJETA.card({ photo, title: n.title, variant: n.variant, before: d.before, now: d.now, pct: d.pct,
+  return TARJETA.card({ photo, title: FICHA.shortTitle(n.title), variant: n.variant, before: d.before, now: d.now, pct: d.pct,
     promoName: d.promo ? d.promo.name : "Precio de oferta", code: d.promo && d.promo.code, until: d.promo && longDay(d.promo.end), company: co.exists && co.get("nombre") });
 }
 // Tarjeta de oferta CON la foto del producto: se dibuja una vez, se guarda en el bucket (tarjetas/) y se devuelve su enlace.

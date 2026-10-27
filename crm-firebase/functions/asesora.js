@@ -444,13 +444,12 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
       try { await send({ cref, contact: fresh, text: `*Catálogo · Cama ${cat.label}*\n${catDoc.total} productos con fotos y precios`, document: { url: catDoc.url, filename: catDoc.filename }, byName: aiName }); }
       catch (e) { console.error("catálogo", e); tools.done.push("no pudo enviar el catálogo en PDF: " + (e.message || e)); }
     }
-    // Tarjeta de oferta: reemplaza la foto del producto con descuento (la tarjeta trae la foto adentro) y lleva su ficha como texto.
-    // Máximo 2 por respuesta y una vez al día por producto; no en el catálogo por medida.
-    let cards = 0;
+    // Tarjeta de oferta: REEMPLAZA la foto de todo producto con descuento (la tarjeta trae la foto adentro), así que no suma
+    // mensajes: va siempre que se muestre ese producto (no en el catálogo por medida, que ya es un PDF).
     const cardFor = f => {
-      if (!discountCard || cat || cards >= 2) return null;
+      if (!discountCard || cat) return null;
       const p = products.find(x => x.id === f.id), d = p && FICHA.discountOf(p, promos);
-      return d && Date.now() - ((fresh.aiPhotos || {})["card_" + p.id] || 0) > DAY_MS ? { p, d } : null;
+      return d ? { p, d } : null;
     };
     for (const [i, f] of photos.entries()) {
       // Producto con descuento: UNA sola imagen (la tarjeta de oferta con la foto del producto) y la ficha como texto.
@@ -460,9 +459,11 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
         const r = await discountCard(c.p, c.d).catch(e => ({ reason: e.message }));
         if (r.url) image = r.url; else { tools.done.push(`envió la foto normal de ${c.p.name}: no pudo armar la tarjeta de oferta (${r.reason})`); c = null; }
       }
+      // Con tarjeta, el texto no repite lo que ya dice la imagen (medida, color, precios): nombre y puntos clave
+      const caption = c ? FICHA.cardCaption(c.p) : f.caption;
       try {
-        await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image, byName: aiName }); sentNow[f.id] = Date.now();
-        if (c) { sentNow["card_" + c.p.id] = Date.now(); cards++; tools.done.push(`envió la tarjeta de oferta de ${c.p.name} (-${c.d.pct}%)`); }
+        await send({ cref, contact: fresh, text: joined && i === 0 ? text + "\n\n" + caption : caption, image, byName: aiName }); sentNow[f.id] = Date.now();
+        if (c) tools.done.push(`envió la tarjeta de oferta de ${c.p.name} (-${c.d.pct}%)`);
       } catch (e) {
         console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e));
         if (joined && i === 0) await send({ cref, contact: fresh, text, byName: aiName }); // la respuesta no se pierde si la foto falla

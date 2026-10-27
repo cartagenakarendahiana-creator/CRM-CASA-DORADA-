@@ -2,7 +2,7 @@
 // de esa medida y los que sirven para cualquier medida (almohadas, cojines…), agrupa las variantes de color de un
 // mismo producto y los ordena por tipo (kits, sábanas, plumones, cobijas, protectores…). Se envía como catálogo en PDF.
 const PROMOS = require("./promos");
-const { splitName, discountOf } = require("./ficha");
+const { splitName, discountOf, shortTitle } = require("./ficha");
 
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 const money = n => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
@@ -36,11 +36,6 @@ function sectionOf(p) {
 }
 const isBed = p => !!sectionOf(p) && !/toalla|cortina|tapete|mantel|individual de mesa/.test(norm(p.name));
 
-// Nombre corto para el catálogo: sin la parte publicitaria después de " | ", " – ", " — " o " - "
-function shortTitle(t) {
-  const first = String(t || "").split(/\s+[|–—-]\s+/)[0].trim();
-  return first.length >= 12 ? first : String(t || "").trim();
-}
 // Colores de la variante, sin la parte de la medida ("Queen (1.60 mt) · azul indigo" → "azul indigo")
 const colorOf = variant => variant.split(" · ").filter(x => !sizeOf(x) && !/^\d+([.,]\d+)?( ?x ?\d+([.,]\d+)?)? ?(mts?|cm)?$/.test(norm(x).trim())).join(" · ").trim();
 
