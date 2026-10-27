@@ -75,6 +75,7 @@ Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de t
 - Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
 - Productos con descuento (en oferta o con promoción): en vez de la foto sola, el sistema envía una tarjeta de oferta con la foto del producto, el porcentaje, el precio antes y el de ahora, junto con su ficha. Tú solo menciona el descuento con entusiasmo en una frase, sin repetir las cifras.
 - Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 líneas cortas con "• " y el precio en negrita (con "Antes ~$X~" si hay descuento).
+- Fotos de colores: si un producto tiene foto_compartida=true, esa foto es de referencia (los colores sin foto propia usan la misma imagen) y debajo de ella van escritos los colores disponibles. No envíes la misma foto varias veces ni digas que la foto muestra un color que no muestra: envía una sola foto y nombra los colores en tu texto. Si cada color tiene su propia foto, puedes enviar hasta 4.
 - Color, medida o referencia: si el cliente pide uno que no está en el catálogo (por ejemplo una sábana verde y no hay verde), díselo claro y primero, y pregúntale si quiere ver los colores que sí hay. No envíes la foto de un producto de otro color como si fuera el que pidió; muestra una alternativa (con enviar_foto_producto) solo si te la pide o acepta, aclarando que es de otro color.
 - Si el cliente quiere ver todo o todas las opciones para su cama (ej. "quiero de todo para mi cama doble", "qué tienen para queen"), usa catalogo_por_medida con la medida. Si no dijo la medida, pregúntale cuál: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00).
 - Cierra con una sola pregunta corta para seguir la conversación (medida, cantidad, ciudad…). Máximo unas 70 palabras en total. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
@@ -159,22 +160,51 @@ const saysNotAvailable = text => NOT_AVAILABLE.test(norm(text));
 function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), max = 3, asked = "" }) {
   if (saysNotAvailable(text)) return [];
   const t = " " + nameTokens(text).join(" ") + " ";
-  const fresh = p => !queued.some(q => q.id === p.id) && now - (sentAt[p.id] || 0) > DAY_MS;
+  // Nunca la misma foto dos veces (las variantes de color sin foto propia comparten la del producto)
+  const fresh = p => !queued.some(q => q.id === p.id || q.image === p.image) && now - (sentAt[p.id] || 0) > DAY_MS;
   // Si el cliente pidió un color, solo productos sin color en el nombre o de ese color
   const want = colorsIn(asked);
   const colorOk = p => { if (!want.length) return true; const has = colorsIn(p.name); return !has.length || has.some(c => want.includes(c)); };
   const withImg = found.filter(p => p.image && colorOk(p));
   const named = withImg.filter(p => { const tk = nameTokens(p.name); return tk.length && tk.filter(w => t.includes(" " + w + " ")).length / tk.length >= 0.7; });
   // Si nombra productos, solo esos (aunque ya se hayan enviado: no se cambia por otro parecido)
-  return (named.length ? named : withImg).filter(fresh).slice(0, Math.max(0, max - queued.length));
+  const seen = new Set();
+  return (named.length ? named : withImg).filter(fresh).filter(p => !seen.has(p.image) && seen.add(p.image)).slice(0, Math.max(0, max - queued.length));
 }
 
 function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false }) {
   const active = products.filter(p => p.active !== false);
+  // Fotos compartidas: en Shopify, los colores sin foto propia usan la foto principal del producto
+  const imageUses = new Map();
+  for (const p of active) if (p.image) imageUses.set(p.image, (imageUses.get(p.image) || 0) + 1);
+  const sharedPhoto = p => !!p.image && imageUses.get(p.image) > 1;
+  // Colores del mismo producto en la misma medida ("Doble (1.40)" → camel, gris, azul…)
+  const siblingColors = p => {
+    const { title } = FICHA.splitName(p.name), size = MEDIDAS.sizeOf(p.name), out = [];
+    for (const x of active) {
+      if (norm(FICHA.splitName(x.name).title) !== norm(title) || MEDIDAS.sizeOf(x.name) !== size) continue;
+      const c = MEDIDAS.colorOf(FICHA.splitName(x.name).variant);
+      if (c && !out.some(o => norm(o) === norm(c))) out.push(c);
+    }
+    return out;
+  };
+  const sizePart = p => FICHA.splitName(p.name).variant.split(" · ").filter(x => MEDIDAS.sizeOf(x)).join(" · ");
+  // Pie de foto: si la foto es compartida, en vez de un color (que la foto quizá no muestra) van los colores disponibles
+  const captionFor = p => {
+    if (!sharedPhoto(p)) return photoCaption(p, promos);
+    const cols = siblingColors(p);
+    return FICHA.productCard(p, promos, { variant: [sizePart(p), cols.length > 1 ? "Colores: " + cols.join(", ") : cols[0] || ""].filter(Boolean).join(" · ") });
+  };
+  const cardText = p => {
+    if (!sharedPhoto(p)) return FICHA.cardCaption(p);
+    const cols = siblingColors(p);
+    return FICHA.cardCaption(p, { colors: cols.length > 1 ? "Colores: " + cols.join(", ") : "" });
+  };
   const pub = p => {
     const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos), other = PROMOS.promosFor(p, promos).filter(x => x !== b.promo);
     return { id: p.id, nombre: p.name, categoria: p.category || "", descripcion: p.desc || "", precio_detal: p.priceRetail || 0,
       precio_mayor: p.priceWholesale || null, mayor_desde_unidades: p.minWholesale || null, tiene_foto: !!p.image,
+      ...(sharedPhoto(p) ? { foto_compartida: true, colores_disponibles: siblingColors(p) } : {}),
       ...(p.compareAt > p.priceRetail ? { en_oferta: true, precio_antes_de_la_oferta: p.compareAt } : {}),
       ...(b.promo ? { precio_con_promocion: b.price, promocion: `${b.promo.name}: ${PROMOS.conditionText(b.promo)}` } : {}),
       ...(other.length ? { otras_promociones: other.map(x => `${x.name}: ${PROMOS.conditionText(x)}`) } : {}) };
@@ -213,8 +243,9 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       if (!p) return { error: "Ese id no existe en el catálogo. Búscalo con buscar_productos." };
       if (!p.image) return { error: "Ese producto no tiene foto cargada. Descríbelo con palabras." };
       if (photos.some(f => f.id === p.id)) return { ok: true, aviso: "Esa foto ya está en la lista para enviar." };
-      if (photos.length >= 3) return { error: "Ya vas a enviar 3 fotos en esta respuesta; no envíes más." };
-      photos.push({ id: p.id, image: p.image, caption: photoCaption(p, promos) });
+      if (photos.some(f => f.image === p.image)) return { ok: true, aviso: "Ese color usa la MISMA foto que ya vas a enviar (no tiene foto propia en la tienda). No se repite: los colores disponibles van escritos debajo de esa foto." };
+      if (photos.length >= 4) return { error: "Ya vas a enviar 4 fotos en esta respuesta; no envíes más." };
+      photos.push({ id: p.id, image: p.image, caption: captionFor(p) });
       done.push("envió la foto de " + p.name);
       return { ok: true, aviso: "La foto se enviará justo después de tu mensaje. No pegues enlaces en el texto." };
     },
@@ -290,7 +321,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         : "Listo. Dile que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, catalog, found, kb, promos, saleText, quoteAuto, quoteTried };
+  return { run, done, photos, docs, catalog, found, kb, promos, saleText, quoteAuto, quoteTried, captionFor, cardText };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -432,7 +463,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     // Si el PDF no se puede generar, en su lugar va una foto por producto con su ficha corta (nunca una lista larga).
     let catDoc = null;
     if (cat && catalogLink) { try { catDoc = await catalogLink(cat.key); } catch (e) { console.error("catálogo pdf", e.message); } }
-    const photos = [...tools.photos, ...(cat ? (catDoc ? [] : cat.photos.filter(f => !tools.photos.some(q => q.id === f.id))) : auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) })))];
+    const photos = [...tools.photos, ...(cat ? (catDoc ? [] : cat.photos.filter(f => !tools.photos.some(q => q.id === f.id))) : auto.map(p => ({ id: p.id, image: p.image, caption: tools.captionFor(p) })))];
     const outText = cat && !hasText ? `Te comparto todo lo que tenemos para cama ${cat.label} 🛏️` : text;
     const sentNow = {};
     // Un solo mensaje: la primera foto lleva la respuesta + su ficha como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
@@ -460,7 +491,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
         if (r.url) image = r.url; else { tools.done.push(`envió la foto normal de ${c.p.name}: no pudo armar la tarjeta de oferta (${r.reason})`); c = null; }
       }
       // Con tarjeta, el texto no repite lo que ya dice la imagen (medida, color, precios): nombre y puntos clave
-      const caption = c ? FICHA.cardCaption(c.p) : f.caption;
+      const caption = c ? tools.cardText(c.p) : f.caption;
       try {
         await send({ cref, contact: fresh, text: joined && i === 0 ? text + "\n\n" + caption : caption, image, byName: aiName }); sentNow[f.id] = Date.now();
         if (c) tools.done.push(`envió la tarjeta de oferta de ${c.p.name} (-${c.d.pct}%)`);

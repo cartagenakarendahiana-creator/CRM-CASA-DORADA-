@@ -27,12 +27,14 @@ function shortTitle(t) {
 // Categorías de Shopify que no le dicen nada al cliente
 const GENERIC_CAT = /^(f[ií]sico|digital|otros?|default|general|productos?|varios)$/i;
 const catOf = p => (p.category && !GENERIC_CAT.test(String(p.category).trim()) ? p.category : "");
-function productCard(p, promos = []) {
+// opts.variant: reemplaza la línea de la variante (ej. "Doble (1.40) · Colores: camel, gris…" cuando la foto es compartida)
+function productCard(p, promos = [], opts = {}) {
   const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos);
   const before = p.compareAt > p.priceRetail ? p.compareAt : b.promo ? p.priceRetail : 0;
   const { title, variant } = splitName(p.name);
   const lines = [`*${shortTitle(title)}*`];
-  if (variant || catOf(p)) lines.push(`_${variant || catOf(p)}_`);
+  const vline = opts.variant != null ? opts.variant : variant || catOf(p);
+  if (vline) lines.push(`_${vline}_`);
   const pts = bullets(p.desc);
   if (pts.length) lines.push("", ...pts);
   lines.push("", before ? `*${money(b.price)}*   Antes ~${money(before)}~` : `*${money(p.priceRetail)}*`);
@@ -50,8 +52,9 @@ const toTelegramHtml = t => escHtml(t).replace(MARK, (m, pre, k, x) => `${pre}<$
 
 // Texto que acompaña la tarjeta de oferta: la imagen ya trae nombre, medida, color y precios; aquí van el nombre
 // y los puntos clave (y el precio por mayor, que no está en la imagen)
-function cardCaption(p) {
+function cardCaption(p, opts = {}) {
   const lines = [`*${shortTitle(splitName(p.name).title)}*`], pts = bullets(p.desc);
+  if (opts.colors) lines.push(`_${opts.colors}_`);
   if (pts.length) lines.push(...pts);
   if (p.priceWholesale && p.minWholesale) lines.push("", `Por mayor: desde ${p.minWholesale} unidades a ${money(p.priceWholesale)} c/u`);
   return lines.join("\n");
