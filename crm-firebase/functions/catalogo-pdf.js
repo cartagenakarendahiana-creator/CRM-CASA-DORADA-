@@ -49,12 +49,12 @@ function page() {
 }
 const longDate = d => new Date(d).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric", timeZone: "America/Bogota" });
 
-// cat: resultado de medidas.catalog; images: Map(url → Buffer JPEG); company: settings/cotizacion
+// cat: resultado de medidas.catalog; images: Map(url → Buffer JPEG | { width, height, rgb } ya leído de un PNG); company: settings/cotizacion
 function pdf({ cat, images = new Map(), company: co = {}, now = Date.now() }) {
   const name = co.nombre || "Casa Dorada";
   const pages = [], imgs = []; // imgs: { name, buf, info }
   const imgName = url => {
-    const buf = images.get(url), info = jpegInfo(buf);
+    const buf = images.get(url), info = buf && buf.rgb ? { w: buf.width, h: buf.height, comps: 3, raw: true } : jpegInfo(buf);
     if (!info) return null;
     let e = imgs.find(x => x.url === url);
     if (!e) imgs.push(e = { url, name: "Im" + (imgs.length + 1), buf, info });
@@ -133,7 +133,9 @@ function pdf({ cat, images = new Map(), company: co = {}, now = Date.now() }) {
   const alpha = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`, stream: Buffer.from(LOGO.alpha, "base64") });
   const logo = add({ dict: `/Type /XObject /Subtype /Image /Width ${LOGO.width} /Height ${LOGO.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /SMask ${alpha} 0 R`,
     stream: zlib.deflateSync(Buffer.concat(Array(LOGO.width * LOGO.height).fill(Buffer.from(LOGO_GOLD.map(v => Math.round(v * 255)))))) });
-  const imgIds = imgs.map(im => [im.name, add({ dict: `/Type /XObject /Subtype /Image /Width ${im.info.w} /Height ${im.info.h} /ColorSpace /${im.info.comps === 1 ? "DeviceGray" : "DeviceRGB"} /BitsPerComponent 8 /Filter /DCTDecode`, stream: im.buf })]);
+  const imgIds = imgs.map(im => [im.name, add(im.info.raw
+    ? { dict: `/Type /XObject /Subtype /Image /Width ${im.info.w} /Height ${im.info.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode`, stream: zlib.deflateSync(im.buf.rgb) }
+    : { dict: `/Type /XObject /Subtype /Image /Width ${im.info.w} /Height ${im.info.h} /ColorSpace /${im.info.comps === 1 ? "DeviceGray" : "DeviceRGB"} /BitsPerComponent 8 /Filter /DCTDecode`, stream: im.buf })]);
   const res = `<< /Font << ${fonts.map(([k, id]) => `/${k} ${id} 0 R`).join(" ")} >> /XObject << /LogoH ${logo} 0 R ${imgIds.map(([n, id]) => `/${n} ${id} 0 R`).join(" ")} >> >>`;
   const kids = pages.map(pg => {
     const cs = add({ dict: "/Filter /FlateDecode", stream: zlib.deflateSync(Buffer.from(pg.ops.join("\n"), "latin1")) });
