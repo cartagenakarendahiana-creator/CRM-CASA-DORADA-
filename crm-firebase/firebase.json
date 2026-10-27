@@ -29,6 +29,13 @@
       ],
       "rewrites": [
         {
+          "source": "/api/catalogo/**",
+          "function": {
+            "functionId": "catalogoPdf",
+            "region": "us-east1"
+          }
+        },
+        {
           "source": "/api/tarjeta/**",
           "function": {
             "functionId": "tarjetaDescuento",
@@ -107,6 +114,13 @@
         }
       ],
       "rewrites": [
+        {
+          "source": "/api/catalogo/**",
+          "function": {
+            "functionId": "catalogoPdf",
+            "region": "us-east1"
+          }
+        },
         {
           "source": "/api/tarjeta/**",
           "function": {

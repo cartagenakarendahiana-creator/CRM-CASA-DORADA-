@@ -5,6 +5,7 @@
 // - createTeamUser: la administradora crea cuentas para su equipo
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
+// - catalogoPdf: catálogo en PDF con fotos por medida de cama (ver catalogo-pdf.js y medidas.js)
 // - tarjetaDescuento: tarjeta de descuento en PNG de un producto (ver tarjeta.js)
 // - cotizacionPdf, enviarCotizacion: cotización en PDF con marca de agua, enviada por el chat (ver cotizacion-pdf.js)
 // - notificaciones, notificarMensaje: notificaciones push al equipo cuando un cliente escribe (ver notificaciones.js)
@@ -291,7 +292,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   if (!m || m.dir !== "in") return;
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(), loadMedia: p => MEDIA.read(p),
-    quoteLink, discountCardUrl,
+    quoteLink, discountCardUrl, catalogLink,
     send: ({ cref, contact, text, byName, image, document }) => CH.deliver({ cref, contact, text, image, document, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
@@ -351,6 +352,54 @@ exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory
     res.set("Content-Type", "image/png"); res.set("Cache-Control", "public, max-age=3600");
     return res.status(200).send(buf);
   } catch (e) { console.error("tarjeta", e); return res.sendStatus(500); }
+});
+
+// Catálogo por medida en PDF (con fotos): se genera una vez por versión del catálogo y se guarda en el bucket
+// privado (catalogos/{medida}-{huella}.pdf); /api/catalogo/{medida}-{huella}.pdf lo entrega (público: es el catálogo).
+const MEDIDAS = require("./medidas");
+const CATPDF = require("./catalogo-pdf");
+async function catalogData(key) {
+  const [ps, prs, co] = await Promise.all([db.collection("products").get(), db.collection("promos").get(), db.doc("settings/cotizacion").get()]);
+  const promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
+  const cat = MEDIDAS.catalog(ps.docs.map(d => ({ id: d.id, ...d.data() })), key, promos);
+  if (!cat) return null;
+  const company = co.exists ? co.data() : {};
+  const hash = crypto.createHash("sha1").update(JSON.stringify([cat.items.map(g => [g.title, g.min, g.max, g.image, g.colors, g.disc && g.disc.before]), company.nombre, company.telefono, company.web])).digest("hex").slice(0, 12);
+  return { cat, company, hash, path: `catalogos/${cat.key}-${hash}.pdf` };
+}
+async function fetchJpeg(url) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+  try { const r = await fetch(CATPDF.jpegUrl(url), { signal: ctl.signal }); if (!r.ok) return null; const b = Buffer.from(await r.arrayBuffer()); return CATPDF.jpegInfo(b) ? b : null; }
+  catch { return null; } finally { clearTimeout(t); }
+}
+async function catalogFile(key) {
+  const d = await catalogData(key);
+  if (!d) return null;
+  const file = admin.storage().bucket(MEDIA_BUCKET).file(d.path);
+  const [exists] = await file.exists();
+  if (!exists) {
+    const urls = [...new Set(d.cat.items.map(g => g.image).filter(Boolean))], images = new Map();
+    for (let i = 0; i < urls.length; i += 6) await Promise.all(urls.slice(i, i + 6).map(async u => { const b = await fetchJpeg(u); if (b) images.set(u, b); }));
+    await file.save(CATPDF.pdf({ cat: d.cat, images, company: d.company }), { resumable: false, contentType: "application/pdf" });
+  }
+  return { ...d, file };
+}
+async function catalogLink(key) {
+  const f = await catalogFile(key);
+  if (!f) throw new Error("Medida desconocida.");
+  return { url: `${PUBLIC_URL}/api/catalogo/${f.cat.key}-${f.hash}.pdf`, filename: `Catálogo ${f.company.nombre || "Casa Dorada"} - Cama ${f.cat.label}.pdf`, total: f.cat.total };
+}
+exports.catalogoPdf = onRequest({ region: REGION, invoker: "public", memory: "512MiB", timeoutSeconds: 120 }, async (req, res) => {
+  const [, key, hash] = String(req.path || "").match(/catalogo\/(sencilla|semidoble|doble|queen|king)-([0-9a-f]{12})\.pdf$/) || [];
+  if (!key) return res.sendStatus(404);
+  try {
+    const bucket = admin.storage().bucket(MEDIA_BUCKET);
+    let file = bucket.file(`catalogos/${key}-${hash}.pdf`);
+    if (!(await file.exists())[0]) file = (await catalogFile(key)).file; // versión vieja: se entrega la actual
+    const [buf] = await file.download();
+    res.set("Content-Type", "application/pdf"); res.set("Content-Disposition", `inline; filename="Catalogo-Cama-${key}.pdf"`); res.set("Cache-Control", "public, max-age=3600");
+    return res.status(200).send(buf);
+  } catch (e) { console.error("catálogo", e); return res.sendStatus(500); }
 });
 
 // El equipo: action "link" (ver el PDF) o "send" (enviarlo por el chat del cliente, con un texto opcional)
