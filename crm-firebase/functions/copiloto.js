@@ -33,7 +33,7 @@ function transcript(msgs, aiName) {
 function relevantProducts(products, msgs, contact, promos, max = 8) {
   const words = [...new Set(norm(msgs.filter(m => m.dir === "in").slice(-12).map(m => (m.text || "") + " " + (m.transcript || "")).join(" ") + " " + (contact.looking || ""))
     .split(/[^a-z0-9ñ]+/).filter(w => w.length > 3 && !STOP.has(w)))];
-  const scored = products.filter(p => p.active !== false).map(p => {
+  const scored = products.filter(p => p.active !== false && p.available !== false).map(p => {
     const hay = norm([p.name, p.category, p.desc].join(" "));
     return { p, s: words.reduce((n, w) => n + (hay.includes(w) ? (norm(p.name).includes(w) ? 3 : 1) : 0), 0) + (contact.chosenProduct && contact.chosenProduct.id === p.id ? 10 : 0) };
   }).filter(x => x.s > 0).sort((a, b) => b.s - a.s).slice(0, max);

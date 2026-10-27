@@ -66,7 +66,7 @@ function catalog(products, medida, promos = [], { maxPhotos = 8 } = {}) {
   const key = sizeOf(medida);
   const size = SIZES.find(s => s.key === key);
   if (!size) return null;
-  const bed = products.filter(p => p.active !== false && isBed(p));
+  const bed = products.filter(p => p.active !== false && p.available !== false && isBed(p)); // sin agotados
   const items = group(bed.filter(p => { const s = sizeOf(p.name); return s === key || !s; }), promos);
   const sections = [];
   for (const g of items) { let s = sections.find(x => x.name === g.section); if (!s) sections.push(s = { name: g.section, items: [] }); s.items.push(g); }
