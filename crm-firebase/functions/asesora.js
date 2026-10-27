@@ -1,6 +1,6 @@
 // Asesora virtual: responde por WhatsApp con Claude (API de Anthropic).
-// Modo mixto: resuelve preguntas de productos, precios, medidas y disponibilidad;
-// pasa a una persona los cierres de pedido, negociaciones y quejas.
+// Resuelve sola productos, precios, descuentos, cotizaciones, dudas, negociaciones y quejas;
+// solo pasa a una persona el cierre de la venta (pago, datos de envío, confirmar el pedido) o si el cliente pide una persona.
 const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
 const FICHA = require("./ficha");
@@ -25,6 +25,7 @@ const priceFor = (p, qty) => p.priceWholesale && p.minWholesale && qty >= p.minW
 const money = n => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
 const obj = (properties, required) => ({ type: "object", properties, required, additionalProperties: false });
+const HANDOFF_REASONS = ["Cerrar pedido", "Pide una persona"]; // lo único que pasa a una persona
 const TOOLS = [
   { name: "buscar_productos", description: "Busca en el catálogo de Casa Dorada por nombre, categoría, medida o descripción. Devuelve precio al detal, precio por mayor y desde cuántas unidades aplica. Úsala SIEMPRE antes de dar un precio o decir si hay un producto; nunca inventes precios ni productos. Con consulta vacía lista todo el catálogo.",
     input_schema: obj({ consulta: { type: "string", description: "Palabras a buscar, ej. 'sábana 1.40' o 'toallas'" } }, ["consulta"]) },
@@ -47,8 +48,8 @@ const TOOLS = [
     }, ["items"]) },
   { name: "agendar_seguimiento", description: "Programa la próxima acción del equipo con este cliente (aparece en Hoy y en Agenda). Úsala cuando el cliente diga que decide después, que le escriban otro día, etc.",
     input_schema: obj({ fecha: { type: "string", description: "Fecha AAAA-MM-DD" }, accion: { type: "string", description: "Qué hay que hacer, ej. 'Preguntar si aprobó la cotización'" } }, ["fecha", "accion"]) },
-  { name: "pasar_a_humano", description: "Pasa la conversación a una persona del equipo y deja de responder en este chat. Úsala para: cerrar un pedido (datos de envío, pago, confirmación), negociar precio o descuentos, quejas o reclamos, garantías, preguntas que el catálogo y las instrucciones no responden, o si el cliente pide hablar con una persona.",
-    input_schema: obj({ motivo: { type: "string", enum: ["Cerrar pedido", "Negociación", "Queja o reclamo", "Pide una persona", "No sé la respuesta", "Otro"] },
+  { name: "pasar_a_humano", description: "Pasa la conversación a una persona del equipo y deja de responder en este chat. Úsala SOLO para cerrar la venta: el cliente ya decidió comprar y hay que confirmar el pedido, tomar los datos de envío o el pago. También si el cliente pide expresamente hablar con una persona. Todo lo demás (precios, descuentos, negociación, quejas, dudas) lo resuelves tú.",
+    input_schema: obj({ motivo: { type: "string", enum: HANDOFF_REASONS },
       resumen: { type: "string", description: "Resumen para la persona que toma el chat: qué quiere el cliente y qué falta" } }, ["motivo", "resumen"]) },
   { name: "enviar_foto_producto", description: "Envía al cliente la foto de un producto del catálogo, con su nombre y precio como pie de foto. Úsala cuando pida ver el producto o cuando una foto ayude a decidir, solo con productos que tengan tiene_foto=true. Máximo 3 fotos por respuesta. La foto llega después de tu mensaje de texto.",
     input_schema: obj({ producto_id: { type: "string", description: "id del producto (de buscar_productos)" } }, ["producto_id"]) },
@@ -78,14 +79,19 @@ Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de t
 - Cierra con una sola pregunta corta para seguir la conversación (medida, cantidad, ciudad…). Máximo unas 70 palabras en total. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
 Tu trabajo (modo mixto):
-- Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo o en las instrucciones del negocio, dilo y usa pasar_a_humano con motivo "No sé la respuesta".
+- Responde tú misma preguntas de productos, precios, medidas, materiales y disponibilidad, usando buscar_productos. Nunca inventes precios, productos, medidas, tiempos de entrega ni condiciones; si algo no está en el catálogo, en la base de conocimiento ni en las instrucciones del negocio, dile con naturalidad que lo confirmas con el equipo, guárdalo con actualizar_ficha (nota) y agenda la respuesta con agendar_seguimiento; sigue atendiéndolo tú.
 - Explica el precio por mayor cuando aplique ("desde X unidades queda a $Y").
 - Cuando hables de un producto, su foto con el precio se envía sola después de tu mensaje (no hace falta pedirla). Usa enviar_foto_producto solo si el cliente pide la foto de un producto que no nombraste. Nunca pegues enlaces de imágenes en el texto ni digas que no puedes enviar fotos.
 - Haz una pregunta a la vez para entender qué necesita (para qué lo usa, medida, cantidad, ciudad) y guarda lo que aprendas con actualizar_ficha.
 ${cfg.quoteAuto !== false ? "- COTIZACIÓN: si el cliente dice cotización, cotizar, cotízame, presupuesto o proforma (o pide el precio formal o el total por cantidades), en esa MISMA respuesta usa crear_cotizacion con los productos de los que se ha hablado en la conversación (búscalos con buscar_productos si no tienes el id). Si no dijo cantidad usa 1 unidad; si mencionó medida o referencia, usa esa. No preguntes nada antes de enviarla: el sistema le envía la cotización formal en PDF en este chat, y después puedes ofrecerle ajustarla (cantidades, medidas, otros productos). Solo si en toda la conversación no se ha mencionado ningún producto, pregúntale en una línea qué producto quiere cotizar." : "- Si pide cotización o el total por cantidades, usa crear_cotizacion, dale el total aproximado y dile que una asesora del equipo se la confirma."}
 - Si dice que decide después o pide que le escriban otro día, usa agendar_seguimiento.
 - Promociones: ofrece con entusiasmo las promociones vigentes que apliquen a lo que busca el cliente (buscar_productos te dice el precio con promoción). Si un producto está en_oferta, cuéntale que antes costaba precio_antes_de_la_oferta y ahora precio_detal. Ofrécelas tal cual están: nunca inventes descuentos, no subas el porcentaje, no las combines y respeta mínimos, códigos y fechas.
-- Pasa a una persona (pasar_a_humano) cuando: quiere cerrar el pedido o pagar, pide un descuento distinto o mayor a las promociones vigentes o negocia, tiene una queja o reclamo, pide hablar con alguien, o no sabes la respuesta. En ese caso dile que una asesora del equipo le escribe en breve; no prometas tiempos exactos.
+- Si el cliente pregunta por descuentos, promociones u ofertas, cuéntale las promociones vigentes (con sus códigos y condiciones) y los productos en oferta de la lista que le sirvan; si quiere ver alguno, envía su foto con enviar_foto_producto.
+- Resuelve tú misma todo lo que puedas, sin pasar a una persona:
+  · Si negocia o pide descuento: ofrécele las promociones vigentes y el precio por mayor si aplica (con su mínimo de unidades). Si pide más, explícale con amabilidad que ese es el mejor precio disponible hoy y sigue ayudándole a elegir. Nunca inventes descuentos.
+  · Si tiene una queja o reclamo: discúlpate con empatía, pide los detalles (qué pasó, número de pedido, una foto si sirve), guárdalos con actualizar_ficha (nota) y agenda la revisión con agendar_seguimiento; dile que el equipo ya lo tiene registrado.
+  · Garantías, envíos, pagos y políticas: búscalas con buscar_conocimiento y respóndelas tú.
+- Pasa a una persona (pasar_a_humano) SOLO para cerrar la venta: cuando el cliente ya decidió comprar y hay que confirmar el pedido, tomar los datos de envío o el pago. También si pide expresamente hablar con una persona. Antes de pasarlo, deja claro qué productos, medidas, colores y cantidades quiere (eso va en el resumen). Dile que una asesora le escribe en breve para finalizar la compra; no prometas tiempos exactos.
 - Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Las notas de voz te llegan transcritas: respóndelas como si el cliente hubiera escrito (si la transcripción parece incompleta o confusa, pídele que confirme). Si recibes un audio sin transcripción, un video o un documento que no puedes ver, pídele amablemente que te lo escriba en texto.
 - No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega.
 
@@ -176,6 +182,11 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
   const photos = []; // fotos de productos para enviar después del texto
   const docs = []; // cotizaciones en PDF para enviar después del texto
   const catalog = []; // catálogo por medida (lista ordenada + fotos) para enviar después del texto
+  // Productos con precio tachado en la tienda (precio de comparación de Shopify), de mayor a menor descuento
+  const onSale = active.filter(p => p.compareAt > p.priceRetail).sort((a, b) => (b.compareAt - b.priceRetail) / b.compareAt - (a.compareAt - a.priceRetail) / a.compareAt);
+  const saleText = onSale.length ? "Productos en oferta en la tienda (precio tachado; ofrécelos cuando pregunten por descuentos u ofertas o vengan al caso):\n"
+    + onSale.slice(0, 40).map(p => { const n = FICHA.splitName(p.name); return `- ${n.title}${n.variant ? " (" + n.variant + ")" : ""} [id ${p.id}]: ahora ${money(p.priceRetail)}, antes ${money(p.compareAt)} (${Math.round((1 - p.priceRetail / p.compareAt) * 100)}% menos)`; }).join("\n")
+    + (onSale.length > 40 ? `\n…y ${onSale.length - 40} productos más en oferta (búscalos con buscar_productos).` : "") : "";
   const quoteTried = []; // si la IA intentó crear una cotización en este turno
   const found = []; // productos de la última búsqueda, en orden de relevancia (para adjuntar sus fotos)
   const run = {
@@ -270,13 +281,15 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       return { ok: true };
     },
     async pasar_a_humano({ motivo, resumen }) {
+      if (!HANDOFF_REASONS.includes(motivo)) return { error: "Esto lo resuelves tú: solo se pasa a una persona para cerrar la venta (pago, envío, confirmar el pedido) o si el cliente pide una persona. Ayúdale con las promociones, la información del catálogo y la base de conocimiento, y si hace falta anota y agenda un seguimiento." };
       const at = Date.now();
       await cref.set({ aiHandoff: { reason: String(motivo || "Otro"), summary: String(resumen || "").slice(0, 1000), at }, updatedAt: at, updatedBy: aiName }, { merge: true });
       done.push(`pasó el chat a una persona (${motivo}): ${resumen}`);
-      return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
+      return { ok: true, aviso: motivo === "Cerrar pedido" ? "Listo. Dile que una asesora del equipo le escribe en breve para finalizar su compra. Ya no responderás más en este chat."
+        : "Listo. Dile que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, catalog, found, kb, promos, quoteAuto, quoteTried };
+  return { run, done, photos, docs, catalog, found, kb, promos, saleText, quoteAuto, quoteTried };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -302,7 +315,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
   if (!messages.length || messages[messages.length - 1].role !== "user") return { text: "" };
   const system = [
     { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
-    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) },
+    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) + (tools.saleText ? "\n\n" + tools.saleText : "") },
   ];
   const wantsQuote = tools.quoteAuto && quoteAsked(history);
   if (wantsQuote) system[1].text += "\n\nEl cliente acaba de pedir una cotización: créala en esta respuesta con crear_cotizacion.";

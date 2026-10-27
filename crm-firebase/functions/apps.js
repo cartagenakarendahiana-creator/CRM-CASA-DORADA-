@@ -127,10 +127,27 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     }
     return multi ? vs.length : 1;
   }
-  // Con token de Admin usa la API; sin token lee el catálogo público de la tienda (tienda.com/products.json)
+  // Token de Admin: el que pegó la administradora (shpat_…) o, con una app del Dev Dashboard de Shopify (Client ID y
+  // Client secret), uno que se pide solo con "client credentials" y dura 24 h (se renueva cuando falta poco para vencer).
+  async function adminToken(c) {
+    if (c.token) return c.token;
+    if (!c.clientId || !c.clientSecret) return "";
+    if (c.cct && (c.cctExp || 0) > Date.now() + 10 * 60 * 1000) return c.cct;
+    const r = await fetchFn(`https://${c.shop}/admin/oauth/access_token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({ grant_type: "client_credentials", client_id: c.clientId, client_secret: c.clientSecret }).toString() });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.access_token) throw new Error("Shopify no entregó el acceso con ese Client ID y Client secret. Revisa que la app esté instalada en tu tienda y tenga los permisos read_discounts y read_products. " + (j.error_description || j.error || "(" + r.status + ")"));
+    const exp = Date.now() + ((Number(j.expires_in) || 86400) - 60) * 1000;
+    await setPriv({ shopify: { cct: j.access_token, cctExp: exp } });
+    return j.access_token;
+  }
+  const hasAdmin = c => !!(c.token || (c.clientId && c.clientSecret));
+
+  // Con acceso de Admin usa la API; sin él lee el catálogo público de la tienda (tienda.com/products.json)
   async function shopifyImport() {
-    const c = (await cfg(true)).shopify || {};
-    if (!c.shop) throw new Error("Primero conecta la tienda de Shopify.");
+    const c0 = (await cfg(true)).shopify || {};
+    if (!c0.shop) throw new Error("Primero conecta la tienda de Shopify.");
+    const c = { ...c0, token: await adminToken(c0) };
     let n = 0;
     if (c.token) {
       let url = `https://${c.shop}/admin/api/${SHOPIFY_API}/products.json?limit=250&status=active`, pages = 0;
@@ -212,9 +229,10 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     return promo;
   }
   async function shopifyDiscounts() {
-    const c = (await cfg(true)).shopify || {};
-    if (!c.shop) throw new Error("Primero conecta la tienda de Shopify.");
-    if (!c.token) throw new Error("Para leer los descuentos y códigos de Shopify hace falta un token de Admin con el permiso read_discounts. Las ofertas con precio de comparación sí se importan con Importar productos.");
+    const c0 = (await cfg(true)).shopify || {};
+    if (!c0.shop) throw new Error("Primero conecta la tienda de Shopify.");
+    if (!hasAdmin(c0)) throw new Error("Para leer los descuentos y códigos de Shopify conecta el acceso de Admin (Client ID y Client secret de tu app del Dev Dashboard de Shopify). Las ofertas con precio tachado sí se importan con Importar productos.");
+    const c = { ...c0, token: await adminToken(c0) };
     const keep = new Set(); let after = null, pages = 0, n = 0;
     do {
       const d = await shopifyGql(c, DISC_QUERY, { after });
@@ -229,7 +247,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     // Los descuentos que ya no existen en Shopify se quitan de House Chat
     const old = await db.collection("promos").where("source", "==", "Shopify").get();
     for (const doc of old.docs) if (!keep.has(doc.id)) await doc.ref.delete();
-    await setPub({ shopify: { promosAt: Date.now(), promos: n } });
+    await setPub({ shopify: { promosAt: Date.now(), promos: n, promosError: "" } });
     return { promos: n };
   }
 
@@ -304,11 +322,18 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       const shop = String(d.shop || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       if (!/^[a-z0-9-]+\.myshopify\.com$/.test(shop)) throw new Error("Escribe el dominio de la tienda, por ejemplo casadorada.myshopify.com");
       const prev = (await cfg(true)).shopify || {};
-      const secret = String(d.secret || "").trim() || prev.secret;
-      if (!secret) throw new Error("Pega la clave de firma de los webhooks de Shopify.");
-      await setPriv({ shopify: { shop, secret, token: String(d.token || "").trim() || prev.token || "" } });
-      await setPub({ shopify: { on: true, shop, hasToken: !!(String(d.token || "").trim() || prev.token), at: Date.now() } });
-      return { ok: true };
+      const clientId = String(d.clientId || "").trim() || prev.clientId || "", clientSecret = String(d.clientSecret || "").trim() || prev.clientSecret || "";
+      const secret = String(d.secret || "").trim() || prev.secret || clientSecret; // las apps del Dev Dashboard firman los webhooks con el Client secret
+      if (!secret) throw new Error("Pega la clave de firma de los webhooks de Shopify (o el Client secret de tu app).");
+      const next = { shop, secret, token: String(d.token || "").trim() || prev.token || "", clientId, clientSecret,
+        ...(clientId !== prev.clientId || clientSecret !== prev.clientSecret || shop !== prev.shop ? { cct: "", cctExp: 0 } : {}) };
+      // Se prueba ya (si falla, la administradora ve el motivo); el acceso nuevo ya quedó guardado, no se pisa
+      if (clientId && clientSecret && !next.token) { await adminToken({ ...prev, ...next }); delete next.cct; delete next.cctExp; }
+      await setPriv({ shopify: next });
+      await setPub({ shopify: { on: true, shop, hasToken: hasAdmin(next), at: Date.now() } });
+      let promos = null;
+      if (hasAdmin(next)) promos = await shopifyDiscounts().then(r => r.promos).catch(e => { console.error("descuentos", e.message); return null; });
+      return { ok: true, promos };
     }
     if (action === "importShopify") return shopifyImport();
     if (action === "importShopifyPromos") return shopifyDiscounts();
@@ -335,5 +360,12 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     throw new Error("Acción desconocida.");
   }
 
-  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, mapDiscount, siigoInvoice, manage };
+  // Cada 3 horas: vuelve a leer los descuentos de Shopify para que la asesora ofrezca siempre los vigentes
+  async function syncDiscounts() {
+    const c = (await cfg(true)).shopify || {};
+    if (!c.shop || !hasAdmin(c)) return "sin acceso de Admin";
+    try { return await shopifyDiscounts(); }
+    catch (e) { await setPub({ shopify: { promosError: String(e.message || e).slice(0, 300), promosErrorAt: Date.now() } }); throw e; }
+  }
+  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, syncDiscounts, adminToken, mapDiscount, siigoInvoice, manage };
 };
