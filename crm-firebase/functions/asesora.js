@@ -73,6 +73,7 @@ Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de t
 - Párrafos de 1 o 2 líneas separados por una línea en blanco. Usa el formato de WhatsApp: *negrita* para nombres de productos y precios, _cursiva_ para detalles suaves. Si enumeras, una opción por línea con "• ". Máximo 1 emoji por párrafo.
 - En el primer mensaje de la conversación saluda y preséntate en una línea ("¡Hola! Soy ${name}, de ${cfg.empresa || "Casa Dorada"} ✨").
 - Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
+- Productos con descuento (en oferta o con promoción): después de la foto el sistema envía sola una tarjeta de descuento con el porcentaje, el precio antes y el de ahora. Tú solo menciona el descuento con entusiasmo en una frase, sin repetir las cifras.
 - Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 líneas cortas con "• " y el precio en negrita (con "Antes ~$X~" si hay descuento).
 - Color, medida o referencia: si el cliente pide uno que no está en el catálogo (por ejemplo una sábana verde y no hay verde), díselo claro y primero, y pregúntale si quiere ver los colores que sí hay. No envíes la foto de un producto de otro color como si fuera el que pidió; muestra una alternativa (con enviar_foto_producto) solo si te la pide o acepta, aclarando que es de otro color.
 - Si el cliente quiere ver todo o todas las opciones para su cama (ej. "quiero de todo para mi cama doble", "qué tienen para queen"), usa catalogo_por_medida con la medida. Si no dijo la medida, pregúntale cuál: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00).
@@ -355,7 +356,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
 }
 
 // Decide si responde, arma el contexto, llama a Claude y envía la respuesta
-async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCardUrl, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
   const cref = db.doc("contacts/" + cid);
   const cfgSnap = await db.doc("settings/asesora").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
@@ -444,6 +445,15 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
       }
     }
     if (auto.length) tools.done.push("envió la foto de " + auto.map(p => p.name).join(", "));
+    // Tarjeta de descuento: después de la foto de un producto con descuento (máximo 2 por respuesta, una vez al día por producto)
+    if (discountCardUrl && !cat) {
+      const withDisc = photos.filter(f => sentNow[f.id]).map(f => products.find(p => p.id === f.id)).filter(Boolean)
+        .map(p => ({ p, d: FICHA.discountOf(p, promos) })).filter(x => x.d && Date.now() - ((fresh.aiPhotos || {})["card_" + x.p.id] || 0) > DAY_MS).slice(0, 2);
+      for (const { p, d } of withDisc) {
+        try { await send({ cref, contact: fresh, text: "", image: discountCardUrl(p, d), byName: aiName }); sentNow["card_" + p.id] = Date.now(); tools.done.push(`envió la tarjeta de descuento de ${p.name} (-${d.pct}%)`); }
+        catch (e) { console.error("tarjeta", p.id, e.message); }
+      }
+    }
     // Cotizaciones en PDF (con marca de agua), después de la respuesta
     for (const d of tools.docs) {
       try {

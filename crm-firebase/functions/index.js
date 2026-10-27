@@ -5,6 +5,7 @@
 // - createTeamUser: la administradora crea cuentas para su equipo
 // - setTeamPassword: la administradora le pone una contraseña nueva a alguien del equipo
 // - asesoraVirtual: la asesora con IA responde los mensajes entrantes (ver asesora.js)
+// - tarjetaDescuento: tarjeta de descuento en PNG de un producto (ver tarjeta.js)
 // - cotizacionPdf, enviarCotizacion: cotización en PDF con marca de agua, enviada por el chat (ver cotizacion-pdf.js)
 // - notificaciones, notificarMensaje: notificaciones push al equipo cuando un cliente escribe (ver notificaciones.js)
 // - copiloto, analizarConversaciones: copiloto de ventas con IA para el equipo y análisis automático de cada chat (ver copiloto.js)
@@ -290,7 +291,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   if (!m || m.dir !== "in") return;
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(), loadMedia: p => MEDIA.read(p),
-    quoteLink,
+    quoteLink, discountCardUrl,
     send: ({ cref, contact, text, byName, image, document }) => CH.deliver({ cref, contact, text, image, document, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
@@ -326,6 +327,32 @@ exports.cotizacionPdf = onRequest({ region: REGION, invoker: "public", memory: "
     return res.status(200).send(buf);
   } catch (e) { console.error("pdf", e); return res.sendStatus(500); }
 });
+// Tarjeta de descuento: /api/tarjeta/{producto}.png → imagen 1080×1350 con el % de descuento, el precio antes y el de ahora.
+// Es pública (es publicidad del producto); 404 si el producto ya no tiene descuento.
+const TARJETA = require("./tarjeta");
+const FICHA = require("./ficha");
+const PROMOS = require("./promos");
+const longDay = iso => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? new Date(iso + "T12:00:00-05:00").toLocaleDateString("es-CO", { day: "numeric", month: "long", timeZone: "America/Bogota" }) : "");
+function discountCardUrl(p, d) {
+  return `${PUBLIC_URL}/api/tarjeta/${encodeURIComponent(p.id)}.png?v=${d.now}-${d.before}-${(d.promo && d.promo.id) || "o"}`;
+}
+exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory: "512MiB" }, async (req, res) => {
+  const [, id] = String(req.path || "").match(/tarjeta\/([\w-]{1,120})\.png$/) || [];
+  if (!id) return res.sendStatus(404);
+  try {
+    const [ps, prs, co] = await Promise.all([db.doc("products/" + id).get(), db.collection("promos").get(), db.doc("settings/cotizacion").get()]);
+    if (!ps.exists || ps.get("active") === false) return res.sendStatus(404);
+    const p = { id, ...ps.data() }, promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
+    const d = FICHA.discountOf(p, promos);
+    if (!d) return res.sendStatus(404);
+    const n = FICHA.splitName(p.name);
+    const buf = TARJETA.card({ title: n.title, variant: n.variant, before: d.before, now: d.now, pct: d.pct,
+      promoName: d.promo ? d.promo.name : "Precio de oferta", code: d.promo && d.promo.code, until: d.promo && longDay(d.promo.end), company: co.exists && co.get("nombre") });
+    res.set("Content-Type", "image/png"); res.set("Cache-Control", "public, max-age=3600");
+    return res.status(200).send(buf);
+  } catch (e) { console.error("tarjeta", e); return res.sendStatus(500); }
+});
+
 // El equipo: action "link" (ver el PDF) o "send" (enviarlo por el chat del cliente, con un texto opcional)
 exports.enviarCotizacion = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
   const me = await requireMember(req);

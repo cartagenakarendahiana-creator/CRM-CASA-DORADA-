@@ -39,4 +39,12 @@ const stripFormat = t => String(t || "").replace(MARK, "$1$3");
 const escHtml = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const toTelegramHtml = t => escHtml(t).replace(MARK, (m, pre, k, x) => `${pre}<${{ "*": "b", "_": "i", "~": "s" }[k]}>${x}</${{ "*": "b", "_": "i", "~": "s" }[k]}>`);
 
-module.exports = { productCard, bullets, splitName, stripFormat, toTelegramHtml };
+// Descuento de un producto: precio tachado de Shopify y/o la mejor promoción vigente → { before, now, pct, promo } o null
+function discountOf(p, promos = []) {
+  const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos);
+  const before = p.compareAt > p.priceRetail ? p.compareAt : b.promo ? p.priceRetail : 0;
+  if (!before || !b.price || b.price >= before) return null;
+  return { before, now: b.price, pct: Math.round((1 - b.price / before) * 100), promo: b.promo };
+}
+
+module.exports = { productCard, bullets, splitName, discountOf, stripFormat, toTelegramHtml };
