@@ -73,7 +73,7 @@ Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de t
 - Párrafos de 1 o 2 líneas separados por una línea en blanco. Usa el formato de WhatsApp: *negrita* para nombres de productos y precios, _cursiva_ para detalles suaves. Si enumeras, una opción por línea con "• ". Máximo 1 emoji por párrafo.
 - En el primer mensaje de la conversación saluda y preséntate en una línea ("¡Hola! Soy ${name}, de ${cfg.empresa || "Casa Dorada"} ✨").
 - Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
-- Productos con descuento (en oferta o con promoción): justo después de la foto de ese producto el sistema envía sola una tarjeta de descuento con el porcentaje, el precio antes y el de ahora. Tú solo menciona el descuento con entusiasmo en una frase, sin repetir las cifras.
+- Productos con descuento (en oferta o con promoción): en vez de la foto sola, el sistema envía una tarjeta de oferta con la foto del producto, el porcentaje, el precio antes y el de ahora, junto con su ficha. Tú solo menciona el descuento con entusiasmo en una frase, sin repetir las cifras.
 - Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 líneas cortas con "• " y el precio en negrita (con "Antes ~$X~" si hay descuento).
 - Color, medida o referencia: si el cliente pide uno que no está en el catálogo (por ejemplo una sábana verde y no hay verde), díselo claro y primero, y pregúntale si quiere ver los colores que sí hay. No envíes la foto de un producto de otro color como si fuera el que pidió; muestra una alternativa (con enviar_foto_producto) solo si te la pide o acepta, aclarando que es de otro color.
 - Si el cliente quiere ver todo o todas las opciones para su cama (ej. "quiero de todo para mi cama doble", "qué tienen para queen"), usa catalogo_por_medida con la medida. Si no dijo la medida, pregúntale cuál: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00).
@@ -444,7 +444,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
       try { await send({ cref, contact: fresh, text: `*Catálogo · Cama ${cat.label}*\n${catDoc.total} productos con fotos y precios`, document: { url: catDoc.url, filename: catDoc.filename }, byName: aiName }); }
       catch (e) { console.error("catálogo", e); tools.done.push("no pudo enviar el catálogo en PDF: " + (e.message || e)); }
     }
-    // Tarjeta de descuento: va justo después de la foto de SU producto (no al final), con un pie que dice de cuál es.
+    // Tarjeta de oferta: reemplaza la foto del producto con descuento (la tarjeta trae la foto adentro) y lleva su ficha como texto.
     // Máximo 2 por respuesta y una vez al día por producto; no en el catálogo por medida.
     let cards = 0;
     const cardFor = f => {
@@ -453,18 +453,14 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
       return d && Date.now() - ((fresh.aiPhotos || {})["card_" + p.id] || 0) > DAY_MS ? { p, d } : null;
     };
     for (const [i, f] of photos.entries()) {
-      try { await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
-      catch (e) {
+      // Producto con descuento: UNA sola imagen (la tarjeta de oferta con la foto del producto) y la ficha como texto
+      const c = cardFor(f), image = c ? discountCardUrl(c.p, c.d) : f.image;
+      try {
+        await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image, byName: aiName }); sentNow[f.id] = Date.now();
+        if (c) { sentNow["card_" + c.p.id] = Date.now(); cards++; tools.done.push(`envió la tarjeta de oferta de ${c.p.name} (-${c.d.pct}%)`); }
+      } catch (e) {
         console.error("foto", f.id, e); tools.done.push("no pudo enviar la foto: " + (e.message || e));
         if (joined && i === 0) await send({ cref, contact: fresh, text, byName: aiName }); // la respuesta no se pierde si la foto falla
-        continue;
-      }
-      const c = cardFor(f);
-      if (c) {
-        try {
-          await send({ cref, contact: fresh, text: `🏷️ Oferta en *${FICHA.splitName(c.p.name).title}*`, image: discountCardUrl(c.p, c.d), byName: aiName });
-          sentNow["card_" + c.p.id] = Date.now(); cards++; tools.done.push(`envió la tarjeta de descuento de ${c.p.name} (-${c.d.pct}%)`);
-        } catch (e) { console.error("tarjeta", c.p.id, e.message); }
       }
     }
     if (auto.length) tools.done.push("envió la foto de " + auto.map(p => p.name).join(", "));

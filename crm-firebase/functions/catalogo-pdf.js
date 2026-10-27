@@ -154,11 +154,11 @@ function pdf({ cat, images = new Map(), company: co = {}, now = Date.now() }) {
   return Buffer.concat(chunks);
 }
 
-// Pide la foto en JPEG y a 500 px al CDN de Shopify (más liviana); otras direcciones van tal cual
-function jpegUrl(url) {
+// Pide la foto en JPEG y a `px` de ancho al CDN de Shopify (más liviana); otras direcciones van tal cual
+function jpegUrl(url, px = 500) {
   try {
     const u = new URL(url);
-    if (/cdn\.shopify\.com$/.test(u.hostname) || u.pathname.includes("/cdn/shop/")) { u.searchParams.set("width", "500"); u.searchParams.set("format", "jpg"); }
+    if (/cdn\.shopify\.com$/.test(u.hostname) || u.pathname.includes("/cdn/shop/")) { u.searchParams.set("width", String(px)); u.searchParams.set("format", "jpg"); }
     return u.toString();
   } catch { return url; }
 }
