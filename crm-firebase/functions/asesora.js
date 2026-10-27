@@ -356,7 +356,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
 }
 
 // Decide si responde, arma el contexto, llama a Claude y envía la respuesta
-async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCardUrl, catalogLink, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCard, catalogLink, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
   const cref = db.doc("contacts/" + cid);
   const cfgSnap = await db.doc("settings/asesora").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
@@ -448,13 +448,18 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     // Máximo 2 por respuesta y una vez al día por producto; no en el catálogo por medida.
     let cards = 0;
     const cardFor = f => {
-      if (!discountCardUrl || cat || cards >= 2) return null;
+      if (!discountCard || cat || cards >= 2) return null;
       const p = products.find(x => x.id === f.id), d = p && FICHA.discountOf(p, promos);
       return d && Date.now() - ((fresh.aiPhotos || {})["card_" + p.id] || 0) > DAY_MS ? { p, d } : null;
     };
     for (const [i, f] of photos.entries()) {
-      // Producto con descuento: UNA sola imagen (la tarjeta de oferta con la foto del producto) y la ficha como texto
-      const c = cardFor(f), image = c ? discountCardUrl(c.p, c.d) : f.image;
+      // Producto con descuento: UNA sola imagen (la tarjeta de oferta con la foto del producto) y la ficha como texto.
+      // Si la foto no se pudo poner en la tarjeta, va la foto normal del producto (nunca la tarjeta sin foto).
+      let c = cardFor(f), image = f.image;
+      if (c) {
+        const r = await discountCard(c.p, c.d).catch(e => ({ reason: e.message }));
+        if (r.url) image = r.url; else { tools.done.push(`envió la foto normal de ${c.p.name}: no pudo armar la tarjeta de oferta (${r.reason})`); c = null; }
+      }
       try {
         await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image, byName: aiName }); sentNow[f.id] = Date.now();
         if (c) { sentNow["card_" + c.p.id] = Date.now(); cards++; tools.done.push(`envió la tarjeta de oferta de ${c.p.name} (-${c.d.pct}%)`); }

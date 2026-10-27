@@ -292,7 +292,7 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   if (!m || m.dir !== "in") return;
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(), loadMedia: p => MEDIA.read(p),
-    quoteLink, discountCardUrl, catalogLink,
+    quoteLink, discountCard, catalogLink,
     send: ({ cref, contact, text, byName, image, document }) => CH.deliver({ cref, contact, text, image, document, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
@@ -335,24 +335,52 @@ const JPEG = require("./jpeg");
 const FICHA = require("./ficha");
 const PROMOS = require("./promos");
 const longDay = iso => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? new Date(iso + "T12:00:00-05:00").toLocaleDateString("es-CO", { day: "numeric", month: "long", timeZone: "America/Bogota" }) : "");
-function discountCardUrl(p, d) {
-  return `${PUBLIC_URL}/api/tarjeta/${encodeURIComponent(p.id)}.png?v=${d.now}-${d.before}-${(d.promo && d.promo.id) || "o"}-f`;
+// Descarga la foto de un producto y la deja lista para dibujar (JPEG normal o progresivo, o PNG).
+// Devuelve { photo } o { reason } con el motivo si no se pudo (para dejarlo en la nota interna del chat).
+const PNG = require("./png");
+async function productPhoto(url, px) {
+  if (!url) return { reason: "el producto no tiene foto" };
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 9000);
+  try {
+    const r = await fetch(CATPDF.jpegUrl(url, px), { signal: ctl.signal, headers: { Accept: "image/jpeg,image/png;q=0.9,*/*;q=0.1" } });
+    if (!r.ok) return { reason: "Shopify respondió " + r.status };
+    const b = Buffer.from(await r.arrayBuffer());
+    if (b[0] === 0xff && b[1] === 0xd8) return { photo: JPEG.decode(b) };
+    if (b[0] === 0x89 && b[1] === 0x50) return { photo: PNG.decode(b) };
+    return { reason: "la foto llegó en un formato no soportado (" + (r.headers.get("content-type") || "desconocido") + ")" };
+  } catch (e) { return { reason: e.name === "AbortError" ? "la foto tardó demasiado en descargar" : "no se pudo leer la foto: " + e.message }; }
+  finally { clearTimeout(t); }
+}
+const cardHash = (p, d) => crypto.createHash("sha1").update([d.now, d.before, d.promo && d.promo.id, d.promo && d.promo.code, d.promo && d.promo.end, p.name, p.image].join("|")).digest("hex").slice(0, 12);
+async function renderCard(p, d, photo) {
+  const n = FICHA.splitName(p.name), co = await db.doc("settings/cotizacion").get();
+  return TARJETA.card({ photo, title: n.title, variant: n.variant, before: d.before, now: d.now, pct: d.pct,
+    promoName: d.promo ? d.promo.name : "Precio de oferta", code: d.promo && d.promo.code, until: d.promo && longDay(d.promo.end), company: co.exists && co.get("nombre") });
+}
+// Tarjeta de oferta CON la foto del producto: se dibuja una vez, se guarda en el bucket (tarjetas/) y se devuelve su enlace.
+// Si no se pudo poner la foto devuelve { reason } y la asesora manda la foto normal del producto.
+async function discountCard(p, d) {
+  const hash = cardHash(p, d), file = admin.storage().bucket(MEDIA_BUCKET).file(`tarjetas/${p.id}-${hash}.png`);
+  const url = `${PUBLIC_URL}/api/tarjeta/${encodeURIComponent(p.id)}.png?v=${hash}`;
+  if ((await file.exists())[0]) return { url };
+  const r = await productPhoto(p.image, 1080);
+  if (!r.photo) return { reason: r.reason };
+  await file.save(await renderCard(p, d, r.photo), { resumable: false, contentType: "image/png" });
+  return { url };
 }
 exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory: "512MiB" }, async (req, res) => {
   const [, id] = String(req.path || "").match(/tarjeta\/([\w-]{1,120})\.png$/) || [];
   if (!id) return res.sendStatus(404);
   try {
-    const [ps, prs, co] = await Promise.all([db.doc("products/" + id).get(), db.collection("promos").get(), db.doc("settings/cotizacion").get()]);
+    const [ps, prs] = await Promise.all([db.doc("products/" + id).get(), db.collection("promos").get()]);
     if (!ps.exists || ps.get("active") === false) return res.sendStatus(404);
     const p = { id, ...ps.data() }, promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
     const d = FICHA.discountOf(p, promos);
     if (!d) return res.sendStatus(404);
-    const n = FICHA.splitName(p.name);
-    // La foto del producto va dentro de la tarjeta (si es un JPEG normal; si no, la tarjeta sale sin foto)
-    let photo = null;
-    if (p.image) { const b = await fetchJpeg(p.image, 1080); if (b) try { photo = JPEG.decode(b); } catch (e) { console.log("tarjeta sin foto", id, e.message); } }
-    const buf = TARJETA.card({ photo, title: n.title, variant: n.variant, before: d.before, now: d.now, pct: d.pct,
-      promoName: d.promo ? d.promo.name : "Precio de oferta", code: d.promo && d.promo.code, until: d.promo && longDay(d.promo.end), company: co.exists && co.get("nombre") });
+    const file = admin.storage().bucket(MEDIA_BUCKET).file(`tarjetas/${p.id}-${cardHash(p, d)}.png`);
+    let buf;
+    if ((await file.exists())[0]) [buf] = await file.download();
+    else { const r = await productPhoto(p.image, 1080); if (!r.photo) console.log("tarjeta sin foto", id, r.reason); buf = await renderCard(p, d, r.photo); }
     res.set("Content-Type", "image/png"); res.set("Cache-Control", "public, max-age=3600");
     return res.status(200).send(buf);
   } catch (e) { console.error("tarjeta", e); return res.sendStatus(500); }
@@ -368,13 +396,20 @@ async function catalogData(key) {
   const cat = MEDIDAS.catalog(ps.docs.map(d => ({ id: d.id, ...d.data() })), key, promos);
   if (!cat) return null;
   const company = co.exists ? co.data() : {};
-  const hash = crypto.createHash("sha1").update(JSON.stringify([cat.items.map(g => [g.title, g.min, g.max, g.image, g.colors, g.disc && g.disc.before]), company.nombre, company.telefono, company.web])).digest("hex").slice(0, 12);
+  const hash = crypto.createHash("sha1").update(JSON.stringify(["v2", cat.items.map(g => [g.title, g.min, g.max, g.image, g.colors, g.disc && g.disc.before]), company.nombre, company.telefono, company.web])).digest("hex").slice(0, 12);
   return { cat, company, hash, path: `catalogos/${cat.key}-${hash}.pdf` };
 }
+// Foto para el catálogo: el JPEG tal cual (el PDF lo muestra sin decodificarlo) o, si es PNG, ya leída
 async function fetchJpeg(url, px) {
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
-  try { const r = await fetch(CATPDF.jpegUrl(url, px), { signal: ctl.signal }); if (!r.ok) return null; const b = Buffer.from(await r.arrayBuffer()); return CATPDF.jpegInfo(b) ? b : null; }
-  catch { return null; } finally { clearTimeout(t); }
+  try {
+    const r = await fetch(CATPDF.jpegUrl(url, px), { signal: ctl.signal, headers: { Accept: "image/jpeg,image/png;q=0.9,*/*;q=0.1" } });
+    if (!r.ok) return null;
+    const b = Buffer.from(await r.arrayBuffer());
+    if (CATPDF.jpegInfo(b)) return b;
+    if (b[0] === 0x89 && b[1] === 0x50) return PNG.decode(b);
+    return null;
+  } catch { return null; } finally { clearTimeout(t); }
 }
 async function catalogFile(key) {
   const d = await catalogData(key);
