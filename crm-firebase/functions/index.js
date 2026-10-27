@@ -373,7 +373,7 @@ exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory
   if (!id) return res.sendStatus(404);
   try {
     const [ps, prs] = await Promise.all([db.doc("products/" + id).get(), db.collection("promos").get()]);
-    if (!ps.exists || ps.get("active") === false) return res.sendStatus(404);
+    if (!ps.exists || ps.get("active") === false || ps.get("available") === false) return res.sendStatus(404);
     const p = { id, ...ps.data() }, promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
     const d = FICHA.discountOf(p, promos);
     if (!d) return res.sendStatus(404);
@@ -680,8 +680,9 @@ exports.shopifyWebhook = onRequest({ region: REGION, invoker: "public" }, async 
   try { await APPS.shopifyWebhook(req, res); }
   catch (e) { console.error("shopify", e); res.sendStatus(500); } // Shopify reintenta
 });
-// Descuentos de Shopify al día: se vuelven a leer cada 3 horas (con el acceso de Admin de la tienda)
-exports.sincronizarShopify = onSchedule({ schedule: "every 180 minutes", timeZone: "America/Bogota", region: REGION, timeoutSeconds: 300 }, async () => {
+// Shopify al día: cada hora se vuelven a leer los productos (stock, precios, fotos) y los descuentos
+exports.sincronizarShopify = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", region: REGION, timeoutSeconds: 540, memory: "512MiB" }, async () => {
+  try { console.log("productos de Shopify", await APPS.syncProducts()); } catch (e) { console.error("productos de Shopify", e.message); }
   try { console.log("descuentos de Shopify", await APPS.syncDiscounts()); } catch (e) { console.error("descuentos de Shopify", e.message); }
 });
 exports.apps = onCall({ region: REGION, invoker: "public", timeoutSeconds: 300 }, async req => {

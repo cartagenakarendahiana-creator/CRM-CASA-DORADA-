@@ -84,6 +84,14 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       return "pedido " + number;
     }
     if (topic === "customers/create") { await upsertCustomer(body, {}, "Shopify"); return "cliente"; }
+    // Productos: el stock, los precios y las fotos quedan al día al instante (además de la revisión de cada hora)
+    if (topic === "products/create" || topic === "products/update") { await saveShopifyProduct(body, body.status ? body.status === "active" : true); return "producto"; }
+    if (topic === "products/delete") {
+      const olds = await db.collection("products").where("shopifyProductId", "==", String(body.id)).get();
+      for (const d of olds.docs) await d.ref.delete();
+      const legacy = db.doc("products/shp_" + body.id); if ((await legacy.get()).exists) await legacy.delete();
+      return "producto borrado";
+    }
     if (topic === "checkouts/create" || topic === "checkouts/update") {
       if (!body.phone && !body.email && !(body.customer || {}).phone && !(body.shipping_address || {}).phone) return "carrito sin datos";
       const { ref } = await upsertCustomer(body.customer || {}, { phone: body.phone || (body.shipping_address || {}).phone, email: body.email, name: (body.shipping_address || {}).name, address: body.shipping_address }, "Shopify");
@@ -104,28 +112,52 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const out = await shopifyEvent(String(req.get("x-shopify-topic") || ""), req.body || {});
     res.status(200).json({ ok: true, out });
   }
-  // Foto de la variante (si tiene una propia) o la principal del producto; el CDN de Shopify la entrega a 1200 px
+  // Foto de cada color: 1) la que Shopify le asigna a la variante; 2) una foto del producto cuyo nombre de archivo o texto
+  // alternativo menciona ese color (muchas tiendas suben la foto de cada color sin asignarla); 3) la principal.
+  // El CDN de Shopify la entrega a 1200 px.
+  const normTxt = s => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const SIZE_OPT = /^\d|^(sencill|semidobl|dobl|queen|king|twin|full|individual|unica|default)/;
   function shopifyImage(p, v = {}) {
     const imgs = p.images || [];
-    const src = (v.featured_image && v.featured_image.src) || (v.image_id && (imgs.find(i => i.id === v.image_id) || {}).src)
-      || (imgs.find(i => (i.variant_ids || []).includes(v.id)) || {}).src || (p.image && p.image.src) || (imgs[0] || {}).src || "";
+    let src = (v.featured_image && v.featured_image.src) || (v.image_id && (imgs.find(i => i.id === v.image_id) || {}).src)
+      || (imgs.find(i => (i.variant_ids || []).includes(v.id)) || {}).src || "";
+    if (!src) {
+      const colors = [v.option1, v.option2, v.option3].map(normTxt).filter(o => o && !SIZE_OPT.test(o));
+      if (colors.length) {
+        const hay = i => " " + normTxt((i.alt || "") + " " + decodeURIComponent(String(i.src || "").split("?")[0].split("/").pop() || "").replace(/\.\w+$/, "")) + " ";
+        const hit = imgs.find(i => colors.every(c => hay(i).includes(" " + c + " "))) || imgs.find(i => colors.some(c => c.length > 3 && hay(i).includes(" " + c + " ")));
+        if (hit) src = hit.src;
+      }
+    }
+    src = src || (p.image && p.image.src) || (imgs[0] || {}).src || "";
     if (!src) return "";
     const url = src.startsWith("//") ? "https:" + src : src;
     return /cdn\.shopify\.com/.test(url) && !/[?&]width=/.test(url) ? url + (url.includes("?") ? "&" : "?") + "width=1200" : url;
   }
-  // Guarda un producto de Shopify. Si tiene variantes con precios distintos (tallas, medidas), crea una ficha por variante.
+  // ¿Hay stock? Catálogo público: "available". API de Admin: si no lleva inventario, si se vende sin stock o si hay unidades.
+  const inStock = v => ("available" in v ? v.available !== false
+    : !v.inventory_management || v.inventory_policy === "continue" || Number(v.inventory_quantity) > 0);
+  // Guarda un producto de Shopify: una ficha por variante (color, medida…), con su foto, su precio y si hay stock.
+  // Borra las fichas de ese producto que ya no existen en la tienda.
   async function saveShopifyProduct(p, active) {
     const vs = (p.variants || []).length ? p.variants : [{}];
-    const multi = vs.length > 1 && new Set(vs.map(v => Number(v.price) || 0)).size > 1;
-    const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", updatedAt: Date.now(), updatedBy: "Shopify" };
-    for (const v of multi ? vs : [vs[0]]) {
+    const multi = vs.length > 1;
+    const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", shopifyProductId: String(p.id), updatedAt: Date.now(), updatedBy: "Shopify" };
+    const keep = new Set();
+    for (const v of vs) {
+      const id = "shp_" + p.id + (multi ? "_" + v.id : "");
       const vt = multi && v.title && v.title !== "Default Title" ? " · " + v.title : "";
       const price = Math.round(Number(v.price) || 0), before = Math.round(Number(v.compare_at_price) || 0);
       // compareAt: "precio de comparación" de Shopify (producto en oferta: antes compareAt, ahora priceRetail)
-      await db.doc("products/shp_" + p.id + (multi ? "_" + v.id : "")).set({ ...base, name: p.title + vt, priceRetail: price, sku: v.sku || "",
-        compareAt: before > price ? before : 0, image: shopifyImage(p, multi ? v : {}) }, { merge: true });
+      await db.doc("products/" + id).set({ ...base, name: p.title + vt, priceRetail: price, sku: v.sku || "",
+        compareAt: before > price ? before : 0, image: shopifyImage(p, v), available: inStock(v),
+        ...("inventory_quantity" in v ? { stock: Number(v.inventory_quantity) || 0 } : {}) }, { merge: true });
+      keep.add(id);
     }
-    return multi ? vs.length : 1;
+    const olds = await db.collection("products").where("shopifyProductId", "==", String(p.id)).get().catch(() => ({ docs: [] }));
+    for (const d of olds.docs) if (!keep.has(d.id)) await d.ref.delete();
+    if (multi) { const legacy = db.doc("products/shp_" + p.id); if ((await legacy.get()).exists) await legacy.delete(); }
+    return vs.length;
   }
   // Token de Admin: el que pegó la administradora (shpat_…) o, con una app del Dev Dashboard de Shopify (Client ID y
   // Client secret), uno que se pide solo con "client credentials" y dura 24 h (se renueva cuando falta poco para vencer).
@@ -361,11 +393,17 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
   }
 
   // Cada 3 horas: vuelve a leer los descuentos de Shopify para que la asesora ofrezca siempre los vigentes
+  // Cada hora: vuelve a leer los productos (stock, precios, fotos) para que la asesora no ofrezca nada agotado
+  async function syncProducts() {
+    const c = (await cfg(true)).shopify || {};
+    if (!c.shop) return "sin tienda";
+    return shopifyImport();
+  }
   async function syncDiscounts() {
     const c = (await cfg(true)).shopify || {};
     if (!c.shop || !hasAdmin(c)) return "sin acceso de Admin";
     try { return await shopifyDiscounts(); }
     catch (e) { await setPub({ shopify: { promosError: String(e.message || e).slice(0, 300), promosErrorAt: Date.now() } }); throw e; }
   }
-  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, syncDiscounts, adminToken, mapDiscount, siigoInvoice, manage };
+  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, syncDiscounts, syncProducts, saveShopifyProduct, adminToken, mapDiscount, siigoInvoice, manage };
 };

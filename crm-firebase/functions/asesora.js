@@ -75,6 +75,7 @@ Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de t
 - Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
 - Productos con descuento (en oferta o con promoción): en vez de la foto sola, el sistema envía una tarjeta de oferta con la foto del producto, el porcentaje, el precio antes y el de ahora, junto con su ficha. Tú solo menciona el descuento con entusiasmo en una frase, sin repetir las cifras.
 - Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 líneas cortas con "• " y el precio en negrita (con "Antes ~$X~" si hay descuento).
+- Stock: solo existen para ti los productos de buscar_productos (todos tienen stock). Nunca ofrezcas, muestres ni cotices algo AGOTADO (lista agotados); si el cliente lo pide, dile con amabilidad que está agotado y ofrécele la alternativa disponible más parecida (mismo tipo, medida o color).
 - Fotos de colores: si un producto tiene foto_compartida=true, esa foto es de referencia (los colores sin foto propia usan la misma imagen) y debajo de ella van escritos los colores disponibles. No envíes la misma foto varias veces ni digas que la foto muestra un color que no muestra: envía una sola foto y nombra los colores en tu texto. Si cada color tiene su propia foto, puedes enviar hasta 4.
 - Color, medida o referencia: si el cliente pide uno que no está en el catálogo (por ejemplo una sábana verde y no hay verde), díselo claro y primero, y pregúntale si quiere ver los colores que sí hay. No envíes la foto de un producto de otro color como si fuera el que pidió; muestra una alternativa (con enviar_foto_producto) solo si te la pide o acepta, aclarando que es de otro color.
 - Si el cliente quiere ver todo o todas las opciones para su cama (ej. "quiero de todo para mi cama doble", "qué tienen para queen"), usa catalogo_por_medida con la medida. Si no dijo la medida, pregúntale cuál: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00).
@@ -173,7 +174,9 @@ function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), m
 }
 
 function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false }) {
-  const active = products.filter(p => p.active !== false);
+  // Solo lo que hay en stock (available=false: agotado en Shopify). Lo agotado solo sirve para decir que está agotado.
+  const active = products.filter(p => p.active !== false && p.available !== false);
+  const soldOut = products.filter(p => p.active !== false && p.available === false);
   // Fotos compartidas: en Shopify, los colores sin foto propia usan la foto principal del producto
   const imageUses = new Map();
   for (const p of active) if (p.image) imageUses.set(p.image, (imageUses.get(p.image) || 0) + 1);
@@ -240,7 +243,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
     },
     async enviar_foto_producto({ producto_id }) {
       const p = active.find(x => x.id === producto_id);
-      if (!p) return { error: "Ese id no existe en el catálogo. Búscalo con buscar_productos." };
+      if (!p) return { error: soldOut.some(x => x.id === producto_id) ? "Ese producto está AGOTADO: no envíes su foto; dile al cliente que está agotado y ofrécele una alternativa disponible." : "Ese id no existe en el catálogo. Búscalo con buscar_productos." };
       if (!p.image) return { error: "Ese producto no tiene foto cargada. Descríbelo con palabras." };
       if (photos.some(f => f.id === p.id)) return { ok: true, aviso: "Esa foto ya está en la lista para enviar." };
       if (photos.some(f => f.image === p.image)) return { ok: true, aviso: "Ese color usa la MISMA foto que ya vas a enviar (no tiene foto propia en la tienda). No se repite: los colores disponibles van escritos debajo de esa foto." };
@@ -255,7 +258,11 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       const scored = active.map(p => { const hay = norm(`${p.name} ${p.category} ${p.desc}`); return [p, words.filter(w => hay.includes(w)).length]; })
         .filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).slice(0, 12);
       found.splice(0, found.length, ...scored.map(([p]) => p));
-      return scored.length ? { productos: scored.map(([p]) => pub(p)) } : { productos: [], aviso: "No hay coincidencias. Prueba con otras palabras o con consulta vacía para ver todo el catálogo." };
+      // Agotados que coinciden con la búsqueda: solo para avisarle al cliente (sin precio ni foto)
+      const out = soldOut.map(p => [p, words.filter(w => norm(`${p.name} ${p.category} ${p.desc}`).includes(w)).length]).filter(([, s]) => s >= Math.max(1, Math.ceil(words.length / 2)))
+        .sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p]) => { const n = FICHA.splitName(p.name); return [FICHA.shortTitle(n.title), n.variant].filter(Boolean).join(" · "); });
+      const agotados = out.length ? { agotados: [...new Set(out)], aviso_agotados: "Estos están AGOTADOS: no los ofrezcas, no envíes su foto ni los cotices. Si el cliente pregunta por uno, dile que está agotado y ofrécele una alternativa disponible de la lista de productos." } : {};
+      return scored.length ? { productos: scored.map(([p]) => pub(p)), ...agotados } : { productos: [], ...agotados, aviso: "No hay coincidencias disponibles. Prueba con otras palabras o con consulta vacía para ver todo el catálogo." };
     },
     async actualizar_ficha(a) {
       const patch = {};
@@ -280,7 +287,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       const lines = [];
       for (const it of items || []) {
         const p = active.find(x => x.id === it.producto_id), qty = Math.max(1, Math.round(Number(it.cantidad) || 0));
-        if (!p) return { error: `El producto ${it.producto_id} no existe en el catálogo. Búscalo con buscar_productos.` };
+        if (!p) return { error: soldOut.some(x => x.id === it.producto_id) ? `El producto ${it.producto_id} está AGOTADO: no lo cotices; dile al cliente que está agotado y ofrécele una alternativa disponible.` : `El producto ${it.producto_id} no existe en el catálogo. Búscalo con buscar_productos.` };
         const base = priceFor(p, qty), b = PROMOS.bestPrice(p, qty, base, promos);
         lines.push({ productId: p.id, name: p.name, qty, price: b.price, ...(b.promo ? { listPrice: base, promo: b.promo.name } : {}) });
       }
