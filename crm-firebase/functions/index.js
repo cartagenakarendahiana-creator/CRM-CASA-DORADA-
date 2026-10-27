@@ -331,11 +331,12 @@ exports.cotizacionPdf = onRequest({ region: REGION, invoker: "public", memory: "
 // Tarjeta de descuento: /api/tarjeta/{producto}.png → imagen 1080×1350 con el % de descuento, el precio antes y el de ahora.
 // Es pública (es publicidad del producto); 404 si el producto ya no tiene descuento.
 const TARJETA = require("./tarjeta");
+const JPEG = require("./jpeg");
 const FICHA = require("./ficha");
 const PROMOS = require("./promos");
 const longDay = iso => (/^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? new Date(iso + "T12:00:00-05:00").toLocaleDateString("es-CO", { day: "numeric", month: "long", timeZone: "America/Bogota" }) : "");
 function discountCardUrl(p, d) {
-  return `${PUBLIC_URL}/api/tarjeta/${encodeURIComponent(p.id)}.png?v=${d.now}-${d.before}-${(d.promo && d.promo.id) || "o"}`;
+  return `${PUBLIC_URL}/api/tarjeta/${encodeURIComponent(p.id)}.png?v=${d.now}-${d.before}-${(d.promo && d.promo.id) || "o"}-f`;
 }
 exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory: "512MiB" }, async (req, res) => {
   const [, id] = String(req.path || "").match(/tarjeta\/([\w-]{1,120})\.png$/) || [];
@@ -347,7 +348,10 @@ exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory
     const d = FICHA.discountOf(p, promos);
     if (!d) return res.sendStatus(404);
     const n = FICHA.splitName(p.name);
-    const buf = TARJETA.card({ title: n.title, variant: n.variant, before: d.before, now: d.now, pct: d.pct,
+    // La foto del producto va dentro de la tarjeta (si es un JPEG normal; si no, la tarjeta sale sin foto)
+    let photo = null;
+    if (p.image) { const b = await fetchJpeg(p.image, 1080); if (b) try { photo = JPEG.decode(b); } catch (e) { console.log("tarjeta sin foto", id, e.message); } }
+    const buf = TARJETA.card({ photo, title: n.title, variant: n.variant, before: d.before, now: d.now, pct: d.pct,
       promoName: d.promo ? d.promo.name : "Precio de oferta", code: d.promo && d.promo.code, until: d.promo && longDay(d.promo.end), company: co.exists && co.get("nombre") });
     res.set("Content-Type", "image/png"); res.set("Cache-Control", "public, max-age=3600");
     return res.status(200).send(buf);
@@ -367,9 +371,9 @@ async function catalogData(key) {
   const hash = crypto.createHash("sha1").update(JSON.stringify([cat.items.map(g => [g.title, g.min, g.max, g.image, g.colors, g.disc && g.disc.before]), company.nombre, company.telefono, company.web])).digest("hex").slice(0, 12);
   return { cat, company, hash, path: `catalogos/${cat.key}-${hash}.pdf` };
 }
-async function fetchJpeg(url) {
+async function fetchJpeg(url, px) {
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
-  try { const r = await fetch(CATPDF.jpegUrl(url), { signal: ctl.signal }); if (!r.ok) return null; const b = Buffer.from(await r.arrayBuffer()); return CATPDF.jpegInfo(b) ? b : null; }
+  try { const r = await fetch(CATPDF.jpegUrl(url, px), { signal: ctl.signal }); if (!r.ok) return null; const b = Buffer.from(await r.arrayBuffer()); return CATPDF.jpegInfo(b) ? b : null; }
   catch { return null; } finally { clearTimeout(t); }
 }
 async function catalogFile(key) {

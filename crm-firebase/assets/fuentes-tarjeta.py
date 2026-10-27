@@ -13,6 +13,7 @@ STYLES = {  # nombre: (archivo, tamaño, caracteres)
   "body": ("Inter-Regular.otf", 32, FULL),
   "caps": ("Inter-SemiBold.otf", 24, FULL),
   "pill": ("Inter-Bold.otf", 30, FULL),
+  "badge": ("InterDisplay-Black.otf", 92, " -–0123456789%"),
 }
 out = {}
 for name, (fname, size, chars) in STYLES.items():

@@ -72,6 +72,18 @@ function canvas() {
       if (cur) lines.push(cur);
       return lines;
     },
+    // Foto (RGB) recortada para llenar el recuadro sin deformarse ("cover"), con interpolación bilineal
+    photo(img, x, y, w, h) {
+      const k = Math.max(w / img.width, h / img.height), sw = w / k, sh = h / k, ox = (img.width - sw) / 2, oy = (img.height - sh) / 2;
+      const at = (xx, yy, ch) => img.rgb[(Math.min(img.height - 1, yy) * img.width + Math.min(img.width - 1, xx)) * 3 + ch];
+      for (let j = 0; j < h; j++) {
+        const sy = oy + (j + 0.5) / k - 0.5, y0 = Math.max(0, Math.floor(sy)), fy = Math.max(0, sy - y0);
+        for (let i = 0; i < w; i++) {
+          const sx = ox + (i + 0.5) / k - 0.5, x0 = Math.max(0, Math.floor(sx)), fx = Math.max(0, sx - x0), o = ((y + j) * W + x + i) * 3;
+          for (let ch = 0; ch < 3; ch++) px[o + ch] = at(x0, y0, ch) * (1 - fx) * (1 - fy) + at(x0 + 1, y0, ch) * fx * (1 - fy) + at(x0, y0 + 1, ch) * (1 - fx) * fy + at(x0 + 1, y0 + 1, ch) * fx * fy;
+        }
+      }
+    },
     // Logo (máscara de transparencia) en un color, escalado a `lw` de ancho con interpolación bilineal
     logo(x, y, lw, color) {
       const a = zlib.inflateSync(Buffer.from(LOGO.alpha, "base64")), sw = LOGO.width, sh = LOGO.height;
@@ -108,8 +120,43 @@ function png(px) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
 }
 
-// d: { title, variant, before, now, pct, promoName, code, until, company }
+// Con la foto del producto: arriba la foto con la etiqueta del %, abajo el producto, el antes, el ahora y el código
+function cardWithPhoto(d) {
+  const c = canvas(), cx = W / 2, PH = 800;
+  c.photo(d.photo, 0, 0, W, PH);
+  // Etiqueta del descuento sobre la foto
+  const t = `-${d.pct}%`, tw = Math.max(c.measure(t, "badge"), c.measure("DESCUENTO", "caps", 4)) + 72;
+  c.round(48, 48, tw, 168, 30, INK);
+  c.text(t, "badge", 48 + tw / 2, 48 + 106, { color: WHITE, align: "center" });
+  c.text("DESCUENTO", "caps", 48 + tw / 2, 48 + 146, { color: GOLD, align: "center", tracking: 4 });
+  c.round(0, PH, W, 4, 0, GOLD);
+  const lines = c.wrap(d.title, "title", 940);
+  if (lines.length > 2) { lines.length = 2; lines[1] = lines[1].replace(/\s*\S*$/, "") + "…"; }
+  const small = [d.promoName, d.until ? "hasta el " + d.until : ""].filter(Boolean).join(" · ");
+  const used = 78 + lines.length * 56 + (d.variant ? 40 : 0) + 44 + 92 + 30 + (d.code ? 60 : small ? 34 : 0);
+  let y = PH + 78 + Math.max(0, Math.round((H - 110 - PH - used) / 2));
+  for (const l of lines) { c.text(l, "title", cx, y, { align: "center" }); y += 56; }
+  if (d.variant) { c.text(d.variant, "body", cx, y - 6, { color: MUTED, align: "center" }); y += 40; }
+  y += 44;
+  const old = "Antes " + money(d.before), ow = c.text(old, "old", cx, y, { color: MUTED, align: "center" }), lw = c.measure("Antes ", "old");
+  c.round(cx - ow / 2 + lw - 4, y - 14, ow - lw + 8, 3, 1.5, MUTED);
+  y += 92;
+  c.text("Ahora " + money(d.now), "price", cx, y, { color: INK, align: "center" });
+  y += 30;
+  if (d.code) {
+    const ct = "Código " + d.code, cw = c.measure(ct, "pill", 2) + 64;
+    c.round(cx - cw / 2, y, cw, 60, 30, INK);
+    c.text(ct, "pill", cx, y + 41, { color: WHITE, align: "center", tracking: 2 });
+  } else {
+    if (small) c.text(small, "body", cx, y + 34, { color: MUTED, align: "center" });
+  }
+  c.logo(cx - 95, H - 78, 190, GOLD);
+  return png(c.px);
+}
+
+// d: { title, variant, before, now, pct, promoName, code, until, company, photo? }
 function card(d) {
+  if (d.photo && d.photo.width && d.photo.rgb) return cardWithPhoto(d);
   const c = canvas(), cx = W / 2;
   c.ring(40, 40, W - 80, H - 80, 34, 3, GOLD);
   c.ring(58, 58, W - 116, H - 116, 22, 1, GOLD);
