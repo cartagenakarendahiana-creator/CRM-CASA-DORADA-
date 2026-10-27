@@ -1,71 +1,86 @@
-// Catálogo por medida de cama: cuando el cliente quiere "de todo para su cama doble", reúne todos los productos
-// de esa medida (sábanas, cobijas, edredones, fundas, protectores…) agrupando las variantes de color de un mismo
-// producto, más los artículos de cama que sirven para cualquier medida (almohadas, cojines…).
+// Catálogo por medida de cama: cuando el cliente quiere "de todo para su cama doble", reúne los productos de cama
+// de esa medida y los que sirven para cualquier medida (almohadas, cojines…), agrupa las variantes de color de un
+// mismo producto y los ordena por tipo (kits, sábanas, plumones, cobijas, protectores…). Se envía como catálogo en PDF.
 const PROMOS = require("./promos");
-const { splitName } = require("./ficha");
+const { splitName, discountOf } = require("./ficha");
 
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 const money = n => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
-// En orden: "semidoble" va antes que "doble"
+// Medidas: "1.40", "1,40", "1.40mt", "140x190", "doble"… En orden: "semidoble" va antes que "doble".
+// (?<![\d.,]) evita confundir 11.40 o 21.20; "doble faz" (tela de dos caras) no es una medida.
+const N = "(?<![\\d.,])";
 const SIZES = [
-  { key: "semidoble", label: "Semidoble (1.20 m)", re: /semi ?doble|\b1[.,]20?\b(?!\d)|\b120 ?x/ },
-  { key: "sencilla", label: "Sencilla (1.00 m)", re: /\bsencill[oa]s?\b|\bindividual(es)?\b|\btwin\b|\b1[.,]00?\b(?!\d)|\b100 ?x/ },
-  { key: "doble", label: "Doble (1.40 m)", re: /\bdobles?\b|\b1[.,]40?\b(?!\d)|\b140 ?x|\bfull\b/ },
-  { key: "queen", label: "Queen (1.60 m)", re: /\bqueen\b|\b1[.,]60?\b(?!\d)|\b160 ?x/ },
-  { key: "king", label: "King (2.00 m)", re: /\bking\b|\b2[.,]00?\b(?!\d)|\b200 ?x/ },
+  { key: "semidoble", label: "Semidoble (1.20 m)", re: new RegExp(`semi ?doble|${N}1[.,]20?(?!\\d)|\\b120 ?x`) },
+  { key: "sencilla", label: "Sencilla (1.00 m)", re: new RegExp(`\\bsencill[oa]s?\\b|\\bindividual(es)?\\b|\\btwin\\b|${N}1[.,]00?(?!\\d)|${N}1 ?mts?\\b|\\b100 ?x`) },
+  { key: "doble", label: "Doble (1.40 m)", re: new RegExp(`\\bdobles?\\b|${N}1[.,]40?(?!\\d)|\\b140 ?x|\\bfull\\b`) },
+  { key: "queen", label: "Queen (1.60 m)", re: new RegExp(`\\bqueen\\b|${N}1[.,]60?(?!\\d)|\\b160 ?x`) },
+  { key: "king", label: "King (2.00 m)", re: new RegExp(`\\bking\\b|${N}2[.,]00?(?!\\d)|${N}2 ?x ?2(?!\\d)|\\b200 ?x`) },
 ];
-const sizeOf = s => { const t = norm(s); const z = SIZES.find(x => x.re.test(t)); return z ? z.key : null; };
-const BED = /sabana|cobij|edred|almohad|protector|cubrelecho|plumon|funda|colcha|duvet|cojin|manta|frazada|sobrecama|lencer|cama/;
-const isBed = p => BED.test(norm(`${p.category} ${p.name}`)) && !/toalla|bano/.test(norm(`${p.category} ${p.name}`));
+const sizeOf = s => { const t = norm(s).replace(/doble faz/g, ""); const z = SIZES.find(x => x.re.test(t)); return z ? z.key : null; };
 
-// Orden de las categorías en la lista, como en la tienda: primero sábanas, luego lo de abrigo, fundas y protectores
-const ORDER = [/sabana/, /cobij|manta|frazada/, /edred|plumon|duvet/, /cubrelecho|colcha|sobrecama/, /funda/, /protector/, /almohad/, /cojin/];
-const rank = c => { const i = ORDER.findIndex(r => r.test(norm(c))); return i < 0 ? ORDER.length : i; };
-// Agrupa las variantes de un mismo producto: { title, category, colors[], min, max, image, ids[] }
+// Tipo de producto por su nombre (las categorías de Shopify a veces dicen "Físico" u "Otros")
+const SECTIONS = [
+  ["Kits y combos", /\bkit\b|combo/],
+  ["Sábanas", /sabana/],
+  ["Plumones y edredones", /plumon|edredon|duvet|acolchad|cubrelecho|colcha|sobrecama|tendido/],
+  ["Cobijas", /cobij|manta|frazada/],
+  ["Protectores y fundas", /protector|funda/],
+  ["Almohadas y cojines", /almohad|cojin|pie de cama|relleno/],
+];
+// Gana la palabra que aparece primero en el nombre: "Plumón 6 piezas con sábana" es plumón; "Kit 8 piezas (Plumón…)" es kit
+function sectionOf(p) {
+  const t = norm(`${splitName(p.name).title} ${p.category}`);
+  let best = null, at = Infinity;
+  for (const [name, re] of SECTIONS) { const m = t.match(re); if (m && m.index < at) { at = m.index; best = name; } }
+  return best;
+}
+const isBed = p => !!sectionOf(p) && !/toalla|cortina|tapete|mantel|individual de mesa/.test(norm(p.name));
+
+// Nombre corto para el catálogo: sin la parte publicitaria después de " | ", " – ", " — " o " - "
+function shortTitle(t) {
+  const first = String(t || "").split(/\s+[|–—-]\s+/)[0].trim();
+  return first.length >= 12 ? first : String(t || "").trim();
+}
+// Colores de la variante, sin la parte de la medida ("Queen (1.60 mt) · azul indigo" → "azul indigo")
+const colorOf = variant => variant.split(" · ").filter(x => !sizeOf(x) && !/^\d+([.,]\d+)?( ?x ?\d+([.,]\d+)?)? ?(mts?|cm)?$/.test(norm(x).trim())).join(" · ").trim();
+
+// Agrupa las variantes de un mismo producto: { title, section, colors[], min, max, image, ids[], disc }
 function group(list, promos) {
   const by = new Map();
   for (const p of list) {
     const { title, variant } = splitName(p.name);
-    const k = norm(title) + "|" + norm(p.category);
-    const g = by.get(k) || { title, category: p.category || "Otros", colors: [], min: Infinity, max: 0, image: "", ids: [] };
-    const color = variant.split(" · ").filter(x => !sizeOf(x)).join(" · ").trim();
+    const k = norm(title);
+    const g = by.get(k) || { title: shortTitle(title), fullTitle: title, section: sectionOf(p) || "Otros", colors: [], min: Infinity, max: 0, image: "", ids: [], disc: null };
+    const color = colorOf(variant);
     if (color && !g.colors.some(c => norm(c) === norm(color))) g.colors.push(color);
-    const price = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos).price;
-    if (price) { g.min = Math.min(g.min, price); g.max = Math.max(g.max, price); }
+    const d = discountOf(p, promos), price = d ? d.now : PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos).price;
+    if (price && price < g.min) { g.min = price; g.disc = d; if (p.image) g.image = p.image; }
+    if (price) g.max = Math.max(g.max, price);
     if (!g.image && p.image) g.image = p.image;
     g.ids.push(p.id);
     by.set(k, g);
   }
-  return [...by.values()].sort((a, b) => rank(a.category) - rank(b.category) || a.category.localeCompare(b.category) || a.title.localeCompare(b.title));
+  const order = s => { const i = SECTIONS.findIndex(([n]) => n === s); return i < 0 ? SECTIONS.length : i; };
+  return [...by.values()].sort((a, b) => order(a.section) - order(b.section) || a.min - b.min || a.title.localeCompare(b.title));
 }
 const priceText = g => (!isFinite(g.min) ? "" : g.max > g.min ? "desde " + money(g.min) : money(g.min));
+const colorsText = (g, n = 4) => (g.colors.length ? g.colors.slice(0, n).join(", ") + (g.colors.length > n ? ` y ${g.colors.length - n} más` : "") : "");
 
-// catalog(products, "doble") → { label, groups, general, summary, photos } o null si la medida no se reconoce
-function catalog(products, medida, promos = [], { maxPhotos = 8, maxChars = 3500 } = {}) {
+// catalog(products, "doble") → { key, label, sections: [{ name, items }], items, total, photos } o null si la medida no se reconoce
+function catalog(products, medida, promos = [], { maxPhotos = 8 } = {}) {
   const key = sizeOf(medida);
   const size = SIZES.find(s => s.key === key);
   if (!size) return null;
-  const active = products.filter(p => p.active !== false);
-  const groups = group(active.filter(p => sizeOf(p.name) === key), promos);
-  const general = group(active.filter(p => !sizeOf(p.name) && isBed(p)), promos);
-  // Lista ordenada por categoría
-  const lines = [`*Todo para cama ${size.label}* 🛏️`];
-  let cat = null, shown = 0;
-  const all = [...groups.map(g => ({ ...g, sec: g.category })), ...general.map(g => ({ ...g, sec: "Para cualquier medida" }))];
-  for (const g of all) {
-    const add = [];
-    if (g.sec !== cat) { add.push("", `*${g.sec}*`); }
-    add.push(`• ${g.title}${priceText(g) ? " — " + priceText(g) : ""}`);
-    if (g.colors.length) add.push(`   _${g.colors.slice(0, 8).join(", ")}${g.colors.length > 8 ? "…" : ""}_`);
-    if ((lines.join("\n") + "\n" + add.join("\n")).length > maxChars) break;
-    if (g.sec !== cat) cat = g.sec;
-    lines.push(...add); shown++;
-  }
-  if (shown < all.length) lines.push("", `_…y ${all.length - shown} productos más._`);
-  // Fotos: una por producto (primero los de la medida), con un pie corto
-  const photos = all.filter(g => g.image).slice(0, maxPhotos).map(g => ({ id: g.ids[0], image: g.image,
-    caption: [`*${g.title}*`, g.colors.length ? `_${g.colors.slice(0, 6).join(", ")}_` : "", priceText(g) ? `*${priceText(g)[0].toUpperCase() + priceText(g).slice(1)}*` : ""].filter(Boolean).join("\n") }));
-  return { key, label: size.label, groups, general, summary: lines.join("\n"), photos, total: all.length };
+  const bed = products.filter(p => p.active !== false && isBed(p));
+  const items = group(bed.filter(p => { const s = sizeOf(p.name); return s === key || !s; }), promos);
+  const sections = [];
+  for (const g of items) { let s = sections.find(x => x.name === g.section); if (!s) sections.push(s = { name: g.section, items: [] }); s.items.push(g); }
+  const photos = items.filter(g => g.image).slice(0, maxPhotos).map(g => ({ id: g.ids[0], image: g.image,
+    caption: [`*${g.title}*`, colorsText(g) ? `_${colorsText(g)}_` : "", priceText(g) ? `*${priceText(g)[0].toUpperCase() + priceText(g).slice(1)}*` : ""].filter(Boolean).join("\n") }));
+  // Resumen corto (para la IA, o como respaldo si no se puede enviar el PDF)
+  const summary = [`*Todo para cama ${size.label}* 🛏️`, ...sections.map(s => `\n*${s.name}*\n` + s.items.slice(0, 6).map(g => `• ${g.title} — ${priceText(g)}`).join("\n")
+    + (s.items.length > 6 ? `\n_…y ${s.items.length - 6} más_` : ""))].join("\n");
+  return { key, label: size.label, sections, items, total: items.length, photos, summary };
 }
 
-module.exports = { catalog, sizeOf, SIZES, group };
+module.exports = { catalog, sizeOf, SIZES, group, sectionOf, shortTitle, colorsText, priceText };

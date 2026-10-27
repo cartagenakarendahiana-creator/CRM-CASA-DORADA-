@@ -53,7 +53,7 @@ const TOOLS = [
       resumen: { type: "string", description: "Resumen para la persona que toma el chat: qué quiere el cliente y qué falta" } }, ["motivo", "resumen"]) },
   { name: "enviar_foto_producto", description: "Envía al cliente la foto de un producto del catálogo, con su nombre y precio como pie de foto. Úsala cuando pida ver el producto o cuando una foto ayude a decidir, solo con productos que tengan tiene_foto=true. Máximo 3 fotos por respuesta. La foto llega después de tu mensaje de texto.",
     input_schema: obj({ producto_id: { type: "string", description: "id del producto (de buscar_productos)" } }, ["producto_id"]) },
-  { name: "catalogo_por_medida", description: "Reúne TODOS los productos del catálogo para una medida de cama (sábanas, cobijas, edredones, fundas, protectores… agrupando los colores) más lo que sirve para cualquier medida. El sistema le envía al cliente la lista completa ordenada y las fotos. Úsala cuando el cliente quiera ver todo o todas las opciones para su cama (ej. 'quiero de todo para mi cama doble', '¿qué tienen para queen?').",
+  { name: "catalogo_por_medida", description: "Reúne TODOS los productos del catálogo para una medida de cama (sábanas, cobijas, edredones, fundas, protectores… agrupando los colores) más lo que sirve para cualquier medida. El sistema le envía al cliente un catálogo en PDF con fotos y precios. Úsala cuando el cliente quiera ver todo o todas las opciones para su cama (ej. 'quiero de todo para mi cama doble', '¿qué tienen para queen?').",
     input_schema: obj({ medida: { type: "string", description: "Medida que dijo el cliente: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00)" } }, ["medida"]) },
   { name: "buscar_conocimiento", description: "Busca en la base de conocimiento de la empresa (políticas, envíos, garantías, cuidados de productos, preguntas frecuentes). Úsala antes de responder algo que no esté en el catálogo.",
     input_schema: obj({ consulta: { type: "string", description: "Tema a buscar, ej. 'garantía' o 'envíos a Cali'" } }, ["consulta"]) },
@@ -205,8 +205,8 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       catalog.splice(0, catalog.length, c);
       done.push(`envió el catálogo para cama ${c.label} (${c.total} productos)`);
       return { medida: c.label, total: c.total,
-        categorias: [...c.groups, ...c.general].reduce((o, g) => { const k = c.general.includes(g) ? "Para cualquier medida" : g.category; (o[k] = o[k] || []).push({ nombre: g.title, colores: g.colors, precio_desde: isFinite(g.min) ? g.min : null, id: g.ids[0] }); return o; }, {}),
-        aviso: "El sistema le envía al cliente, justo después de tu mensaje, la lista completa ordenada por categoría y las fotos. Escribe solo 1 línea cálida de introducción y cierra con una pregunta corta (ej. qué le gusta más o para cuántas camas). NO repitas la lista ni los precios." };
+        categorias: Object.fromEntries(c.sections.map(sec => [sec.name, sec.items.map(g => ({ nombre: g.title, colores: g.colors.slice(0, 8), precio_desde: isFinite(g.min) ? g.min : null, ...(g.disc ? { descuento: g.disc.pct + "%" } : {}), id: g.ids[0] }))])),
+        aviso: "El sistema le envía al cliente, justo después de tu mensaje, un catálogo en PDF con la foto, los colores y el precio de cada producto, ordenado por tipo. Escribe solo 1 línea cálida (ej. que le compartes el catálogo para su cama) y cierra con una pregunta corta (qué le gusta más o para cuántas camas). NO escribas la lista, los nombres ni los precios." };
     },
     async enviar_foto_producto({ producto_id }) {
       const p = active.find(x => x.id === producto_id);
@@ -356,7 +356,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
 }
 
 // Decide si responde, arma el contexto, llama a Claude y envía la respuesta
-async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCardUrl, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCardUrl, catalogLink, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
   const cref = db.doc("contacts/" + cid);
   const cfgSnap = await db.doc("settings/asesora").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
@@ -428,15 +428,22 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
     // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
     const auto = hasText && !cat && !tools.docs.length && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {}, asked: lastAsk(history) }) : [];
-    // Catálogo por medida: la lista ordenada va con la respuesta y después una foto por producto
-    const photos = [...tools.photos, ...(cat ? cat.photos.filter(f => !tools.photos.some(q => q.id === f.id)) : auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) })))];
-    const outText = cat ? [hasText ? text : "", cat.summary].filter(Boolean).join("\n\n") : text;
+    // Catálogo por medida: la respuesta y luego el catálogo en PDF con fotos y precios.
+    // Si el PDF no se puede generar, en su lugar va una foto por producto con su ficha corta (nunca una lista larga).
+    let catDoc = null;
+    if (cat && catalogLink) { try { catDoc = await catalogLink(cat.key); } catch (e) { console.error("catálogo pdf", e.message); } }
+    const photos = [...tools.photos, ...(cat ? (catDoc ? [] : cat.photos.filter(f => !tools.photos.some(q => q.id === f.id))) : auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) })))];
+    const outText = cat && !hasText ? `Te comparto todo lo que tenemos para cama ${cat.label} 🛏️` : text;
     const sentNow = {};
     // Un solo mensaje: la primera foto lleva la respuesta + su ficha como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
     // las demás fotos van con su ficha
     const lead = hasText && photos.length ? text + "\n\n" + photos[0].caption : "";
     const joined = !cat && hasText && photos.length && lead.length <= CAPTION_MAX && !saysNotAvailable(text);
     if ((hasText || cat) && !joined) await send({ cref, contact: fresh, text: outText, byName: aiName });
+    if (catDoc) {
+      try { await send({ cref, contact: fresh, text: `*Catálogo · Cama ${cat.label}*\n${catDoc.total} productos con fotos y precios`, document: { url: catDoc.url, filename: catDoc.filename }, byName: aiName }); }
+      catch (e) { console.error("catálogo", e); tools.done.push("no pudo enviar el catálogo en PDF: " + (e.message || e)); }
+    }
     for (const [i, f] of photos.entries()) {
       try { await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
       catch (e) {
