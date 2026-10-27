@@ -18,12 +18,21 @@ function splitName(name) {
   const variant = rest.join(" · ").split(/\s*\/\s*/).map(x => x.trim()).filter(Boolean).join(" · ");
   return { title, variant };
 }
+// Nombre corto: sin la parte publicitaria después de " | ", " – ", " — " o " - "
+// ("Cobija Ovejera de Cuadros — Gruesa, Suave y Abrigadora…" → "Cobija Ovejera de Cuadros")
+function shortTitle(t) {
+  const first = String(t || "").split(/\s+[|–—-]\s+/)[0].trim();
+  return first.length >= 12 ? first : String(t || "").trim();
+}
+// Categorías de Shopify que no le dicen nada al cliente
+const GENERIC_CAT = /^(f[ií]sico|digital|otros?|default|general|productos?|varios)$/i;
+const catOf = p => (p.category && !GENERIC_CAT.test(String(p.category).trim()) ? p.category : "");
 function productCard(p, promos = []) {
   const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos);
   const before = p.compareAt > p.priceRetail ? p.compareAt : b.promo ? p.priceRetail : 0;
   const { title, variant } = splitName(p.name);
-  const lines = [`*${title}*`];
-  if (variant || p.category) lines.push(`_${variant || p.category}_`);
+  const lines = [`*${shortTitle(title)}*`];
+  if (variant || catOf(p)) lines.push(`_${variant || catOf(p)}_`);
   const pts = bullets(p.desc);
   if (pts.length) lines.push("", ...pts);
   lines.push("", before ? `*${money(b.price)}*   Antes ~${money(before)}~` : `*${money(p.priceRetail)}*`);
@@ -39,6 +48,15 @@ const stripFormat = t => String(t || "").replace(MARK, "$1$3");
 const escHtml = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const toTelegramHtml = t => escHtml(t).replace(MARK, (m, pre, k, x) => `${pre}<${{ "*": "b", "_": "i", "~": "s" }[k]}>${x}</${{ "*": "b", "_": "i", "~": "s" }[k]}>`);
 
+// Texto que acompaña la tarjeta de oferta: la imagen ya trae nombre, medida, color y precios; aquí van el nombre
+// y los puntos clave (y el precio por mayor, que no está en la imagen)
+function cardCaption(p) {
+  const lines = [`*${shortTitle(splitName(p.name).title)}*`], pts = bullets(p.desc);
+  if (pts.length) lines.push(...pts);
+  if (p.priceWholesale && p.minWholesale) lines.push("", `Por mayor: desde ${p.minWholesale} unidades a ${money(p.priceWholesale)} c/u`);
+  return lines.join("\n");
+}
+
 // Descuento de un producto: precio tachado de Shopify y/o la mejor promoción vigente → { before, now, pct, promo } o null
 function discountOf(p, promos = []) {
   const b = PROMOS.bestPrice(p, 1, p.priceRetail || 0, promos);
@@ -47,4 +65,4 @@ function discountOf(p, promos = []) {
   return { before, now: b.price, pct: Math.round((1 - b.price / before) * 100), promo: b.promo };
 }
 
-module.exports = { productCard, bullets, splitName, discountOf, stripFormat, toTelegramHtml };
+module.exports = { productCard, cardCaption, bullets, splitName, shortTitle, discountOf, stripFormat, toTelegramHtml };
