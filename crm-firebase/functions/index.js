@@ -565,6 +565,10 @@ exports.shopifyWebhook = onRequest({ region: REGION, invoker: "public" }, async 
   try { await APPS.shopifyWebhook(req, res); }
   catch (e) { console.error("shopify", e); res.sendStatus(500); } // Shopify reintenta
 });
+// Descuentos de Shopify al día: se vuelven a leer cada 3 horas (con el acceso de Admin de la tienda)
+exports.sincronizarShopify = onSchedule({ schedule: "every 180 minutes", timeZone: "America/Bogota", region: REGION, timeoutSeconds: 300 }, async () => {
+  try { console.log("descuentos de Shopify", await APPS.syncDiscounts()); } catch (e) { console.error("descuentos de Shopify", e.message); }
+});
 exports.apps = onCall({ region: REGION, invoker: "public", timeoutSeconds: 300 }, async req => {
   const me = await requireMember(req);
   const { action } = req.data || {};
