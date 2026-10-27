@@ -78,4 +78,4 @@ function catalog(products, medida, promos = [], { maxPhotos = 8 } = {}) {
   return { key, label: size.label, sections, items, total: items.length, photos, summary };
 }
 
-module.exports = { catalog, sizeOf, SIZES, group, sectionOf, shortTitle, colorsText, priceText };
+module.exports = { catalog, sizeOf, SIZES, group, sectionOf, shortTitle, colorsText, priceText, colorOf };
