@@ -4,6 +4,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
 const FICHA = require("./ficha");
+const MEDIDAS = require("./medidas");
 
 // Modelo de la asesora: Haiku 5.5 por defecto (rápido y económico); se puede cambiar en Asesora virtual
 const MODELS = { haiku: "claude-haiku-5-5", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
@@ -51,6 +52,8 @@ const TOOLS = [
       resumen: { type: "string", description: "Resumen para la persona que toma el chat: qué quiere el cliente y qué falta" } }, ["motivo", "resumen"]) },
   { name: "enviar_foto_producto", description: "Envía al cliente la foto de un producto del catálogo, con su nombre y precio como pie de foto. Úsala cuando pida ver el producto o cuando una foto ayude a decidir, solo con productos que tengan tiene_foto=true. Máximo 3 fotos por respuesta. La foto llega después de tu mensaje de texto.",
     input_schema: obj({ producto_id: { type: "string", description: "id del producto (de buscar_productos)" } }, ["producto_id"]) },
+  { name: "catalogo_por_medida", description: "Reúne TODOS los productos del catálogo para una medida de cama (sábanas, cobijas, edredones, fundas, protectores… agrupando los colores) más lo que sirve para cualquier medida. El sistema le envía al cliente la lista completa ordenada y las fotos. Úsala cuando el cliente quiera ver todo o todas las opciones para su cama (ej. 'quiero de todo para mi cama doble', '¿qué tienen para queen?').",
+    input_schema: obj({ medida: { type: "string", description: "Medida que dijo el cliente: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00)" } }, ["medida"]) },
   { name: "buscar_conocimiento", description: "Busca en la base de conocimiento de la empresa (políticas, envíos, garantías, cuidados de productos, preguntas frecuentes). Úsala antes de responder algo que no esté en el catálogo.",
     input_schema: obj({ consulta: { type: "string", description: "Tema a buscar, ej. 'garantía' o 'envíos a Cali'" } }, ["consulta"]) },
 ].map(t => ({ ...t, strict: true }));
@@ -71,6 +74,7 @@ Estilo de tus mensajes (como una marca elegante y ordenada, nunca un bloque de t
 - Productos con foto (tiene_foto=true): la foto se envía sola con una ficha ordenada (nombre, puntos clave, precio con descuento y precio por mayor). Tú escribe solo 1 o 2 frases cálidas que la presenten ("Te comparto la *Sábana Silver*, una de nuestras favoritas para el uso diario:"), SIN repetir precio, materiales ni medidas.
 - Productos sin foto: escribe tú la ficha con el mismo orden: *nombre*, 2 líneas cortas con "• " y el precio en negrita (con "Antes ~$X~" si hay descuento).
 - Color, medida o referencia: si el cliente pide uno que no está en el catálogo (por ejemplo una sábana verde y no hay verde), díselo claro y primero, y pregúntale si quiere ver los colores que sí hay. No envíes la foto de un producto de otro color como si fuera el que pidió; muestra una alternativa (con enviar_foto_producto) solo si te la pide o acepta, aclarando que es de otro color.
+- Si el cliente quiere ver todo o todas las opciones para su cama (ej. "quiero de todo para mi cama doble", "qué tienen para queen"), usa catalogo_por_medida con la medida. Si no dijo la medida, pregúntale cuál: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00).
 - Cierra con una sola pregunta corta para seguir la conversación (medida, cantidad, ciudad…). Máximo unas 70 palabras en total. Si te preguntan, dices con naturalidad que eres la asesora virtual y que hay un equipo de personas detrás.
 
 Tu trabajo (modo mixto):
@@ -171,6 +175,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
   const done = []; // lo que hizo la asesora, para la nota interna
   const photos = []; // fotos de productos para enviar después del texto
   const docs = []; // cotizaciones en PDF para enviar después del texto
+  const catalog = []; // catálogo por medida (lista ordenada + fotos) para enviar después del texto
   const quoteTried = []; // si la IA intentó crear una cotización en este turno
   const found = []; // productos de la última búsqueda, en orden de relevancia (para adjuntar sus fotos)
   const run = {
@@ -180,6 +185,16 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       const scored = kb.map(k => { const hay = norm(k.title + " " + k.content); return [k, words.filter(w => hay.includes(w)).length + (norm(k.title).includes(norm(consulta)) ? 3 : 0)]; })
         .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
       return scored.length ? { articulos: scored.map(([k]) => ({ titulo: k.title, contenido: String(k.content).slice(0, 4000) })) } : { articulos: [], aviso: "No hay nada sobre eso en la base de conocimiento." };
+    },
+    async catalogo_por_medida({ medida }) {
+      const c = MEDIDAS.catalog(active, medida, promos);
+      if (!c) return { error: "No reconozco esa medida. Pregúntale al cliente cuál es: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00)." };
+      if (!c.total) return { medida: c.label, total: 0, aviso: "No hay productos cargados para esa medida. Díselo con amabilidad y ofrécele otra medida o que una asesora le ayude." };
+      catalog.splice(0, catalog.length, c);
+      done.push(`envió el catálogo para cama ${c.label} (${c.total} productos)`);
+      return { medida: c.label, total: c.total,
+        categorias: [...c.groups, ...c.general].reduce((o, g) => { const k = c.general.includes(g) ? "Para cualquier medida" : g.category; (o[k] = o[k] || []).push({ nombre: g.title, colores: g.colors, precio_desde: isFinite(g.min) ? g.min : null, id: g.ids[0] }); return o; }, {}),
+        aviso: "El sistema le envía al cliente, justo después de tu mensaje, la lista completa ordenada por categoría y las fotos. Escribe solo 1 línea cálida de introducción y cierra con una pregunta corta (ej. qué le gusta más o para cuántas camas). NO repitas la lista ni los precios." };
     },
     async enviar_foto_producto({ producto_id }) {
       const p = active.find(x => x.id === producto_id);
@@ -261,7 +276,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       return { ok: true, aviso: "Listo. Despídete diciendo que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, found, kb, promos, quoteAuto, quoteTried };
+  return { run, done, photos, docs, catalog, found, kb, promos, quoteAuto, quoteTried };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -392,19 +407,22 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     tools.done.push("no pudo responder y pasó el chat a una persona");
   }
   const text = (res.text || "").trim(), hasText = text && text !== "[SIN RESPUESTA]";
-  if (hasText || tools.photos.length || tools.docs.length) {
+  const cat = tools.catalog[0];
+  if (hasText || tools.photos.length || tools.docs.length || cat) {
     // Si una persona respondió mientras la IA pensaba, no enviar
     const fresh = (await cref.get()).data();
     if ((fresh.aiPausedUntil || 0) > Date.now() || fresh.aiOff || (fresh.lastInboundAt || 0) > ts) return "cancelado";
     // Cada vez que habla de productos, la foto con el precio va sola (además de las que pidió con enviar_foto_producto)
-    const auto = hasText && !tools.docs.length && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {}, asked: lastAsk(history) }) : [];
-    const photos = [...tools.photos, ...auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) }))];
+    const auto = hasText && !cat && !tools.docs.length && !tools.done.some(d => /pasó el chat/.test(d)) ? autoPhotos({ text, found: tools.found, queued: tools.photos, sentAt: fresh.aiPhotos || {}, asked: lastAsk(history) }) : [];
+    // Catálogo por medida: la lista ordenada va con la respuesta y después una foto por producto
+    const photos = [...tools.photos, ...(cat ? cat.photos.filter(f => !tools.photos.some(q => q.id === f.id)) : auto.map(p => ({ id: p.id, image: p.image, caption: photoCaption(p, promos) })))];
+    const outText = cat ? [hasText ? text : "", cat.summary].filter(Boolean).join("\n\n") : text;
     const sentNow = {};
     // Un solo mensaje: la primera foto lleva la respuesta + su ficha como pie (WhatsApp y Telegram aceptan hasta 1024 caracteres);
     // las demás fotos van con su ficha
     const lead = hasText && photos.length ? text + "\n\n" + photos[0].caption : "";
-    const joined = hasText && photos.length && lead.length <= CAPTION_MAX && !saysNotAvailable(text);
-    if (hasText && !joined) await send({ cref, contact: fresh, text, byName: aiName });
+    const joined = !cat && hasText && photos.length && lead.length <= CAPTION_MAX && !saysNotAvailable(text);
+    if ((hasText || cat) && !joined) await send({ cref, contact: fresh, text: outText, byName: aiName });
     for (const [i, f] of photos.entries()) {
       try { await send({ cref, contact: fresh, text: joined && i === 0 ? lead : f.caption, image: f.image, byName: aiName }); sentNow[f.id] = Date.now(); }
       catch (e) {
@@ -427,7 +445,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     if ((fresh.stage || "Nuevo") === "Nuevo") await cref.set({ stage: "Contactado", stageAt: Date.now() }, { merge: true });
   }
   if (tools.done.length) await cref.collection("messages").add({ dir: "note", text: `${aiName}: ` + tools.done.join("; ") + ".", ts: Date.now(), by: "asesora", byName: aiName });
-  return hasText || tools.photos.length || tools.docs.length ? "respondido" : "sin-texto";
+  return hasText || tools.photos.length || tools.docs.length || cat ? "respondido" : "sin-texto";
 }
 
 module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked, colorsIn, saysNotAvailable };
