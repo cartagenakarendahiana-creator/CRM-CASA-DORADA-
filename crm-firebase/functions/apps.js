@@ -10,7 +10,8 @@ const isoDay = ms => new Date(ms).toLocaleDateString("en-CA", { timeZone: "Ameri
 const stripHtml = s => String(s || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 
 module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(...a) }) {
-  const CART = require("./carritos")({ db }); // carritos abandonados (el recordatorio lo envía index.js)
+  const CART = require("./carritos")({ db });
+  const EMB = require("./embudos"); // carritos abandonados (el recordatorio lo envía index.js)
   let cache = null, cacheAt = 0;
   async function cfg(fresh) {
     if (!fresh && cache && Date.now() - cacheAt < 60000) return cache;
@@ -101,7 +102,16 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       await setPub({ shopify: { lastAt: now, orders: admin.firestore.FieldValue.increment(1) } });
       return "pedido " + number;
     }
-    if (topic === "customers/create") { await upsertCustomer(body, {}, "Shopify"); return "cliente"; }
+    if (topic === "customers/create") { // se registró en la tienda: embudo "Registro en sitio web" (o Línea Hotelera si es un hotel)
+      const { ref, existed } = await upsertCustomer(body, {}, "Shopify");
+      if (!existed) {
+        const list = ((await db.doc("settings/pipelines").get()).data() || {}).list || [];
+        const addr = body.default_address || {}, hotel = EMB.isHotel(addr.company || "", body.note || "");
+        const pp = EMB.findPipe(list, hotel ? "hoteles" : "registro");
+        if (pp) await ref.set({ pipeline: pp.id, stage: (pp.stages || ["Nuevo"])[0], ...(hotel ? { segment: "Hoteles" } : { segment: "Registro en la tienda" }) }, { merge: true });
+      }
+      return "cliente";
+    }
     // Productos: el stock, los precios y las fotos quedan al día al instante (además de la revisión de cada hora)
     if (topic === "products/create" || topic === "products/update") { await saveShopifyProduct(body, body.status ? body.status === "active" : true); return "producto"; }
     if (topic === "products/delete") {

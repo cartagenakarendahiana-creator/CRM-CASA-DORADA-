@@ -4,6 +4,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
 const LISTAS = require("./listas");
+const EMB = require("./embudos");
 const FICHA = require("./ficha");
 const MEDIDAS = require("./medidas");
 
@@ -181,7 +182,7 @@ function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), m
   return (named.length ? named : withImg).filter(fresh).filter(p => !seen.has(p.image) && seen.add(p.image)).slice(0, Math.max(0, max - queued.length));
 }
 
-function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false, priceList = null, crossText = "", notify = null }) {
+function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false, priceList = null, crossText = "", notify = null, pipesList = [] }) {
   // Solo lo que hay en stock (available=false: agotado en Shopify). Lo agotado solo sirve para decir que está agotado.
   const active = products.filter(p => p.active !== false && p.available !== false);
   const soldOut = products.filter(p => p.active !== false && p.available === false);
@@ -284,6 +285,11 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         patch.chosenProduct = { id: p.id, name: p.name, price: p.priceRetail || 0, desc: p.desc || "" };
       }
       if (a.nota && String(a.nota).trim()) patch.obs = [contact.obs, `${isoDay(Date.now())} (${aiName}): ${String(a.nota).trim()}`].filter(Boolean).join("\n").slice(0, 3000);
+      // Hoteles, hostales, glampings…: pasan a la Línea Hotelera (si existe ese embudo) y al segmento Hoteles
+      if (EMB.isHotel(patch.company || "", patch.looking || "") && (contact.pipeline || "ventas") === "ventas" && contact.stage !== "Ganado") {
+        const hp = EMB.findPipe(pipesList, "hoteles");
+        if (hp) { Object.assign(patch, EMB.movePatch(contact, hp), { segment: "Hoteles" }); done.push("lo pasó a la " + hp.name); }
+      }
       if (!Object.keys(patch).length) return { ok: true, guardado: [] };
       await cref.set({ ...patch, updatedAt: Date.now(), updatedBy: aiName }, { merge: true });
       Object.assign(contact, patch);
@@ -348,9 +354,14 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         : "Listo. Dile que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, catalog, found, kb, promos, saleText, crossText, priceList, badText: "", quoteAuto, quoteTried, captionFor, cardText };
+  return { run, done, photos, docs, catalog, found, kb, promos, saleText, crossText, priceList, pipesList, badText: "", quoteAuto, quoteTried, captionFor, cardText };
 }
 
+// ¿El contacto es de la línea hotelera? (está en ese embudo, en el segmento Hoteles o su empresa es un hospedaje)
+function hotelLine(c, pipesList) {
+  const hp = EMB.findPipe(pipesList, "hoteles");
+  return !!((hp && c.pipeline === hp.id) || c.segment === "Hoteles" || EMB.isHotel(c.company || "", c.looking || ""));
+}
 // Respuestas que el equipo calificó con 👎 (las más recientes), para que la asesora no repita esos errores
 // Semana que empieza el lunes, en hora de Colombia: "2026-10-26"
 function weekKey(ms) { const d = new Date(new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Bogota" }) + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); }
@@ -384,6 +395,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
   const system = [
     { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
     { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) + (tools.saleText ? "\n\n" + tools.saleText : "") + (tools.crossText ? "\n\n" + tools.crossText : "") + (tools.badText ? "\n\n" + tools.badText : "")
+      + (hotelLine(contact, tools.pipesList || []) ? "\n\nEste cliente es de la LÍNEA HOTELERA (hotel, hostal u hospedaje): atiéndelo como cliente empresarial. Pregunta lo necesario para cotizar por volumen (nombre del hotel, ciudad, número de habitaciones o cantidades, medidas de cama, colores o si quiere bordado del logo) y prepárale una cotización formal. Usa trato profesional y cercano." : "")
       + (tools.priceList ? `\n\nEste cliente tiene la lista de precios «${tools.priceList.name}»: al cotizar, crear_cotizacion ya aplica sus precios.${tools.priceList.minOrder ? ` Pedido mínimo de la lista: ${money(tools.priceList.minOrder)}.` : ""}` : "") },
   ];
   const wantsQuote = tools.quoteAuto && quoteAsked(history);
@@ -462,7 +474,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   if (claim !== "ok") return claim;
 
   const contact = (await cref.get()).data();
-  const [hs, ps, ks, prs, pls, xs, rts] = await Promise.all([
+  const [hs, ps, ks, prs, pls, xs, rts, pps] = await Promise.all([
     cref.collection("messages").orderBy("ts", "desc").limit(HISTORY).get(),
     db.collection("products").get(),
     db.collection("knowledge").get(),
@@ -470,7 +482,9 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     db.collection("priceLists").get().catch(() => ({ docs: [] })),
     db.doc("settings/ventaCruzada").get().catch(() => null),
     db.collection("ratings").orderBy("at", "desc").limit(60).get().catch(() => ({ docs: [] })),
+    db.doc("settings/pipelines").get().catch(() => null),
   ]);
+  const pipesList = (pps && pps.exists && (pps.data() || {}).list) || [];
   // Lo que el equipo marcó con 👎: la asesora lo lee para no repetir esos errores
   const badText = ratingsText(rts.docs.map(d => d.data()));
   // Promociones que aplican a este cliente: sin las internas, las "bajo demanda" solo si escribió el código, las de clientes solo si ya compró
@@ -487,7 +501,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   }
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
-  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, priceList, crossText, notify: notify && (proof => notify(cid, contact, proof)), quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
+  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, priceList, crossText, notify: notify && (proof => notify(cid, contact, proof)), pipesList, quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
 
   tools.badText = badText;
   let res;
