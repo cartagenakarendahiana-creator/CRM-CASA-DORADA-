@@ -681,6 +681,62 @@ exports.runCampaign = onCall({ ...AUTO_OPTS, invoker: "public", timeoutSeconds: 
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
 
+// ---------- Pauta de Meta: lo invertido por anuncio (ver pauta.js) ----------
+const PAUTA = require("./pauta")({ db, GRAPH });
+exports.pauta = onCall({ region: REGION, invoker: "public", timeoutSeconds: 300 }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora conecta la pauta.");
+  const d = req.data || {};
+  try {
+    if (d.action === "conectar") return await PAUTA.connect({ token: d.token, account: d.account });
+    if (d.action === "desconectar") { await db.doc("private/ads").delete(); await db.doc("settings/ads").set({ on: false }, { merge: true }); return { ok: true }; }
+    return { out: await PAUTA.sync() };
+  } catch (e) { throw new HttpsError("failed-precondition", e.message); }
+});
+exports.sincronizarPauta = onSchedule({ schedule: "every 6 hours", timeZone: "America/Bogota", region: REGION, timeoutSeconds: 300 }, async () => {
+  try { console.log("pauta", await PAUTA.sync()); } catch (e) { console.error("pauta", e.message); }
+});
+
+// ---------- Agenda en el calendario del teléfono (enlace .ics privado, sin teléfonos) ----------
+const icsEsc = s => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+const icsFold = l => l.length <= 60 ? l : l.match(/.{1,60}/g).join("\r\n "); // líneas cortas: los acentos ocupan 2 bytes
+function agendaIcsText(list, now = Date.now()) {
+  const stamp = new Date(now).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const ev = list.map(c => {
+    const d = String(c.nextDate).replace(/-/g, ""), next = new Date(Date.parse(c.nextDate + "T12:00:00Z") + 864e5).toISOString().slice(0, 10).replace(/-/g, "");
+    const who = c.name || c.company || "Cliente";
+    return ["BEGIN:VEVENT", `UID:${c.id}-${d}@housechat`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${next}`,
+      `SUMMARY:${icsEsc("Contactar a " + who + (c.nextAction ? ": " + c.nextAction : ""))}`, `DESCRIPTION:${icsEsc((c.owner ? "Responsable: " + c.owner + "\n" : "") + "Abrir la conversación: " + PUBLIC_URL + "/#conv/" + c.id)}`,
+      `URL:${PUBLIC_URL}/#conv/${c.id}`, "END:VEVENT"].map(icsFold).join("\r\n");
+  });
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//House Chat//Agenda//ES", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:House Chat · Agenda", "X-WR-TIMEZONE:America/Bogota",
+    ...ev, "END:VCALENDAR"].join("\r\n") + "\r\n";
+}
+exports._agendaIcsText = agendaIcsText;
+exports.agendaIcs = onRequest({ region: REGION, invoker: "public" }, async (req, res) => {
+  const tok = String(req.path.split("/").pop() || "").replace(/\.ics$/, "");
+  if (!/^[a-f0-9]{40}$/.test(tok)) return res.sendStatus(404);
+  const t = (await db.doc("icsTokens/" + tok).get()).data();
+  if (!t) return res.sendStatus(404);
+  const u = (await db.doc("users/" + t.uid).get()).data();
+  if (!u || u.active === false) return res.sendStatus(404);
+  const from = new Date(Date.now() - 14 * 864e5).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  const snap = await db.collection("contacts").where("nextDate", ">=", from).get();
+  const mine = t.scope !== "equipo" || u.role !== "admin";
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.archived && (!mine || c.owner === u.name || (u.role === "admin" && t.scope === "equipo")));
+  res.set("Content-Type", "text/calendar; charset=utf-8").set("Cache-Control", "private, max-age=900").send(agendaIcsText(list));
+});
+exports.agendaEnlace = onCall({ region: REGION, invoker: "public" }, async req => {
+  const me = await requireMember(req), uid = req.auth.uid, d = req.data || {};
+  const old = await db.collection("icsTokens").where("uid", "==", uid).get();
+  await Promise.all(old.docs.map(x => x.ref.delete()));
+  if (d.action === "quitar") { await db.doc("users/" + uid).set({ ics: admin.firestore.FieldValue.delete() }, { merge: true }); return { ok: true }; }
+  const tok = crypto.randomBytes(20).toString("hex"), scope = d.scope === "equipo" && me.role === "admin" ? "equipo" : "mio";
+  await db.doc("icsTokens/" + tok).set({ uid, name: me.name || "", scope, at: Date.now() });
+  await db.doc("users/" + uid).set({ ics: { tail: tok.slice(-4), scope, at: Date.now() } }, { merge: true });
+  return { url: `${PUBLIC_URL}/api/agenda/${tok}.ics`, scope };
+});
+
 // ---------- Integraciones ----------
 exports.intCotizacion = onDocumentCreated({ document: "quotes/{id}", region: REGION }, async event => {
   const q = event.data && event.data.data();

@@ -57,6 +57,9 @@ service cloud.firestore {
     match /knowledge/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /forms/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /promos/{id} { allow read: if member(); allow write: if isAdmin(); }
+    match /adSpend/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /icsTokens/{id} { allow read, write: if false; }
+    match /segments/{id} { allow read: if member(); allow write: if isAdmin(); }
     // Listas de precios por tipo de cliente (hoteles, distribuidores…)
     match /priceLists/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /campaigns/{id} {

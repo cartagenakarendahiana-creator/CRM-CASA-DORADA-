@@ -75,6 +75,7 @@ const ICONS = {
   carritos: '<path d="M3 4h2l2.4 11h10.2L20 8H6.2"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   cartera: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>',
   oportunidades: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  segmentos: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.4 3-5.4 6-5.4s5.4 2 6 5.4"/><path d="M16 4.6a3 3 0 0 1 0 6.2M21 20c-.4-2.6-1.8-4.3-3.8-5"/>',
   listas: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   ventacruzada: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
@@ -236,7 +237,7 @@ function fixOwners(list) {
 // Responsables que puede elegir la persona: la administradora, cualquiera del equipo; un asesor, solo él mismo
 const ownerOptions = () => (isAdmin() ? S.team.filter(u => u.active !== false).map(u => u.name) : [S.me.name]);
 // Lo que un asesor no ve: configuración, difusiones, promociones, formularios, anuncios, importar y exportar
-const ADMIN_ONLY = new Set(["listas", "ventacruzada", "carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
+const ADMIN_ONLY = new Set(["segmentos", "listas", "ventacruzada", "carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
 const canView = k => isAdmin() || !ADMIN_ONLY.has(k);
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
@@ -264,6 +265,11 @@ function startData() {
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"] });
   w("promos", "promos");
   w("priceLists", "priceLists");
+  w("segments", "segments");
+  if (isAdmin()) {
+    S.unsubs.push(fb.watchDoc("settings/ads", d => { S.ads = d || {}; if (S.view === "anuncios") scheduleRender(); }, () => { S.ads = {}; }));
+    S.unsubs.push(fb.watch("adSpend", l => { S.adSpend = Object.fromEntries(l.map(x => [x.id, x])); if (S.view === "anuncios") scheduleRender(); }, {}, () => { S.adSpend = {}; }));
+  }
   S.unsubs.push(fb.watchDoc("settings/ventaCruzada", d => { S.cross = d || {}; if (S.view === "ventacruzada") scheduleRender(); }, () => { S.cross = {}; }));
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
@@ -301,7 +307,7 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["segmentos", "Segmentos"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
   ["Catálogo", [["productos", "Productos"], ["promociones", "Promociones"], ["listas", "Precios mayoristas"], ["ventacruzada", "Venta cruzada"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -343,7 +349,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, listas: viewListas, ventacruzada: viewVentaCruzada, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, listas: viewListas, segmentos: viewSegmentos, ventacruzada: viewVentaCruzada, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -604,8 +610,12 @@ function campMatch(c, f = {}) {
   if (f.channel && chOf(c) !== f.channel) return false;
   if (f.tag && !(c.tags || []).includes(f.tag)) return false;
   if (f.quietDays) { const last = Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0); if (Date.now() - last < f.quietDays * DAYMS) return false; }
+  if (f.segmentId) { const sg = byId(S.segments || [], f.segmentId); if (!sg || !inSegment(c, sg, segStats())) return false; }
   return true;
 }
+// Compras por contacto para los segmentos (se recalcula solo cuando cambian los pedidos)
+let segMemo = null;
+const segStats = () => (segMemo && segMemo.o === S.orders ? segMemo.st : (segMemo = { o: S.orders, st: orderStatsC() }).st);
 function campReach(list, camp) {
   const r = { total: list.length, now: 0, tpl: 0, no: 0, byCh: {} };
   for (const c of list) {
@@ -640,7 +650,7 @@ function viewCampanas(el) {
 }
 function openCampaign(id, preset) {
   const base = id ? byId(S.campaigns, id) : null;
-  const cp = base ? JSON.parse(JSON.stringify(base)) : { name: preset && preset.stage ? "Mensaje a " + preset.stage : "", filter: { ...(preset || {}) }, text: "", template: null, status: "borrador" };
+  const cp = base ? JSON.parse(JSON.stringify(base)) : { name: preset && preset.stage ? "Mensaje a " + preset.stage : preset && preset.segmentId ? "Mensaje a " + ((byId(S.segments || [], preset.segmentId) || {}).name || "segmento") : "", filter: { ...(preset || {}) }, text: "", template: null, status: "borrador" };
   const m = $("#modal"), adm = isAdmin(), locked = cp.status !== "borrador";
   const waTpls = S.templates.filter(t => t.waName), team = S.team.filter(u => u.active !== false).map(u => u.name);
   const tags = [...new Set(S.contacts.flatMap(c => c.tags || []))].sort();
@@ -654,7 +664,7 @@ function openCampaign(id, preset) {
         <fieldset class="fs"><legend>A quién</legend><div class="grid2">
           ${sel("segment", SEGMENTS, "Todos los segmentos")}${pipes().length > 1 ? sel("pipeline", pipes().map(p => [p.id, "Embudo " + p.name]), "Todos los embudos") : ""}${sel("stage", allStages(), "Todas las etapas")}${sel("type", ["Prospecto", "Cliente"], "Prospectos y clientes")}
           ${sel("temperature", TEMPS, "Cualquier temperatura")}${sel("owner", team, "Cualquier responsable")}${sel("channel", Object.keys(CHN).map(k => [k, CHN[k].label]), "Todos los canales")}
-          ${sel("tag", tags, "Cualquier etiqueta")}
+          ${sel("tag", tags, "Cualquier etiqueta")}${(S.segments || []).length ? sel("segmentId", S.segments.map(x => [x.id, "Segmento: " + x.name]), "Sin segmento") : ""}
           <div><input class="in" type="number" min="0" data-cf="quietDays" value="${cp.filter.quietDays || ""}" placeholder="Sin hablar hace… días" ${locked ? "disabled" : ""}></div></div></fieldset>
         <div class="reach" id="reach">${reachHtml(reach)}</div>
         <fieldset class="fs"><legend>Mensaje</legend>
@@ -2202,8 +2212,9 @@ function viewAgenda(el) {
     ${list.length ? groups.map(([g, f]) => { const xs = list.filter(f); return xs.length ? `<h3 class="${g === "Vencidos" ? "late" : ""}" style="margin:22px 0 8px">${g} <span class="muted tabnum">${xs.length}</span></h3>
       <div class="table-wrap"><table class="t"><tbody>${xs.slice(0, 200).map(c => `<tr data-id="${c.id}"><td class="tabnum" style="width:120px;${g === "Vencidos" ? "color:var(--red);font-weight:600" : ""}">${fmtDate(c.nextDate)}</td>
         <td><b>${esc(contactName(c))}</b>${c.company && c.name ? ` <span class="muted">· ${esc(c.company)}</span>` : ""}</td><td>${esc(c.nextAction || "Seguimiento")}</td><td class="muted">${esc(c.owner || "")}</td></tr>`).join("")}</tbody></table></div>` : ""; }).join("")
-      : `<div class="empty"><p>No hay seguimientos programados.</p><p>Usa "Recordar en…" en Hoy o la fecha de próximo seguimiento en la ficha del contacto.</p></div>`}</div>`;
+      : `<div class="empty"><p>No hay seguimientos programados.</p><p>Usa "Recordar en…" en Hoy o la fecha de próximo seguimiento en la ficha del contacto.</p></div>`}${icsBlock()}</div>`;
   $("#agm").onchange = e => { S.agMine = e.target.checked; renderShell(); };
+  bindIcs();
   $$("tbody tr", el).forEach(tr => tr.onclick = () => openContact(tr.dataset.id));
 }
 
@@ -2285,13 +2296,16 @@ function viewAnuncios(el) {
   const sum = f => ads.reduce((s, r) => s + r[f], 0);
   const best = ads.filter(r => r.ventas || r.conv).sort((p, q) => q.ventas - p.ventas || q.ingresos - p.ingresos || q.conv - p.conv)[0];
   const chName = { whatsapp: "WhatsApp", instagram: "Instagram", messenger: "Messenger" };
+  const sp = (S.adSpend || {})[AD_PRESET[rk] || "last_90d"] || { ads: {} };
+  const spendCols = r => { if (!(S.ads && S.ads.on)) return ""; const x = r.ad && sp.ads[r.ad.id]; return x ? `<td class="num tabnum">${money(x.spend)}</td><td class="num tabnum"><b>${x.spend ? (r.ingresos / x.spend).toFixed(1) + "×" : "—"}</b></td>` : '<td class="num muted">—</td><td class="num muted">—</td>'; };
   const row = r => `<tr data-ad="${esc(r.k)}"><td><div class="ad-cell">${r.ad && r.ad.thumb ? `<img src="${esc(r.ad.thumb)}" alt="" loading="lazy">` : `<span class="ad-ph">${icon("anuncios")}</span>`}
       <div><b>${esc(r.ad ? r.ad.headline || "Anuncio " + (r.ad.id || "") : "Sin anuncio (orgánico)")}</b>${r === best ? ' <span class="pill green">🏆 El que más vende</span>' : ""}
       <small class="muted">${r.ad ? esc(chName[r.ad.channel] || r.ad.channel || "") + (r.ad.id ? " · " + esc(r.ad.id) : "") : "Clientes que escribieron sin pasar por un anuncio"}</small></div></div></td>
     <td class="num">${r.conv}</td><td class="num">${r.ia}</td><td class="num">${r.cot}</td><td class="num">${r.cierreIA}</td><td class="num"><b>${r.ventas}</b></td>
-    <td class="num">${pct(r.ventas, r.conv)}</td><td class="num tabnum"><b>${money(r.ingresos)}</b></td></tr>`;
+    <td class="num">${pct(r.ventas, r.conv)}</td><td class="num tabnum"><b>${money(r.ingresos)}</b></td>${spendCols(r)}</tr>`;
   el.innerHTML = `<div class="page" style="max-width:1200px"><div class="page-head"><div><h1>Anuncios</h1><span class="sub">Qué anuncios traen conversaciones y ventas, y cuáles llevó ${esc(aiName())} hasta el cierre.</span></div><span class="spacer"></span>
       <div class="seg" role="group" aria-label="Periodo">${Object.entries(RANGES).map(([k, t]) => `<button class="${k === rk ? "on" : ""}" data-r="${k}">${t}</button>`).join("")}</div></div>
+    ${isAdmin() ? pautaBlock(rk, rows) : ""}
     <div class="tiles">
       <div class="tile"><small>Conversaciones por anuncios</small><b>${sum("conv")}</b><span>${ads.length} ${ads.length === 1 ? "anuncio" : "anuncios"}</span></div>
       <div class="tile"><small>Atendidas por ${esc(aiName())}</small><b>${sum("ia")}</b><span>${pct(sum("ia"), sum("conv"))} de las conversaciones</span></div>
@@ -2299,11 +2313,12 @@ function viewAnuncios(el) {
       <div class="tile"><small>Ventas por anuncios</small><b>${sum("ventas")}</b><span>${pct(sum("ventas"), sum("conv"))} de conversión</span></div>
       <div class="tile money"><small>Ingresos por anuncios</small><b class="mono">${money(sum("ingresos"))}</b><span>${org ? "orgánico: " + money(org.ingresos) : ""}</span></div>
     </div>
-    ${ads.length ? `<div class="table-wrap"><table class="t ad-t"><thead><tr><th>Anuncio</th><th class="num">Conversaciones</th><th class="num">Atendidas por IA</th><th class="num">Cotizaciones</th><th class="num">IA llevó al cierre</th><th class="num">Ventas</th><th class="num">Conversión</th><th class="num">Ingresos</th></tr></thead>
+    ${ads.length ? `<div class="table-wrap"><table class="t ad-t"><thead><tr><th>Anuncio</th><th class="num">Conversaciones</th><th class="num">Atendidas por IA</th><th class="num">Cotizaciones</th><th class="num">IA llevó al cierre</th><th class="num">Ventas</th><th class="num">Conversión</th><th class="num">Ingresos</th>${S.ads && S.ads.on ? '<th class="num">Inversión</th><th class="num">Retorno</th>' : ""}</tr></thead>
       <tbody>${rows.map(row).join("")}</tbody></table></div>`
       : `<div class="empty"><p><b>Todavía no hay conversaciones que vengan de anuncios en este periodo.</b></p><p>Cuando alguien te escriba desde un anuncio de Facebook o Instagram (con el botón de WhatsApp, Messenger o Instagram), aparecerá aquí con el anuncio que lo trajo. Los anuncios anteriores a hoy no traen este dato.</p></div>`}
     <p class="muted" style="font-size:12.5px">Una venta es un pedido (no cancelado) o un contacto en Ganado. "IA llevó al cierre": ${esc(aiName())} dejó el cliente listo para pagar y lo pasó al equipo.</p></div>`;
   $$("[data-r]", el).forEach(b => b.onclick = () => { S.adRange = b.dataset.r; renderShell(); });
+  bindPauta(el);
   $$("[data-ad]", el).forEach(tr => tr.onclick = () => {
     const r = rows.find(x => x.k === tr.dataset.ad), m = $("#modal");
     m.innerHTML = `<div class="mh"><h2>${esc(r.ad ? r.ad.headline || "Anuncio" : "Sin anuncio")}</h2><button class="iconbtn" id="adx" aria-label="Cerrar">✕</button></div>
@@ -2686,6 +2701,158 @@ function viewVentaCruzada(el) {
       save({ pairs: [...pairs, { from: a.key, to: b2.key, fromName: a.name, toName: b2.name, note: $("#xn").value.trim() }] }); m.close(); };
     m.showModal();
   };
+}
+
+// ======================= Inversión en pauta (dentro de Anuncios) =======================
+const AD_PRESET = { mes: "this_month", pasado: "last_month", d90: "last_90d", anio: "this_year", todo: "maximum" };
+const OBJ = { OUTCOME_SALES: "ventas", OUTCOME_ENGAGEMENT: "interacción", OUTCOME_AWARENESS: "reconocimiento", OUTCOME_TRAFFIC: "tráfico", OUTCOME_LEADS: "clientes potenciales", OUTCOME_APP_PROMOTION: "app", MESSAGES: "mensajes", CONVERSIONS: "conversiones", LINK_CLICKS: "clics", POST_ENGAGEMENT: "interacción", REACH: "alcance", VIDEO_VIEWS: "reproducciones" };
+function pautaBlock(rk, rows) {
+  const cfg = S.ads || {};
+  if (!cfg.on) return `<section class="card" style="padding:16px 18px;margin-bottom:16px"><b>Conecta tu cuenta publicitaria para ver si la pauta da plata</b>
+    <p class="muted" style="margin:4px 0 10px">Con lo que gastas en cada anuncio de Facebook e Instagram, House Chat te dice cuánto vuelve en ventas por cada peso y qué anuncios pausar o subir.</p>
+    <form id="adsF" class="grid2"><div><label class="lb" for="adsAcc">Número de la cuenta publicitaria</label><input class="in" id="adsAcc" placeholder="act_1234567890 o 1234567890" autocomplete="off"></div>
+      <div><label class="lb" for="adsTok">Token de acceso (permiso ads_read)</label><input class="in" id="adsTok" placeholder="EAAG…" autocomplete="off"></div>
+      <div class="full chrow"><button class="btn primary">Conectar</button></div></form>
+    <details class="wa-api"><summary>Dónde saco esos datos</summary><ol class="steps"><li>El número de la cuenta está en el <b>Administrador de anuncios</b>, arriba a la izquierda, junto al nombre de la cuenta.</li>
+      <li>El token: en <b>business.facebook.com › Configuración › Usuarios del sistema</b>, elige tu usuario del sistema (el mismo de WhatsApp), toca <b>Generar token</b>, elige tu app y marca el permiso <code>ads_read</code>. Asigna la cuenta publicitaria a ese usuario.</li>
+      <li>Pégalos aquí. El token queda guardado en el servidor y nadie del equipo lo puede ver.</li></ol></details></section>`;
+  const sp = (S.adSpend || {})[AD_PRESET[rk] || "last_90d"] || { total: 0, ads: {} };
+  const ads = rows.filter(r => r.k !== "_organico"), ventas = ads.reduce((s, r) => s + r.ingresos, 0);
+  const [a, b] = rangeOf(rk), store = S.orders.filter(o => o.adSource && o.status !== "Cancelado" && (o.createdAt || 0) >= a && (o.createdAt || 0) < b);
+  const storeRev = store.reduce((s, o) => s + (o.total || 0), 0), margin = Number(cfg.margin) || 25, be = 100 / margin;
+  const roas = sp.total ? (ventas + storeRev) / sp.total : 0;
+  const verdict = !sp.total ? null : roas >= be ? ["green", `Gana plata: vas en ${roas.toFixed(1)}× y necesitas ${be.toFixed(1)}×.`] : roas >= be * 0.7 ? ["amber", `Casi: vas en ${roas.toFixed(1)}× y necesitas ${be.toFixed(1)}×.`] : ["red", `Pierde plata: vas en ${roas.toFixed(1)}× y necesitas ${be.toFixed(1)}×.`];
+  // Campañas que gastaron: si buscan ventas y si traen conversaciones
+  const camps = {};
+  Object.entries(sp.ads || {}).forEach(([id, x]) => { if (!x.spend) return; const c = camps[x.campaignId || x.campaign] || (camps[x.campaignId || x.campaign] = { name: x.campaign, spend: 0, sales: x.sales, objective: x.objective, conv: 0, ventas: 0 });
+    c.spend += x.spend; const r = ads.find(r2 => r2.ad && String(r2.ad.id) === String(id)); if (r) { c.conv += r.conv; c.ventas += r.ingresos; } });
+  const cl = Object.values(camps), noSales = cl.filter(c => !c.sales), dead = cl.filter(c => c.sales && !c.conv);
+  // Qué hacer esta semana
+  const todo = [];
+  const unanswered = ads.flatMap(r => r.list).filter(c => c.lastMessageDir === "in" && Date.now() - (c.lastInboundAt || 0) > 2 * 3600e3 && Date.now() - (c.lastInboundAt || 0) < 7 * 864e5);
+  if (unanswered.length) todo.push(["Tú", `Responde ${unanswered.length} ${unanswered.length === 1 ? "conversación" : "conversaciones"} de anuncios que llevan más de 2 horas sin respuesta.`, "Cada conversación de pauta ya costó plata: si nadie contesta, se pierde."]);
+  Object.entries(sp.ads || {}).filter(([id, x]) => x.spend > 0 && x.sales && !ads.some(r => r.ad && String(r.ad.id) === String(id))).sort((p, q) => q[1].spend - p[1].spend).slice(0, 3)
+    .forEach(([, x]) => todo.push(["Quien maneja tu pauta", `Revisa o pausa «${x.name}» (${x.campaign}): gastó ${money(x.spend)} y no trajo conversaciones.`, "Un anuncio de ventas que no genera chats está mal segmentado o el mensaje no engancha."]));
+  noSales.forEach(c => todo.push(["Quien maneja tu pauta", `La campaña «${c.name}» tiene objetivo de ${OBJ[c.objective] || c.objective || "otro tipo"}, no de ventas: gastó ${money(c.spend)}.`, "Para vender por WhatsApp usa el objetivo Ventas o Mensajes, así Meta busca gente que compra."]));
+  const top = ads.filter(r => r.ad && sp.ads[r.ad.id] && sp.ads[r.ad.id].spend > 0 && r.ingresos / sp.ads[r.ad.id].spend >= be).sort((p, q) => q.ingresos / sp.ads[q.ad.id].spend - p.ingresos / sp.ads[p.ad.id].spend)[0];
+  if (top) todo.push(["Quien maneja tu pauta", `Sube el presupuesto de «${top.ad.headline || sp.ads[top.ad.id].name}»: devuelve ${(top.ingresos / sp.ads[top.ad.id].spend).toFixed(1)}× lo invertido.`, "Es el anuncio que mejor convierte; más presupuesto ahí rinde más que en los demás."]);
+  return `<section class="card pauta" style="padding:16px 18px;margin-bottom:16px"><p class="eyebrow">Tu pauta · ${esc(RANGES[rk])}${cfg.name ? " · " + esc(cfg.name) : ""}</p>
+    <h3 style="margin:2px 0 12px">Pusiste ${money(sp.total)} en pauta y por anuncios se vendieron ${money(ventas)}${storeRev ? ` (más ${money(storeRev)} en la tienda)` : ""}.</h3>
+    <div class="tiles" style="margin-bottom:12px"><div class="tile"><small>Por cada $1 de pauta</small><b class="tabnum">${sp.total ? "$" + roas.toFixed(2).replace(".", ",") : "—"}</b><span>vuelven en ventas</span></div>
+      <div class="tile"><small>Tu tienda registró</small><b class="tabnum">${money(storeRev)}</b><span>${store.length} ${store.length === 1 ? "pedido que llegó" : "pedidos que llegaron"} desde Facebook o Instagram</span></div>
+      <div class="tile"><small>Ventas por WhatsApp y chats</small><b class="tabnum">${ads.reduce((s, r) => s + r.ventas, 0)}</b><span>de ${ads.reduce((s, r) => s + r.conv, 0)} conversaciones de anuncios</span></div></div>
+    ${verdict ? `<div class="verdict ${verdict[0]}"><b>${verdict[1]}</b><div class="chrow" style="margin-top:6px"><label class="muted" for="adsM">Con el margen de tus ventas (%)</label><input class="in" id="adsM" type="number" min="1" max="95" value="${margin}" style="width:90px"></div></div>` : `<p class="muted">Aún no hay gasto registrado en este periodo${cfg.syncedAt ? ` (leído ${ago(cfg.syncedAt)})` : ""}.</p>`}
+    ${cl.length ? `<p class="muted" style="margin:10px 0 0">De tus ${cl.length} ${cl.length === 1 ? "campaña que gastó" : "campañas que gastaron"} en este periodo: ${[dead.length ? `${dead.length} no trae${dead.length === 1 ? "" : "n"} conversaciones` : "", noSales.length ? `${noSales.length} no busca${noSales.length === 1 ? "" : "n"} ventas` : ""].filter(Boolean).join(" y ") || "todas traen conversaciones"}.</p>` : ""}
+    ${cfg.error ? `<p class="err" style="margin:8px 0 0">⚠ ${esc(cfg.error)}</p>` : ""}
+    <div class="chrow" style="margin-top:10px"><button class="btn sm" id="adsSync">Actualizar gasto</button><small class="muted">${cfg.syncedAt ? "Leído " + ago(cfg.syncedAt) + " · se actualiza solo cada 6 horas" : ""}</small><span class="spacer"></span><button class="link" id="adsOff">Desconectar</button></div></section>
+    ${todo.length ? `<h2 class="sec-t">Qué hacer esta semana</h2><div style="display:grid;gap:8px;margin-bottom:16px">${todo.slice(0, 6).map((t, i) => `<div class="card todo-c"><span class="todo-n">${i + 1}</span><div><span class="pill">${esc(t[0])}</span><p style="margin:6px 0 2px">${esc(t[1])}</p><details><summary class="muted">Por qué</summary><p class="muted" style="margin:4px 0 0">${esc(t[2])}</p></details></div></div>`).join("")}</div>` : ""}`;
+}
+function bindPauta(el) {
+  if ($("#adsF")) $("#adsF").onsubmit = async e => { e.preventDefault(); const b = $("#adsF button"); b.disabled = true; b.textContent = "Conectando…";
+    try { const r = await fb.call("pauta", { action: "conectar", account: $("#adsAcc").value.trim(), token: $("#adsTok").value.trim() }); toast("Cuenta conectada: " + (r.name || "")); }
+    catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Conectar"; } };
+  if ($("#adsSync")) $("#adsSync").onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Leyendo…";
+    try { await fb.call("pauta", { action: "sincronizar" }); toast("Gasto actualizado"); } catch (er) { toast(errMsg(er)); } finally { b.disabled = false; b.textContent = "Actualizar gasto"; } };
+  if ($("#adsOff")) $("#adsOff").onclick = async () => { if (!await ask("¿Desconectar la cuenta publicitaria? Dejará de verse el gasto.", "Desconectar")) return; await fb.call("pauta", { action: "desconectar" }); };
+  if ($("#adsM")) $("#adsM").onchange = e => fb.set("settings/ads", { margin: Math.max(1, Math.min(95, Number(e.target.value) || 25)) });
+}
+
+// ======================= Segmentos =======================
+const SEG_ORIGIN = { anuncio: "Llegó por un anuncio", comentario: "Llegó por un comentario", web: "Llegó por la página web", organico: "Escribió por su cuenta" };
+const originOf = c => c.ad ? "anuncio" : c.comment ? "comentario" : c.webFunnel || /^web_/.test(c.id || "") ? "web" : "organico";
+function orderStatsC() { const st = {}; S.orders.forEach(o => { if (!o.contactId || o.status === "Cancelado") return; const s = st[o.contactId] || (st[o.contactId] = { n: 0, spent: 0, last: 0 }); s.n++; s.spent += o.total || 0; s.last = Math.max(s.last, o.createdAt || 0); }); return st; }
+function inSegment(c, seg, stats) { // igual que functions/segmentos.js
+  if (!c || !seg || c.archived) return false;
+  if (seg.type === "manual") return (c.tags || []).includes(seg.name);
+  const r = seg.rules || {}, s = stats[c.id] || { n: 0, spent: 0, last: 0 }, now = Date.now();
+  const last = Math.max(s.last, c.lastPurchaseAt || 0), n = Math.max(s.n, c.lastPurchaseAt && !s.n ? 1 : 0);
+  if (r.minOrders && n < Number(r.minOrders)) return false;
+  if (r.minSpent && s.spent < Number(r.minSpent)) return false;
+  if (r.neverBought && n > 0) return false;
+  if (r.boughtWithinDays && !(last && now - last <= r.boughtWithinDays * DAY)) return false;
+  if (r.notBoughtDays && !(last && now - last > r.notBoughtDays * DAY)) return false;
+  if (r.pipeline && (c.pipeline || "ventas") !== r.pipeline) return false;
+  if (r.stage && (c.stage || "Nuevo") !== r.stage) return false;
+  if (r.tag && !(c.tags || []).includes(r.tag)) return false;
+  if (r.origin && originOf(c) !== r.origin) return false;
+  if (r.channel && chOf(c) !== r.channel) return false;
+  if (r.quietDays && now - Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0) < r.quietDays * DAY) return false;
+  return true;
+}
+function segDesc(s) {
+  if (s.type === "manual") return `los contactos con la etiqueta «${s.name}»`;
+  const r = s.rules || {}, p = [];
+  if (r.minOrders) p.push(`al menos ${r.minOrders} compra${r.minOrders > 1 ? "s" : ""}`); if (r.minSpent) p.push(`gasto total ≥ ${money(r.minSpent)}`);
+  if (r.neverBought) p.push("nunca ha comprado"); if (r.boughtWithinDays) p.push(`compró en los últimos ${r.boughtWithinDays} días`); if (r.notBoughtDays) p.push(`no compra hace más de ${r.notBoughtDays} días`);
+  if (r.pipeline) p.push(`en el embudo ${(pipes().find(x => x.id === r.pipeline) || {}).name || r.pipeline}`); if (r.stage) p.push(`etapa ${r.stage}`); if (r.tag) p.push(`etiqueta ${r.tag}`);
+  if (r.origin) p.push(SEG_ORIGIN[r.origin].toLowerCase()); if (r.channel) p.push(`por ${(CHN[r.channel] || {}).label || r.channel}`); if (r.quietDays) p.push(`sin hablar hace ${r.quietDays}+ días`);
+  return p.join(" · ") || "todos los contactos";
+}
+function viewSegmentos(el) {
+  const segs = S.segments || [], stats = orderStatsC();
+  el.innerHTML = `<div class="page" style="max-width:1000px"><div class="page-head"><div><h1>Segmentos</h1><span class="sub">Grupos de contactos para trabajar la base: clientes, fríos, VIP o los de una etapa del embudo. Los <b>manuales</b> se llenan desde cada chat con una etiqueta; los <b>dinámicos</b> se llenan solos con reglas y siempre están al día.</span></div><span class="spacer"></span><button class="btn primary" id="nSeg">+ Nuevo segmento</button></div>
+    ${segs.length ? `<div style="display:grid;gap:10px">${segs.map(s => { const n = S.contacts.filter(c => inSegment(c, s, stats)).length; return `<div class="card seg-c" data-seg="${s.id}"><div style="flex:1;min-width:220px"><b>${esc(s.name)}</b> <span class="pill ${s.type === "manual" ? "" : "green"}">${s.type === "manual" ? "manual" : "dinámico"}</span><small class="muted" style="display:block">${esc(segDesc(s))}</small></div>
+      <div class="seg-n"><b class="tabnum">${n}</b><small class="muted">contactos</small></div><button class="btn sm" data-segsend="${s.id}" ${n ? "" : "disabled"}>Difundir</button></div>`; }).join("")}</div>`
+      : `<div class="empty"><p><b>Aún no hay segmentos.</b> Ideas: «Clientes que compraron más de $300.000», «Llegaron por anuncio y no compraron», «No compran hace 90 días».</p></div>`}</div>`;
+  $("#nSeg").onclick = () => openSegment(null);
+  $$("[data-seg]", el).forEach(d => d.onclick = e => { if (!e.target.closest("[data-segsend]")) openSegment(d.dataset.seg); });
+  $$("[data-segsend]", el).forEach(b => b.onclick = () => { const s = byId(S.segments, b.dataset.segsend); openCampaign(null, { segmentId: s.id }); });
+}
+function openSegment(id) {
+  const s = id ? JSON.parse(JSON.stringify(byId(S.segments, id))) : { name: "", type: "dinamico", rules: {} }, m = $("#modal"), stats = orderStatsC();
+  const tags = [...new Set(S.contacts.flatMap(c => c.tags || []))].sort();
+  const read = () => {
+    s.name = $("#sgn").value.trim(); s.type = $("#sgt").value;
+    const r = {}, nv = k => { const v = Number($("#sg_" + k).value); if (v > 0) r[k] = v; }, tv = k => { const v = $("#sg_" + k).value; if (v) r[k] = v; };
+    if (s.type !== "manual") { ["minOrders", "minSpent", "boughtWithinDays", "notBoughtDays", "quietDays"].forEach(nv); ["pipeline", "stage", "tag", "origin", "channel"].forEach(tv); if ($("#sg_neverBought").checked) r.neverBought = true; }
+    s.rules = r;
+  };
+  const draw = () => {
+    const r = s.rules || {}, n = S.contacts.filter(c => inSegment(c, s, stats)).length, sel = (k, opts, ph) => `<select class="in" id="sg_${k}"><option value="">${ph}</option>${opts.map(([v, t]) => `<option value="${esc(v)}" ${String(r[k] || "") === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+    m.innerHTML = `<form id="sgf"><div class="mh"><h2>${id ? "Segmento" : "Nuevo segmento"}</h2><button class="iconbtn" type="button" id="sgx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><div class="grid2"><div><label class="lb" for="sgn">Nombre</label><input class="in" id="sgn" required value="${esc(s.name)}" placeholder="Clientes VIP"></div>
+        <div><label class="lb" for="sgt">Tipo</label><select class="in" id="sgt"><option value="dinamico" ${s.type !== "manual" ? "selected" : ""}>Dinámico (con reglas)</option><option value="manual" ${s.type === "manual" ? "selected" : ""}>Manual (con una etiqueta)</option></select></div></div>
+        ${s.type === "manual" ? `<p class="muted">Quedan en el segmento los contactos con la etiqueta <b>${esc(s.name || "del mismo nombre")}</b>. Pónsela desde la ficha de cada cliente.</p>` : `<div class="grid2" style="margin-top:10px">
+          <div><label class="lb" for="sg_minOrders">Compras (mínimo)</label><input class="in" id="sg_minOrders" type="number" min="0" value="${r.minOrders || ""}"></div>
+          <div><label class="lb" for="sg_minSpent">Gasto total (mínimo $)</label><input class="in" id="sg_minSpent" type="number" min="0" value="${r.minSpent || ""}"></div>
+          <div><label class="lb" for="sg_boughtWithinDays">Compró en los últimos (días)</label><input class="in" id="sg_boughtWithinDays" type="number" min="0" value="${r.boughtWithinDays || ""}"></div>
+          <div><label class="lb" for="sg_notBoughtDays">No compra hace más de (días)</label><input class="in" id="sg_notBoughtDays" type="number" min="0" value="${r.notBoughtDays || ""}"></div>
+          <div><label class="lb" for="sg_pipeline">Embudo</label>${sel("pipeline", pipes().map(p => [p.id, p.name]), "Cualquiera")}</div>
+          <div><label class="lb" for="sg_stage">Etapa</label>${sel("stage", [...new Set(pipes().flatMap(p => p.stages))].map(x => [x, x]), "Cualquiera")}</div>
+          <div><label class="lb" for="sg_origin">Cómo llegó</label>${sel("origin", Object.entries(SEG_ORIGIN), "Cualquiera")}</div>
+          <div><label class="lb" for="sg_channel">Canal</label>${sel("channel", Object.entries(CHN).map(([k, v]) => [k, v.label]), "Cualquiera")}</div>
+          <div><label class="lb" for="sg_tag">Etiqueta</label>${sel("tag", tags.map(t => [t, t]), "Cualquiera")}</div>
+          <div><label class="lb" for="sg_quietDays">Sin hablar hace (días)</label><input class="in" id="sg_quietDays" type="number" min="0" value="${r.quietDays || ""}"></div>
+          <label class="switch sm full"><input type="checkbox" id="sg_neverBought" ${r.neverBought ? "checked" : ""}> <span>Nunca ha comprado</span></label></div>`}
+        <p class="seg-count"><b class="tabnum">${n}</b> contactos cumplen hoy</p></div>
+      <div class="mf">${id ? '<button class="btn danger" type="button" id="sgdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="sgc">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+    $("#sgx").onclick = $("#sgc").onclick = () => m.close();
+    // Solo el cambio de tipo redibuja el formulario; lo demás actualiza el conteo (redibujar mientras se escribe pierde el foco)
+    $$("input,select", m).forEach(x => x.onchange = () => { read(); if (x.id === "sgt") return draw(); $(".seg-count b", m).textContent = S.contacts.filter(c => inSegment(c, s, stats)).length; });
+    if ($("#sgdel")) $("#sgdel").onclick = async () => { if (!await ask("¿Eliminar este segmento? Los contactos no se borran.", "Eliminar")) return; await fb.remove("segments/" + id); m.close(); };
+    $("#sgf").onsubmit = async e => { e.preventDefault(); read(); if (!s.name) return toast("Ponle un nombre."); const data = { name: s.name, type: s.type, rules: s.rules, ...stamp() };
+      try { id ? await fb.set("segments/" + id, data, false) : await fb.add("segments", data); m.close(); toast("Segmento guardado"); } catch (er) { toast(errMsg(er)); } };
+  };
+  draw(); m.showModal();
+}
+
+// ======================= Agenda en el calendario del teléfono =======================
+function icsBlock() {
+  const ics = (S.me || {}).ics, adm = isAdmin();
+  return `<section class="card" style="padding:16px 18px;margin-top:22px"><p class="eyebrow">Tu agenda en el calendario del teléfono</p>
+    <p class="muted" style="margin:4px 0 10px">Suscríbete una vez y cada próximo contacto aparece solo en Google Calendar o en el calendario del iPhone, con lo que toca hacer y el enlace para abrir la conversación. <b>Nunca lleva teléfonos.</b> El calendario se actualiza cada pocas horas.</p>
+    ${S.icsUrl ? `<div class="codebox"><code class="sel" id="icsUrl">${esc(S.icsUrl)}</code><button class="btn sm" type="button" id="icsCopy">Copiar</button></div>
+      <ol class="steps" style="margin-top:8px"><li><b>iPhone:</b> Configuración › Calendario › Cuentas › Agregar cuenta › Otra › Agregar calendario suscrito, y pega el enlace.</li><li><b>Google Calendar</b> (en computador): Otros calendarios › + › Desde URL, y pega el enlace.</li></ol>`
+      : ics ? `<p>Tienes un enlace activo (termina en «${esc(ics.tail)}»), con ${ics.scope === "equipo" ? "todo el equipo" : "lo tuyo"}. Cambiarlo corta el anterior en todos los teléfonos donde esté.</p>` : ""}
+    ${adm ? `<div class="chrow" style="margin:8px 0"><span class="muted">Qué entra al calendario:</span><label class="switch sm"><input type="radio" name="icsS" value="mio" ${!ics || ics.scope !== "equipo" ? "checked" : ""}> <span>Lo mío</span></label><label class="switch sm"><input type="radio" name="icsS" value="equipo" ${ics && ics.scope === "equipo" ? "checked" : ""}> <span>Todo el equipo</span></label></div>` : ""}
+    <div class="chrow"><button class="btn ${ics ? "" : "primary"}" id="icsMake">${ics ? "Cambiar el enlace" : "Crear mi enlace"}</button>${ics ? '<button class="link" id="icsOff">Quitar el enlace</button>' : ""}</div></section>`;
+}
+function bindIcs() {
+  if ($("#icsMake")) $("#icsMake").onclick = async e => { const b = e.currentTarget; b.disabled = true;
+    try { const sc = ($("[name=icsS]:checked") || {}).value || "mio"; const r = await fb.call("agendaEnlace", { action: "crear", scope: sc }); S.icsUrl = r.url; renderShell(); toast("Enlace listo: cópialo en tu calendario"); }
+    catch (er) { toast(errMsg(er)); b.disabled = false; } };
+  if ($("#icsOff")) $("#icsOff").onclick = async () => { if (!await ask("¿Quitar el enlace? La agenda deja de llegar al calendario de los teléfonos donde esté.", "Quitar")) return; await fb.call("agendaEnlace", { action: "quitar" }); S.icsUrl = ""; toast("Enlace quitado"); };
+  if ($("#icsCopy")) $("#icsCopy").onclick = () => copy(S.icsUrl);
 }
 
 function viewMetricas(el) {

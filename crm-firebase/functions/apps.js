@@ -57,6 +57,13 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     return { status: (f && f.shipment_status) || body.fulfillment_status || "", company: (f && f.tracking_company) || "", number: (f && (f.tracking_number || (f.tracking_numbers || [])[0])) || "",
       url: (f && (f.tracking_url || (f.tracking_urls || [])[0])) || "", at: Date.now() };
   }
+  // ¿El pedido llegó desde Facebook o Instagram? (enlace con fbclid o utm, o la página de donde venía)
+  function socialOf(body) {
+    const t = [body.landing_site, body.referring_site, body.source_name, ...(body.note_attributes || []).map(n => n.name + "=" + n.value)].join(" ").toLowerCase();
+    if (/instagram|utm_source=ig\b|[?&]igshid=/.test(t)) return "instagram";
+    if (/facebook|fbclid=|utm_source=(fb|meta)\b/.test(t)) return "facebook";
+    return "";
+  }
   const payOf = fs => ({ paid: "Pagado", partially_paid: "Abono", refunded: "Pendiente", partially_refunded: "Pagado" }[fs] || "Pendiente");
   async function shopifyEvent(topic, body) {
     const now = Date.now();
@@ -81,7 +88,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
         t.set(cr, { n });
         t.set(oref, { number: num, source: "Shopify", shopifyName: body.name || "", shopifyId: String(body.id), contactId: ref.id, contactName: cs.name || cs.company || addr.name || "",
           items, total, status: body.cancelled_at ? "Cancelado" : "Nuevo", payment: payOf(body.financial_status), ...(shipOf(body) ? { shipping: shipOf(body) } : {}),
-          checkoutToken: String(body.checkout_token || ""), shopifyUrl: shop ? `https://${shop}/admin/orders/${body.id}` : "",
+          checkoutToken: String(body.checkout_token || ""), ...(socialOf(body) ? { adSource: socialOf(body) } : {}), shopifyUrl: shop ? `https://${shop}/admin/orders/${body.id}` : "",
           notes: [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ") + (body.note ? "\nNota: " + body.note : ""),
           createdAt: now, createdByName: "Shopify", updatedAt: now, updatedBy: "Shopify" });
         return num;
