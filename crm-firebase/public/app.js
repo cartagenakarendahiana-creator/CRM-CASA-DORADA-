@@ -72,6 +72,9 @@ const ICONS = {
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   anuncios: '<path d="M3 10v4h3l6 4V6L6 10z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
   captacion: '<path d="M4 5h16v10H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
+  carritos: '<path d="M3 4h2l2.4 11h10.2L20 8H6.2"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
+  cartera: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>',
+  oportunidades: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
@@ -231,7 +234,7 @@ function fixOwners(list) {
 // Responsables que puede elegir la persona: la administradora, cualquiera del equipo; un asesor, solo él mismo
 const ownerOptions = () => (isAdmin() ? S.team.filter(u => u.active !== false).map(u => u.name) : [S.me.name]);
 // Lo que un asesor no ve: configuración, difusiones, promociones, formularios, anuncios, importar y exportar
-const ADMIN_ONLY = new Set(["campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
+const ADMIN_ONLY = new Set(["carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
 const canView = k => isAdmin() || !ADMIN_ONLY.has(k);
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
@@ -266,6 +269,8 @@ function startData() {
   if (isAdmin()) { // comentarios automáticos y plantillas de Meta: solo la administradora
     S.unsubs.push(fb.watchDoc("settings/comentarios", d => { S.com = d || {}; if (S.view === "captacion") scheduleRender(); }, () => { S.com = {}; }));
     S.unsubs.push(fb.watch("comentarios", l => { S.comLog = l; if (S.view === "captacion") scheduleRender(); }, { orderBy: ["at", "desc"], limit: 100 }, () => { S.comLog = []; }));
+    S.unsubs.push(fb.watch("carts", l => { S.carts = l; if (["carritos", "oportunidades"].includes(S.view)) scheduleRender(); }, { orderBy: ["createdAt", "desc"], limit: 400 }, () => { S.carts = []; }));
+    S.unsubs.push(fb.watchDoc("settings/carritos", d => { S.cartCfg = d || {}; if (S.view === "carritos") scheduleRender(); }, () => { S.cartCfg = {}; }));
     S.unsubs.push(fb.watchDoc("settings/waTemplates", d => { S.waTpl = d; if (S.view === "plantillas") scheduleRender(); }, () => { S.waTpl = null; }));
   }
   S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
@@ -292,7 +297,7 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -334,7 +339,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -2420,6 +2425,155 @@ function openFunnel(i) {
   m.showModal();
 }
 
+// ======================= Carritos, Oportunidades y Cartera =======================
+const D = DAY;
+const winOpen = c => !!c && Date.now() - (c.lastInboundAt || 0) < D; // ventana de 24 h de WhatsApp: se escribe gratis y sin plantilla
+// ---- Carritos abandonados ----
+const CART_ST = { abierto: ["", "Sin recordar"], recordado: ["amber", "Recordado"], recuperado: ["green", "Recuperado"] };
+function viewCarritos(el) {
+  const cfg = S.cartCfg || {}, carts = [...(S.carts || [])].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const f = S.cartF || "pend", sh = (S.apps || {}).shopify || {};
+  const byC = id => S.contacts.find(c => c.id === id);
+  const open = carts.filter(c => c.status !== "recuperado"), rec = carts.filter(c => c.status === "recuperado" && (c.recoveredAt || 0) > Date.now() - 30 * D);
+  const list = f === "pend" ? open : f === "rec" ? carts.filter(c => c.status === "recuperado") : carts;
+  const tpls = S.templates.filter(t => t.waName);
+  el.innerHTML = `<div class="page" style="max-width:1100px"><div class="page-head"><div><h1>Carritos abandonados</h1><span class="sub">Compras que quedaron sin pagar en tu tienda de Shopify.</span></div><span class="spacer"></span>
+      <button class="btn" id="cartSync">Traer carritos de Shopify</button></div>
+    <div class="tiles">
+      <div class="tile"><small>Sin recuperar</small><b>${open.length}</b><span class="tabnum">${money(open.reduce((s, c) => s + (c.total || 0), 0))} en juego</span></div>
+      <div class="tile"><small>Puedes escribirles gratis hoy</small><b>${open.filter(c => winOpen(byC(c.contactId))).length}</b><span>con la ventana de 24 h abierta</span></div>
+      <div class="tile money"><small>Recuperados (30 días)</small><b>${rec.length}</b><span class="tabnum">${money(rec.reduce((s, c) => s + (c.orderTotal || c.total || 0), 0))} · ${rec.filter(c => c.afterReminder).length} después del recordatorio</span></div>
+    </div>
+    ${sh.cartsError ? `<div class="banner warn">${esc(sh.cartsError)}</div>` : ""}
+    <section class="card" style="padding:16px 18px;margin-bottom:16px"><div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:240px">
+      <b>Recordatorio automático por WhatsApp</b><p class="muted" style="margin:4px 0 0">Una hora después de que alguien deja el carrito, ${esc(aiName())} le escribe con lo que dejó y el enlace para terminar la compra, de 8 a. m. a 8 p. m. y una sola vez. Si contesta, la conversación sigue en Conversaciones.</p></div>
+      <label class="switch"><input type="checkbox" id="cartAuto" ${cfg.auto ? "checked" : ""}> <span>${cfg.auto ? "Encendido" : "Apagado"}</span></label></div>
+      <div class="grid2" style="margin-top:12px">
+        <div class="full"><label class="lb" for="cartTxt">Mensaje (cuando la ventana de 24 h está abierta)</label><textarea class="in" id="cartTxt" rows="3">${esc(cfg.text || "Hola {nombre} 😊 Vimos que dejaste {producto} en tu carrito. Si te quedó alguna duda te ayudo con gusto. Puedes terminar tu compra aquí: {enlace}")}</textarea>
+          <small class="muted">Campos: {nombre}, {producto}, {total}, {enlace}.</small></div>
+        <div><label class="lb" for="cartTpl">Plantilla de WhatsApp (cuando la ventana está cerrada)</label><select class="in" id="cartTpl"><option value="">Sin plantilla: solo a quien tenga la ventana abierta</option>
+          ${tpls.map(t => `<option value="${t.id}" ${cfg.templateId === t.id ? "selected" : ""}>${esc(t.name)}${t.waStatus && t.waStatus !== "APPROVED" ? " (" + esc(WA_ST[t.waStatus] || t.waStatus) + ")" : ""}</option>`).join("")}</select>
+          <small class="muted">¿No tienes? <a href="#plantillas">Créala en Plantillas</a> con los campos {nombre}, {producto} y {enlace}. Meta cobra cada envío de plantilla.</small></div>
+        <div><label class="switch sm" style="margin-top:22px"><input type="checkbox" id="cartAll" ${cfg.toAll ? "checked" : ""}> <span>Enviarlo también a quien no ha dado permiso</span></label>
+          <small class="muted" style="display:block">Solo a quien dejó su celular en la tienda. Nunca a quien pidió no recibir mensajes. Ojo: Meta puede marcarlo como spam y bajar la calidad de tu número.</small></div>
+        <div class="full chrow"><button class="btn primary" id="cartSave">Guardar</button></div></div></section>
+    <div class="seg" role="group" aria-label="Filtro" style="margin-bottom:12px">${[["pend", "Por recuperar"], ["rec", "Recuperados"], ["all", "Todos"]].map(([k, t]) => `<button class="${f === k ? "on" : ""}" data-cf="${k}">${t}</button>`).join("")}</div>
+    ${list.length ? `<div style="display:grid;gap:10px">${list.slice(0, 150).map(c => { const ct = byC(c.contactId), [cl, tx] = CART_ST[c.status] || ["", c.status]; return `<div class="card cart-c" style="padding:14px 16px">
+      <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:220px"><b>${esc(c.name || (ct && contactName(ct)) || c.email || c.phone || "Cliente")}</b>
+        <div class="muted" style="font-size:13.5px">${esc(c.items.map(i => i.name + (i.qty > 1 ? " ×" + i.qty : "")).join(", ").slice(0, 160))}</div>
+        <small class="muted">Abandonado ${ago(c.createdAt)}${c.phone ? " · " + esc(c.phone) : ""}${c.email ? " · " + esc(c.email) : ""}${c.reminderError ? ` · <span class="err">${esc(c.reminderError)}</span>` : ""}</small></div>
+        <div style="text-align:right"><b class="tabnum">${money(c.total)}</b><div style="margin-top:4px"><span class="pill ${cl}">${tx}</span>${!c.phone ? ' <span class="pill">Solo correo</span>' : ct && winOpen(ct) ? ' <span class="pill green">Ventana abierta</span>' : ""}</div></div></div>
+      <div class="chrow" style="margin-top:8px">${ct ? `<button class="btn sm" data-chat="${esc(ct.id)}">Abrir chat</button>` : ""}${c.url ? `<button class="btn sm" data-copy="${esc(c.url)}">Copiar enlace</button>` : ""}
+        ${c.status !== "recuperado" && c.phone ? `<button class="btn sm primary" data-remind="${esc(c.id)}">${c.remindedAt ? "Recordar otra vez" : "Enviar recordatorio"}</button>` : ""}</div></div>`; }).join("")}</div>`
+      : `<div class="empty"><p><b>${f === "rec" ? "Aún no hay carritos recuperados." : "No hay carritos por recuperar."}</b></p><p>Llegan con el webhook de Shopify <i>Creación de pago (checkout)</i>. Con el permiso <code>read_orders</code> en tu app de Shopify también se traen los de los últimos 30 días.</p></div>`}</div>`;
+  $$("[data-cf]", el).forEach(b => b.onclick = () => { S.cartF = b.dataset.cf; renderShell(); });
+  $$("[data-chat]", el).forEach(b => b.onclick = () => go("conv", b.dataset.chat));
+  $$("[data-copy]", el).forEach(b => b.onclick = () => copy(b.dataset.copy));
+  $("#cartAuto").onchange = e => fb.set("settings/carritos", { auto: e.target.checked }).then(() => toast(e.target.checked ? "Recordatorio automático encendido" : "Recordatorio automático apagado")).catch(er => toast(errMsg(er)));
+  $("#cartSave").onclick = () => fb.set("settings/carritos", { text: $("#cartTxt").value.trim(), templateId: $("#cartTpl").value, toAll: $("#cartAll").checked }).then(() => toast("Guardado")).catch(er => toast(errMsg(er)));
+  $("#cartSync").onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Trayendo…";
+    try { const r = await fb.call("carritos", { action: "sincronizar" }); toast(typeof r.out === "string" ? r.out : `${r.out.carritos} carritos nuevos`); } catch (er) { toast(errMsg(er)); } finally { b.disabled = false; b.textContent = "Traer carritos de Shopify"; } };
+  $$("[data-remind]", el).forEach(b => b.onclick = async () => { b.disabled = true;
+    try { const r = await fb.call("carritos", { action: "recordar", id: b.dataset.remind }); toast(r.out === "recordado" ? "Recordatorio enviado" : r.out); } catch (er) { toast(errMsg(er)); b.disabled = false; } });
+}
+
+// ---- Cartera: lo que falta por cobrar de cada pedido y sus abonos ----
+const TERMS = ["Todo antes", "Anticipo y saldo", "Contra entrega", "Crédito"];
+const PAY_METHODS = ["Transferencia", "Nequi", "Daviplata", "Efectivo", "Tarjeta", "Contra entrega", "Otro"];
+const paidOf = o => (o.payments || []).length ? o.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : o.payment === "Pagado" ? o.total || 0 : 0;
+const balanceOf = o => Math.max(0, (o.total || 0) - paidOf(o));
+const owes = o => o.status !== "Cancelado" && o.payment !== "Pagado" && balanceOf(o) > 0;
+function viewCartera(el) {
+  const f = S.carF || "cobrar", today = new Date().toLocaleDateString("en-CA");
+  const all = S.orders.filter(o => o.status !== "Cancelado"), due = all.filter(owes);
+  const waiting = due.filter(o => ["Todo antes", "Anticipo y saldo"].includes(o.terms) && !paidOf(o) && ["Nuevo", "En preparación"].includes(o.status));
+  const shipped = due.filter(o => ["Enviado", "Entregado"].includes(o.status));
+  const list = f === "cobrar" ? due : f === "pagadas" ? all.filter(o => !owes(o)) : all;
+  el.innerHTML = `<div class="page" style="max-width:1100px"><div class="page-head"><div><h1>Cartera</h1><span class="sub">Lo que te deben: cuánto ya pagaron, cuánto falta y en qué va cada pedido.</span></div></div>
+    <div class="tiles"><div class="tile money"><small>Por cobrar</small><b class="tabnum">${money(due.reduce((s, o) => s + balanceOf(o), 0))}</b><span>en ${due.length} pedido${due.length === 1 ? "" : "s"}</span></div>
+      <div class="tile"><small>Esperando anticipo o pago para empezar</small><b>${waiting.length}</b><span class="tabnum">${money(waiting.reduce((s, o) => s + balanceOf(o), 0))}</span></div>
+      <div class="tile"><small>Ya despachado o entregado: hay que cobrarlo</small><b class="tabnum">${money(shipped.reduce((s, o) => s + balanceOf(o), 0))}</b><span>${shipped.length} pedido${shipped.length === 1 ? "" : "s"}</span></div></div>
+    <div class="seg" role="group" aria-label="Filtro" style="margin-bottom:12px">${[["cobrar", "Por cobrar"], ["pagadas", "Pagadas"], ["todas", "Todas"]].map(([k, t]) => `<button class="${f === k ? "on" : ""}" data-kf="${k}">${t}</button>`).join("")}</div>
+    ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Pedido</th><th>Cliente</th><th>Forma de pago</th><th>Estado</th><th class="num">Total</th><th class="num">Pagado</th><th class="num">Falta</th><th></th></tr></thead><tbody>
+      ${list.slice(0, 200).map(o => { const late = o.dueDate && o.dueDate < today && owes(o); return `<tr data-oid="${o.id}"><td class="mono">${esc(o.number)}</td><td>${esc(o.contactName)}</td><td>${esc(o.terms || (o.source === "Shopify" ? "Tienda" : "—"))}${o.dueDate ? `<small class="${late ? "err" : "muted"}" style="display:block">${late ? "Vencido" : "Vence"} ${esc(o.dueDate)}</small>` : ""}</td>
+        <td>${statusPill(o.status)}</td><td class="num tabnum">${money(o.total)}</td><td class="num tabnum">${money(paidOf(o))}</td><td class="num tabnum"><b>${money(balanceOf(o))}</b></td>
+        <td class="num">${owes(o) ? `<button class="btn sm" data-pay="${o.id}">Registrar pago</button>` : '<span class="pill green">Pagado</span>'}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty"><p><b>${f === "cobrar" ? "No hay nada por cobrar." : "No hay pedidos aquí."}</b></p><p>Cada pedido aparece aquí mientras le falte pago. En el pedido eliges la forma de pago (todo antes, anticipo y saldo, contra entrega o crédito) y registras los abonos.</p></div>`}</div>`;
+  $$("[data-kf]", el).forEach(b => b.onclick = () => { S.carF = b.dataset.kf; renderShell(); });
+  $$("[data-pay]", el).forEach(b => b.onclick = e => { e.stopPropagation(); openPayment(b.dataset.pay); });
+  $$("[data-oid]", el).forEach(tr => tr.onclick = () => openOrder(tr.dataset.oid));
+}
+function openPayment(id) {
+  const o = byId(S.orders, id), m = $("#modal"), bal = balanceOf(o);
+  m.innerHTML = `<form id="payf"><div class="mh"><h2>Pago de ${esc(o.number)}</h2><button class="iconbtn" type="button" id="payx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><p class="muted" style="margin:0 0 10px">${esc(o.contactName)} · total ${money(o.total)} · pagado ${money(paidOf(o))} · <b>falta ${money(bal)}</b></p>
+      ${(o.payments || []).length ? `<div class="table-wrap" style="margin-bottom:10px"><table class="t"><thead><tr><th>Fecha</th><th>Medio</th><th class="num">Valor</th></tr></thead><tbody>${o.payments.map(p => `<tr><td>${esc(p.date || "")}</td><td>${esc(p.method || "")}${p.note ? ` <small class="muted">${esc(p.note)}</small>` : ""}</td><td class="num tabnum">${money(p.amount)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      <div class="grid2"><div><label class="lb" for="pya">Valor recibido</label><input class="in" id="pya" type="number" min="1" step="1" required value="${bal}"></div>
+        <div><label class="lb" for="pym">Medio</label><select class="in" id="pym">${PAY_METHODS.map(x => `<option>${x}</option>`).join("")}</select></div>
+        <div><label class="lb" for="pyd">Fecha</label><input class="in" id="pyd" type="date" value="${new Date().toLocaleDateString("en-CA")}"></div>
+        <div><label class="lb" for="pyn">Nota (opcional)</label><input class="in" id="pyn" placeholder="Comprobante, referencia…"></div></div></div>
+    <div class="mf"><span class="spacer"></span><button class="btn" type="button" id="payc">Cancelar</button><button class="btn primary">Registrar pago</button></div></form>`;
+  $("#payx").onclick = $("#payc").onclick = () => m.close();
+  $("#payf").onsubmit = async e => {
+    e.preventDefault();
+    const p = { amount: Math.round(+$("#pya").value || 0), method: $("#pym").value, date: $("#pyd").value, note: $("#pyn").value.trim(), by: S.me.name || "", at: Date.now() };
+    if (p.amount <= 0) return toast("Escribe el valor recibido.");
+    // Si antes estaba como Pagado/Abono sin abonos registrados, lo ya pagado no se conoce: se parte de cero
+    const payments = [...(o.payments || []), p], paid = payments.reduce((s, x) => s + x.amount, 0);
+    try { await fb.update("orders/" + id, { payments, payment: paid >= (o.total || 0) ? "Pagado" : "Abono", ...stamp() }); m.close(); toast(paid >= (o.total || 0) ? "Pedido pagado ✓" : `Abono registrado · falta ${money((o.total || 0) - paid)}`); }
+    catch (er) { toast(errMsg(er)); }
+  };
+  m.showModal();
+}
+
+// ---- Oportunidades: ventas que todavía se pueden cerrar, recuperar o reactivar ----
+function opportunities() {
+  const now = Date.now(), out = [], byC = id => S.contacts.find(c => c.id === id);
+  const boughtSince = (cid, t) => S.orders.some(o => o.contactId === cid && o.status !== "Cancelado" && (o.createdAt || 0) > t);
+  // 1) Pedido sin pago
+  S.orders.filter(o => o.status === "Nuevo" && (o.payment || "Pendiente") === "Pendiente" && !(o.payments || []).length && now - (o.createdAt || now) > D && now - (o.createdAt || 0) < 30 * D)
+    .forEach(o => out.push({ k: "pedido", c: byC(o.contactId), name: o.contactName, value: o.total, at: o.createdAt, why: `Pedido ${o.number} sin pago desde ${ago(o.createdAt)}`, open: () => openOrder(o.id) }));
+  // 2) Carritos abandonados (solo la administradora los ve)
+  (S.carts || []).filter(c => c.status !== "recuperado" && now - (c.createdAt || 0) < 7 * D)
+    .forEach(c => out.push({ k: "carrito", c: byC(c.contactId), name: c.name, value: c.total, at: c.createdAt, why: `Dejó el carrito ${ago(c.createdAt)}${c.remindedAt ? " · ya se le recordó" : ""}` }));
+  // 3) Cotización enviada sin respuesta
+  S.quotes.filter(q => q.status === "Enviada" && now - (q.createdAt || now) > 2 * D && now - (q.createdAt || 0) < 45 * D && !boughtSince(q.contactId, q.createdAt || 0))
+    .forEach(q => out.push({ k: "cotizacion", c: byC(q.contactId), name: q.contactName, value: q.total, at: q.createdAt, why: `Cotización ${q.number} enviada ${ago(q.createdAt)} sin respuesta` }));
+  S.contacts.forEach(c => {
+    if (c.archived || c.optOut) return;
+    // 4) Escribió y nadie le respondió
+    if (c.lastMessageDir === "in" && now - (c.lastInboundAt || now) > 2 * H && now - (c.lastInboundAt || 0) < 3 * D)
+      out.push({ k: "sinrespuesta", c, name: contactName(c), value: (c.chosenProduct && c.chosenProduct.price) || 0, at: c.lastInboundAt, why: `Escribió ${ago(c.lastInboundAt)} y nadie le respondió` });
+    // 5) Mostró interés y se enfrió
+    else if (!["Ganado", "Perdido"].includes(c.stage || "Nuevo") && c.lastInboundAt && now - c.lastInboundAt > D && now - c.lastInboundAt < 10 * D && !boughtSince(c.id, c.lastInboundAt - 30 * D) && (c.chosenProduct || c.looking || c.temperature === "Caliente"))
+      out.push({ k: "frio", c, name: contactName(c), value: (c.chosenProduct && c.chosenProduct.price) || 0, at: c.lastInboundAt, why: `Preguntó por ${(c.chosenProduct && c.chosenProduct.name) || c.looking || "un producto"} y no ha vuelto a escribir desde ${ago(c.lastInboundAt)}` });
+    // 6) Clientes para volver a comprar
+    if (c.lastPurchaseAt && now - c.lastPurchaseAt > 60 * D && now - c.lastPurchaseAt < 365 * D && now - Math.max(c.lastInboundAt || 0, c.lastOutboundAt || 0) > 30 * D)
+      out.push({ k: "recompra", c, name: contactName(c), value: 0, at: c.lastPurchaseAt, why: `Compró hace ${Math.round((now - c.lastPurchaseAt) / D)} días y no le hemos escrito` });
+  });
+  return out.filter(o => o.c || o.k === "carrito");
+}
+const OPP = { pedido: ["Pedidos sin cerrar", "Hubo pedido y no hubo pago: la venta más fácil de recuperar."], carrito: ["Carritos abandonados", "Llegaron hasta el pago en la tienda."],
+  cotizacion: ["Cotizaciones sin respuesta", "Se envió la cotización y el cliente no ha dicho nada."], sinrespuesta: ["Escribieron y nadie les respondió", "Cada hora sin respuesta baja la probabilidad de venta."],
+  frio: ["Interesados que se enfriaron", "Preguntaron por un producto y no volvieron."], recompra: ["Para volver a comprar", "Clientes que ya compraron hace más de 2 meses."] };
+function viewOportunidades(el) {
+  const ops = opportunities(), now = Date.now();
+  const rec = (S.carts || []).filter(c => c.status === "recuperado" && now - (c.recoveredAt || 0) < 30 * D);
+  const won = S.quotes.filter(q => q.status === "Convertida" && now - (q.updatedAt || q.createdAt || 0) < 30 * D);
+  const reach = ops.filter(o => o.c && winOpen(o.c)).length;
+  el.innerHTML = `<div class="page" style="max-width:1100px"><div class="page-head"><div><h1>Oportunidades</h1><span class="sub">Lo que todavía puedes cerrar, recuperar o volver a activar, ordenado por lo más urgente.</span></div></div>
+    <div class="tiles"><div class="tile"><small>Oportunidades abiertas</small><b>${ops.length}</b><span class="tabnum">${money(ops.reduce((s, o) => s + (o.value || 0), 0))} en juego</span></div>
+      <div class="tile"><small>Puedes escribirles gratis ahora</small><b>${reach}</b><span>ventana de 24 h abierta</span></div>
+      <div class="tile money"><small>Recuperado en 30 días</small><b class="tabnum">${money(rec.reduce((s, c) => s + (c.orderTotal || c.total || 0), 0) + won.reduce((s, q) => s + (q.total || 0), 0))}</b><span>${rec.length} carritos · ${won.length} cotizaciones convertidas</span></div></div>
+    ${Object.entries(OPP).map(([k, [t, d]]) => { const l = ops.filter(o => o.k === k).sort((a, b) => (b.value || 0) - (a.value || 0) || (b.at || 0) - (a.at || 0)); return l.length ? `<h2 class="sec-t">${t} <span class="pill">${l.length}</span></h2><p class="sec-s">${d}</p>
+      <div style="display:grid;gap:8px;margin-bottom:18px">${l.slice(0, 30).map((o, i) => `<div class="card opp" style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px"><b>${esc(o.name || "Cliente")}</b><div class="muted" style="font-size:13.5px">${esc(o.why)}</div></div>
+        ${o.value ? `<b class="tabnum">${money(o.value)}</b>` : ""}${o.c ? `<span class="pill ${winOpen(o.c) ? "green" : ""}">${winOpen(o.c) ? "Puedes escribir" : "Necesita plantilla"}</span>` : ""}
+        ${o.c ? `<button class="btn sm primary" data-oc="${esc(o.c.id)}">Abrir chat</button>` : k === "carrito" ? '<a class="btn sm" href="#carritos">Ver carrito</a>' : ""}</div>`).join("")}</div>` : ""; }).join("")
+      || `<div class="empty"><p><b>No hay oportunidades pendientes. ¡Todo al día!</b></p></div>`}</div>`;
+  $$("[data-oc]", el).forEach(b => b.onclick = () => go("conv", b.dataset.oc));
+}
+
 function viewMetricas(el) {
   const rk = S.mRange || "mes", [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;
   const orders = S.orders.filter(o => o.status !== "Cancelado" && inR(o.createdAt));
@@ -2537,7 +2691,12 @@ function openOrder(id) {
       <div class="totals"><b class="tabnum">Total ${money(o.total)}</b></div>
       <div class="grid2"><div><label class="lb" for="os">Estado</label><select class="in" id="os">${O_STATUS.map(s => `<option ${o.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         <div><label class="lb" for="op">Pago</label><select class="in" id="op">${PAY_STATUS.map(s => `<option ${o.payment === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+        <div><label class="lb" for="oterm">Forma de pago</label><select class="in" id="oterm"><option value="">—</option>${TERMS.map(x => `<option ${o.terms === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+        <div><label class="lb" for="odue">Fecha límite de pago (opcional)</label><input class="in" id="odue" type="date" value="${esc(o.dueDate || "")}"></div>
         <div class="full"><label class="lb" for="on">Notas (dirección, guía de envío…)</label><textarea class="in" id="on" rows="3">${esc(o.notes || "")}</textarea></div></div>
+      <div class="pay-line"><span>Pagado <b class="tabnum">${money(paidOf(o))}</b> · falta <b class="tabnum">${money(balanceOf(o))}</b></span>${owes(o) ? '<button class="btn sm" type="button" id="oPay">Registrar pago</button>' : ""}</div>
+      ${o.shipping ? `<div class="ship"><b>Envío:</b> ${esc({ fulfilled: "Despachado", partial: "Despacho parcial", in_transit: "En camino", out_for_delivery: "En reparto", delivered: "Entregado", attempted_delivery: "Intento de entrega", failure: "Problema en la entrega", ready_for_pickup: "Listo para recoger", confirmed: "Guía generada", label_printed: "Guía impresa" }[o.shipping.status] || o.shipping.status || "En preparación")}${o.shipping.company ? " · " + esc(o.shipping.company) : ""}${o.shipping.number ? " · guía " + esc(o.shipping.number) : ""}${o.shipping.url ? ` · <a href="${esc(o.shipping.url)}" target="_blank" rel="noopener">Rastrear envío ↗</a>` : ""}</div>` : ""}
+      <div class="chrow" style="margin:8px 0">${o.contactId ? '<button class="btn sm" type="button" id="oChat">Abrir conversación</button>' : ""}${o.shopifyUrl ? `<a class="btn sm" href="${esc(o.shopifyUrl)}" target="_blank" rel="noopener">Abrir en Shopify ↗</a>` : ""}</div>
       <small class="muted">Creado ${fmtDT(o.createdAt)} por ${esc(o.createdByName || "")}${o.quoteNumber ? " desde " + esc(o.quoteNumber) : ""}${o.shopifyName ? " · pedido Shopify " + esc(o.shopifyName) : ""}</small>
       ${o.siigoName || o.siigoId ? `<div class="app-badge"><span class="itile-ic sm" style="--ic:${APP_COLORS.siigo}">${APP_ICONS.siigo}</span> Facturado en Siigo: <b>${esc(o.siigoName || o.siigoId)}</b> · ${fmtDT(o.siigoAt)}</div>` : ""}</div>
     <div class="mf">${(S.apps || {}).siigo && S.apps.siigo.on && !o.siigoId ? '<button class="btn" type="button" id="oSiigo">Facturar en Siigo</button><span class="spacer"></span>' : ""}<button class="btn" type="button" id="oc">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`;
@@ -2548,7 +2707,9 @@ function openOrder(id) {
     try { const r = await appCall("siigoInvoice", { orderId: id }); m.close(); toast(`Factura ${r.name || ""} creada en Siigo`); }
     catch (er) { toast(errMsg(er)); if (b) { b.disabled = false; b.textContent = "Facturar en Siigo"; } }
   };
-  $("#of2").onsubmit = async e => { e.preventDefault(); await fb.update("orders/" + id, { status: $("#os").value, payment: $("#op").value, notes: $("#on").value.trim(), ...stamp() }); m.close(); toast("Pedido actualizado"); };
+  if ($("#oPay")) $("#oPay").onclick = () => { m.close(); openPayment(id); };
+  if ($("#oChat")) $("#oChat").onclick = () => { m.close(); go("conv", o.contactId); };
+  $("#of2").onsubmit = async e => { e.preventDefault(); await fb.update("orders/" + id, { status: $("#os").value, payment: $("#op").value, terms: $("#oterm").value, dueDate: $("#odue").value, notes: $("#on").value.trim(), ...stamp() }); m.close(); toast("Pedido actualizado"); };
   m.showModal();
 }
 
@@ -2724,7 +2885,7 @@ function viewPlantillas(el) {
 const WA_ST = { APPROVED: "Aprobada", PENDING: "En revisión", IN_APPEAL: "En apelación", REJECTED: "Rechazada", PAUSED: "Pausada", DISABLED: "Desactivada", PENDING_DELETION: "Eliminándose" };
 const WA_CAT = { MARKETING: "Marketing", UTILITY: "Utilidad", AUTHENTICATION: "Autenticación" };
 const WA_REASON = { PROMOTIONAL: "Meta la consideró promocional: créala como Marketing.", INVALID_FORMAT: "Formato inválido: revisa los campos y el texto.", ABUSIVE_CONTENT: "Meta la consideró contenido no permitido.", TAG_CONTENT_MISMATCH: "La categoría no corresponde al contenido.", SCAM: "Meta la marcó como posible estafa." };
-const WA_FIELDS = { nombre: "María", producto: "Juego de sábanas", precio: "$189.900", cotizacion: "COT-0012", total: "$350.000", hotel: "Hotel Central", asesor: "Luisa", empresa: "Casa Dorada" };
+const WA_FIELDS = { enlace: "https://casadorada.co/carrito", nombre: "María", producto: "Juego de sábanas", precio: "$189.900", cotizacion: "COT-0012", total: "$350.000", hotel: "Hotel Central", asesor: "Luisa", empresa: "Casa Dorada" };
 function waTplSection() {
   const d = S.waTpl, list = (d && d.list) || [];
   return `<h2 class="sec-t">Plantillas de WhatsApp (aprobadas por Meta)</h2>
