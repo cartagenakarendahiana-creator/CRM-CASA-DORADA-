@@ -70,6 +70,7 @@ const ICONS = {
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  anuncios: '<path d="M3 10v4h3l6 4V6L6 10z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
@@ -218,11 +219,34 @@ function renderLogin(err) {
   };
 }
 
+// Todo contacto debe tener el campo owner ("" = sin asignar) para que los asesores vean los suyos y los libres.
+// La administradora lo completa una vez en los contactos antiguos.
+function fixOwners(list) {
+  const done = S.ownersFixed || (S.ownersFixed = new Set());
+  const miss = list.filter(c => !("owner" in c) && !done.has(c.id));
+  miss.forEach(c => done.add(c.id));
+  if (miss.length) fb.batch(miss.map(c => ({ op: "set", path: "contacts/" + c.id, data: { owner: "" }, merge: true }))).catch(e => console.warn("owner", e));
+}
+// Responsables que puede elegir la persona: la administradora, cualquiera del equipo; un asesor, solo él mismo
+const ownerOptions = () => (isAdmin() ? S.team.filter(u => u.active !== false).map(u => u.name) : [S.me.name]);
+// Lo que un asesor no ve: configuración, difusiones, promociones, formularios, anuncios, importar y exportar
+const ADMIN_ONLY = new Set(["campanas", "promociones", "formularios", "anuncios", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
+const canView = k => isAdmin() || !ADMIN_ONLY.has(k);
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
     e => toast("No se pudo leer " + name + ": " + errMsg(e))));
-  S.unsubs.push(fb.watch("contacts", list => { inboundAlert(S.loaded.contacts ? S.contacts : null, list); S.contacts = list; S.loaded.contacts = true; S.syncedAt = Date.now(); scheduleRender(); }, undefined,
-    e => toast("No se pudo leer contacts: " + errMsg(e))));
+  const gotContacts = list => {
+    inboundAlert(S.loaded.contacts ? S.contacts : null, list); S.contacts = list; S.loaded.contacts = true; S.syncedAt = Date.now(); scheduleRender();
+    if (isAdmin()) fixOwners(list);
+  };
+  const cErr = e => toast("No se pudo leer contacts: " + errMsg(e));
+  if (isAdmin()) S.unsubs.push(fb.watch("contacts", gotContacts, undefined, cErr));
+  else {
+    // Asesores: solo sus contactos y los que no tienen responsable (las reglas de la base de datos exigen este filtro)
+    const parts = { mine: [], free: [] }, merge = () => gotContacts([...parts.mine, ...parts.free]);
+    S.unsubs.push(fb.watch("contacts", l => { parts.mine = l; merge(); }, { where: [["owner", "==", S.me.name || "—"]] }, cErr));
+    S.unsubs.push(fb.watch("contacts", l => { parts.free = l; merge(); }, { where: [["owner", "==", ""]] }, cErr));
+  }
   w("quotes", "quotes", { orderBy: ["createdAt", "desc"] });
   w("orders", "orders", { orderBy: ["createdAt", "desc"] });
   w("products", "products");
@@ -248,6 +272,7 @@ function scheduleRender() { if (S.dragging) { S.pendingRender = true; return; } 
 function route() {
   const [v, id] = (location.hash.slice(1) || "hoy").split("/");
   S.view = v || "hoy";
+  if (!canView(S.view)) { S.view = "hoy"; history.replaceState(null, "", "#hoy"); }
   if (S.view === "conv") S.convSel = id || S.convSel;
   if (S.view === "hoy" && id) S.sel = id;
   renderShell();
@@ -261,7 +286,7 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -278,7 +303,7 @@ function renderShell() {
         <div class="brand"><img class="brand-logo" src="logo-hc.svg" alt=""><div><b>${APP_NAME}</b><small>${esc(EMPRESA)}</small></div></div>
         <label class="side-search">${icon("buscar")}<input id="gsearch" placeholder="Buscar contacto" value="${esc(S.search)}" autocomplete="off"></label>
       </div>
-      <nav class="nav">${NAV.map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => navOn(k)) ? "" : items.map(([k, t]) =>
+      <nav class="nav">${NAV.map(([h, items]) => [h, items.filter(([k]) => canView(k))]).filter(([, items]) => items.length).map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => navOn(k)) ? "" : items.map(([k, t]) =>
         `<button data-go="${k}" class="${navOn(k) ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
       <div class="side-user"><button class="acc-btn" id="myAcc" title="Mi cuenta: cambiar contraseña"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div></button>
@@ -303,7 +328,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -1653,8 +1678,8 @@ function viewConv(el) {
 }
 function contactSummary(c) {
   const qs = S.quotes.filter(q => q.contactId === c.id).slice(0, 5);
-  return `${aiInsight(c)}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
-    <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${S.team.filter(u => u.active !== false).map(u => `<option ${c.owner === u.name ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select></div>
+  return `${aiInsight(c)}${c.ad ? `<div class="ad-from">${icon("anuncios")}<span>Llegó por el anuncio <b>${esc(c.ad.headline || c.ad.id || "")}</b></span></div>` : ""}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+    <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${ownerOptions().map(n => `<option ${c.owner === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Qué busca</p><div class="inline-edit" id="sLook">${esc(c.looking || "—")}</div></div>
     <div><p class="eyebrow">Producto elegido</p><div>${c.chosenProduct ? esc(c.chosenProduct.name) + " · " + money(c.chosenProduct.price) : "—"}</div><button class="btn sm" id="sProd" style="margin-top:6px">Elegir</button></div>
     <div><p class="eyebrow">Cotizaciones</p>${qs.map(q => `<div><a href="#" data-q="${q.id}">${esc(q.number)}</a> · ${money(q.total)} · <span class="muted">${esc(q.status)}</span></div>`).join("") || '<span class="muted">Ninguna</span>'}
@@ -1928,7 +1953,7 @@ function openContact(id) {
       return `<div><label class="lb" for="cf_${k}">${label}</label><select class="in" id="cf_${k}" data-k="${k}">${pipes().map(p => `<option value="${p.id}" ${pipeOf(c).id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>`;
     }
     if (Array.isArray(t) || t === "team" || t === "stages") {
-      const opts = t === "team" ? S.team.filter(u => u.active !== false).map(u => u.name) : t === "stages" ? stagesOf(c) : t;
+      const opts = t === "team" ? ownerOptions() : t === "stages" ? stagesOf(c) : t;
       return `<div><label class="lb" for="cf_${k}">${label}</label><select class="in" id="cf_${k}" data-k="${k}"><option value="">—</option>${[...new Set([...opts, ...(v && !opts.includes(String(v)) ? [String(v)] : [])])].map(o => `<option ${String(v) === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
     }
     if (t === "textarea") return `<div class="full"><label class="lb" for="cf_${k}">${label}</label><textarea class="in" id="cf_${k}" data-k="${k}" rows="3">${esc(v)}</textarea></div>`;
@@ -2213,6 +2238,64 @@ function hbars(rows, fmt = money, sub) {
       <span class="hk" title="${esc(r.k)}">${esc(r.k)}</span><span class="ht"><span class="hf" style="width:${r.v ? Math.max(1.5, r.v / max * 100) : 0}%"></span></span>
       <span class="hv tabnum">${esc(fmt(r.v))}${sub ? `<small>${esc(sub(r))}</small>` : ""}</span></div>`).join("")}</div>`
     : '<p class="muted">Sin datos en este periodo.</p>';
+}
+// ======================= Anuncios =======================
+// Qué anuncio trae más ventas: cada conversación que llegó desde un anuncio (Click to WhatsApp, Instagram, Messenger)
+// guarda en el contacto `ad` (el anuncio que lo trajo). Se cruza con cotizaciones, pedidos y lo que hizo la asesora.
+function adStats(rk) {
+  const [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;
+  const ordersBy = {}, quotesBy = new Set();
+  S.orders.forEach(o => { if (o.status !== "Cancelado" && o.contactId) (ordersBy[o.contactId] = ordersBy[o.contactId] || []).push(o); });
+  S.quotes.forEach(q => q.contactId && q.status !== "Borrador" && quotesBy.add(q.contactId));
+  const rows = {};
+  const key = c => (c.ad ? (c.ad.id || c.ad.headline || "?") : "_organico");
+  for (const c of S.contacts) {
+    const t = c.ad ? c.ad.at : c.createdAt;
+    if (!inR(t)) continue;
+    const k = key(c), r = rows[k] || (rows[k] = { k, ad: c.ad || null, conv: 0, ia: 0, cot: 0, cierreIA: 0, ventas: 0, ingresos: 0, list: [] });
+    const os = ordersBy[c.id] || [], won = os.length > 0 || c.stage === "Ganado";
+    r.conv++; r.list.push(c);
+    if (c.aiHandledTs) r.ia++;
+    if (quotesBy.has(c.id)) r.cot++;
+    if (c.aiClosedAt) r.cierreIA++;
+    if (won) { r.ventas++; r.ingresos += os.reduce((s, o) => s + (o.total || 0), 0); }
+  }
+  return Object.values(rows).sort((p, q) => (p.k === "_organico") - (q.k === "_organico") || q.ventas - p.ventas || q.ingresos - p.ingresos || q.conv - p.conv);
+}
+function viewAnuncios(el) {
+  const rk = S.adRange || "d90", rows = adStats(rk), ads = rows.filter(r => r.k !== "_organico"), org = rows.find(r => r.k === "_organico");
+  const sum = f => ads.reduce((s, r) => s + r[f], 0);
+  const best = ads.filter(r => r.ventas || r.conv).sort((p, q) => q.ventas - p.ventas || q.ingresos - p.ingresos || q.conv - p.conv)[0];
+  const chName = { whatsapp: "WhatsApp", instagram: "Instagram", messenger: "Messenger" };
+  const row = r => `<tr data-ad="${esc(r.k)}"><td><div class="ad-cell">${r.ad && r.ad.thumb ? `<img src="${esc(r.ad.thumb)}" alt="" loading="lazy">` : `<span class="ad-ph">${icon("anuncios")}</span>`}
+      <div><b>${esc(r.ad ? r.ad.headline || "Anuncio " + (r.ad.id || "") : "Sin anuncio (orgánico)")}</b>${r === best ? ' <span class="pill green">🏆 El que más vende</span>' : ""}
+      <small class="muted">${r.ad ? esc(chName[r.ad.channel] || r.ad.channel || "") + (r.ad.id ? " · " + esc(r.ad.id) : "") : "Clientes que escribieron sin pasar por un anuncio"}</small></div></div></td>
+    <td class="num">${r.conv}</td><td class="num">${r.ia}</td><td class="num">${r.cot}</td><td class="num">${r.cierreIA}</td><td class="num"><b>${r.ventas}</b></td>
+    <td class="num">${pct(r.ventas, r.conv)}</td><td class="num tabnum"><b>${money(r.ingresos)}</b></td></tr>`;
+  el.innerHTML = `<div class="page" style="max-width:1200px"><div class="page-head"><div><h1>Anuncios</h1><span class="sub">Qué anuncios traen conversaciones y ventas, y cuáles llevó ${esc(aiName())} hasta el cierre.</span></div><span class="spacer"></span>
+      <div class="seg" role="group" aria-label="Periodo">${Object.entries(RANGES).map(([k, t]) => `<button class="${k === rk ? "on" : ""}" data-r="${k}">${t}</button>`).join("")}</div></div>
+    <div class="tiles">
+      <div class="tile"><small>Conversaciones por anuncios</small><b>${sum("conv")}</b><span>${ads.length} ${ads.length === 1 ? "anuncio" : "anuncios"}</span></div>
+      <div class="tile"><small>Atendidas por ${esc(aiName())}</small><b>${sum("ia")}</b><span>${pct(sum("ia"), sum("conv"))} de las conversaciones</span></div>
+      <div class="tile"><small>Llevadas al cierre por ${esc(aiName())}</small><b>${sum("cierreIA")}</b><span>listas para pagar y enviar</span></div>
+      <div class="tile"><small>Ventas por anuncios</small><b>${sum("ventas")}</b><span>${pct(sum("ventas"), sum("conv"))} de conversión</span></div>
+      <div class="tile money"><small>Ingresos por anuncios</small><b class="mono">${money(sum("ingresos"))}</b><span>${org ? "orgánico: " + money(org.ingresos) : ""}</span></div>
+    </div>
+    ${ads.length ? `<div class="table-wrap"><table class="t ad-t"><thead><tr><th>Anuncio</th><th class="num">Conversaciones</th><th class="num">Atendidas por IA</th><th class="num">Cotizaciones</th><th class="num">IA llevó al cierre</th><th class="num">Ventas</th><th class="num">Conversión</th><th class="num">Ingresos</th></tr></thead>
+      <tbody>${rows.map(row).join("")}</tbody></table></div>`
+      : `<div class="empty"><p><b>Todavía no hay conversaciones que vengan de anuncios en este periodo.</b></p><p>Cuando alguien te escriba desde un anuncio de Facebook o Instagram (con el botón de WhatsApp, Messenger o Instagram), aparecerá aquí con el anuncio que lo trajo. Los anuncios anteriores a hoy no traen este dato.</p></div>`}
+    <p class="muted" style="font-size:12.5px">Una venta es un pedido (no cancelado) o un contacto en Ganado. "IA llevó al cierre": ${esc(aiName())} dejó el cliente listo para pagar y lo pasó al equipo.</p></div>`;
+  $$("[data-r]", el).forEach(b => b.onclick = () => { S.adRange = b.dataset.r; renderShell(); });
+  $$("[data-ad]", el).forEach(tr => tr.onclick = () => {
+    const r = rows.find(x => x.k === tr.dataset.ad), m = $("#modal");
+    m.innerHTML = `<div class="mh"><h2>${esc(r.ad ? r.ad.headline || "Anuncio" : "Sin anuncio")}</h2><button class="iconbtn" id="adx" aria-label="Cerrar">✕</button></div>
+      <div class="mb">${r.ad && r.ad.body ? `<p class="muted" style="margin:0 0 10px">${esc(r.ad.body)}</p>` : ""}${r.ad && r.ad.url ? `<p style="margin:0 0 10px"><a href="${esc(r.ad.url)}" target="_blank" rel="noopener">Ver el anuncio</a></p>` : ""}
+        <div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th>Etapa</th><th>IA</th><th class="num">Compró</th></tr></thead><tbody>
+        ${r.list.sort((p, q) => (q.lastInboundAt || 0) - (p.lastInboundAt || 0)).map(c => `<tr data-go-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.stage || "Nuevo")}</td><td>${c.aiClosedAt ? "Llevó al cierre" : c.aiHandledTs ? "Atendió" : "—"}</td><td class="num">${S.orders.some(o => o.contactId === c.id && o.status !== "Cancelado") || c.stage === "Ganado" ? "✓" : ""}</td></tr>`).join("")}</tbody></table></div></div>`;
+    $("#adx").onclick = () => m.close();
+    $$("[data-go-c]", m).forEach(x => x.onclick = () => { m.close(); go("conv", x.dataset.goC); });
+    m.showModal();
+  });
 }
 function viewMetricas(el) {
   const rk = S.mRange || "mes", [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;

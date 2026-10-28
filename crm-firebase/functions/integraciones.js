@@ -120,7 +120,7 @@ module.exports = function integraciones({ db, admin, fetchFn = (...a) => fetch(.
       const ref = cid ? db.doc("contacts/" + cid) : db.collection("contacts").doc();
       const ex = await ref.get();
       const patch = { ...data, updatedAt: now, updatedBy: "API" };
-      if (!ex.exists) Object.assign(patch, { stage: data.stage || "Nuevo", type: data.type || "Prospecto", segment: data.segment || "API", source: data.source || "API", createdAt: now, stageAt: now, unread: 0 });
+      if (!ex.exists) Object.assign(patch, { stage: data.stage || "Nuevo", type: data.type || "Prospecto", segment: data.segment || "API", source: data.source || "API", createdAt: now, stageAt: now, unread: 0, owner: patch.owner || "" });
       await ref.set(patch, { merge: true });
       if (b.note) await ref.collection("messages").add({ dir: "note", text: String(b.note).slice(0, 2000), ts: now, by: "api", byName: "API" });
       return res.status(ex.exists ? 200 : 201).json({ id: ref.id, created: !ex.exists });

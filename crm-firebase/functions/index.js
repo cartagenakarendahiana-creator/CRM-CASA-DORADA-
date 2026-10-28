@@ -51,6 +51,7 @@ function phoneId(v) {
 
 // Id de documento para un mensaje de WhatsApp (los wamid pueden traer "/", que Firestore no admite en un id)
 const msgDocId = id => String(id || "").replace(/\//g, "_");
+const ADS = require("./anuncios");
 
 // Archivo de un mensaje de WhatsApp (se descarga después en guardarMedia)
 function waMedia(m) {
@@ -131,7 +132,8 @@ async function saveInbound(m, profileName, line) {
   const text = textOf(m);
   const cref = db.doc("contacts/" + cid);
   const mref = cref.collection("messages").doc(msgDocId(m.id));
-  const reaction = m.type === "reaction"; // 👍❤️ a un mensaje: queda en el chat, pero no cuenta como mensaje por responder
+  const reaction = m.type === "reaction";
+  const ad = ADS.fromWhatsApp(m.referral, ts); // llegó desde un anuncio (Click to WhatsApp) // 👍❤️ a un mensaje: queda en el chat, pero no cuenta como mensaje por responder
   await db.runTransaction(async t => {
     const [snap, msnap] = await Promise.all([t.get(cref), t.get(mref)]);
     if (msnap.exists) return; // Meta puede reenviar el mismo mensaje
@@ -139,13 +141,14 @@ async function saveInbound(m, profileName, line) {
       unread: admin.firestore.FieldValue.increment(1), updatedAt: Date.now(), updatedBy: "WhatsApp" };
     if (line) patch.waLine = String(line);
     if (!snap.exists) Object.assign(patch, { name: profileName || "", segment: "WhatsApp", type: "Prospecto", stage: "Nuevo",
-      createdAt: ts, stageAt: ts, source: "WhatsApp" + (lineCfg && lineCfg.name ? " · " + lineCfg.name : "") }, lineCfg && lineCfg.owner ? { owner: lineCfg.owner } : {},
+      createdAt: ts, stageAt: ts, source: "WhatsApp" + (lineCfg && lineCfg.name ? " · " + lineCfg.name : ""), owner: (lineCfg && lineCfg.owner) || "" },
       dest && dest !== "ventas" ? { pipeline: dest } : {});
     else if (!snap.get("name") && profileName) patch.name = profileName;
     if (reaction && snap.exists) ["lastInboundAt", "lastMessage", "lastMessageDir", "unread"].forEach(k => delete patch[k]);
+    Object.assign(patch, ADS.contactPatch(ad, snap.exists && snap.get("ad")));
     t.set(cref, patch, { merge: true });
     const md = waMedia(m);
-    t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}), ...(md ? { media: md } : {}) });
+    t.set(mref, { dir: "in", text, type: m.type, ts, waId: m.id, channel: "whatsapp", ...(line ? { line: String(line) } : {}), ...(md ? { media: md } : {}), ...(ad ? { referral: ad } : {}) });
   });
 }
 
@@ -198,6 +201,12 @@ async function saveStatus(s) {
   await ref.set(patch, { merge: true });
 }
 
+// Asesores: solo trabajan con sus contactos asignados y con los que no tienen responsable (igual que en las reglas)
+function requireAccess(me, contact) {
+  if (me.role === "admin") return;
+  const owner = (contact && contact.owner) || "";
+  if (owner && owner !== me.name) throw new HttpsError("permission-denied", "Ese contacto está asignado a otra persona del equipo.");
+}
 async function requireMember(req) {
   if (!req.auth) throw new HttpsError("unauthenticated", "Inicia sesión.");
   const u = await db.doc("users/" + req.auth.uid).get();
@@ -211,6 +220,7 @@ exports.sendWhatsApp = onCall({ region: REGION, invoker: "public", secrets: [WA_
   if (!contactId) throw new HttpsError("invalid-argument", "Falta el contacto.");
   const cref = db.doc("contacts/" + contactId), c = await cref.get();
   if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
+  requireAccess(me, c.data());
   const phoneNumberId = c.get("waLine") || WA_PHONE_ID.value();
   const waQr = !phoneNumberId && await CH.waQrOn();
   if (!phoneNumberId && !waQr) throw new HttpsError("failed-precondition", "Falta configurar WA_PHONE_ID.");
@@ -453,6 +463,7 @@ exports.enviarCotizacion = onCall({ region: REGION, invoker: "public", secrets: 
   if (!q.contactId) throw new HttpsError("failed-precondition", "La cotización no tiene cliente.");
   const cref = db.doc("contacts/" + q.contactId), c = await cref.get();
   if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
+  requireAccess(me, c.data());
   const contact = c.data();
   const ch = contact.lastChannel || (contact.phone ? "whatsapp" : "");
   if (!CH.CHANNELS[ch]) throw new HttpsError("failed-precondition", "El contacto no tiene un canal para escribirle.");
@@ -489,12 +500,15 @@ exports.notificarMensaje = onDocumentCreated({ document: "contacts/{cid}/message
 // Copiloto de ventas: análisis de la conversación, respuestas sugeridas y mejorar el texto del equipo
 const COPILOTO = require("./copiloto")({ db, apiKey: () => ANTHROPIC_API_KEY.value() });
 exports.copiloto = onCall({ region: REGION, invoker: "public", secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: "512MiB" }, async req => {
-  await requireMember(req);
+  const me = await requireMember(req);
   const { action, contactId, text, tone } = req.data || {};
   if (!ANTHROPIC_API_KEY.value()) throw new HttpsError("failed-precondition", "Falta la clave de Claude (ANTHROPIC_API_KEY).");
   try {
     if (action === "mejorar") return { texto: await COPILOTO.mejorar(text, tone) };
     if (!contactId) throw new Error("Falta el contacto.");
+    const cs = await db.doc("contacts/" + String(contactId)).get();
+    if (!cs.exists) throw new Error("El contacto no existe.");
+    requireAccess(me, cs.data());
     if (action === "analizar") return { ai: await COPILOTO.analizar(String(contactId)) };
     if (action === "sugerir") return { sugerencias: await COPILOTO.sugerir(String(contactId), String(text || "").slice(0, 1000)) };
   } catch (e) { console.error("copiloto", action, e); throw new HttpsError("internal", e.message || "No se pudo completar."); }
@@ -533,6 +547,7 @@ exports.sendMessage = onCall({ region: REGION, invoker: "public", secrets: [WA_T
   if (!contactId || (!String(text || "").trim() && !image)) throw new HttpsError("invalid-argument", "Falta el contacto o el mensaje.");
   const cref = db.doc("contacts/" + contactId), c = await cref.get();
   if (!c.exists) throw new HttpsError("not-found", "El contacto no existe.");
+  requireAccess(me, c.data());
   const contact = c.data();
   const ch = channel || contact.lastChannel || (contact.phone ? "whatsapp" : "");
   if (!CH.CHANNELS[ch]) throw new HttpsError("failed-precondition", "El contacto no tiene un canal para escribirle.");

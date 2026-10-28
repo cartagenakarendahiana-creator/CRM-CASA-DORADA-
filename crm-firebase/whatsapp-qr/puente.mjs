@@ -104,7 +104,7 @@ export async function saveMessage(m) {
     if (p.phone) patch.phone = p.phone;
     if (out) Object.assign(patch, { lastOutboundAt: ts, lastOutboundBy: "Celular", unread: 0, aiPausedUntil: Date.now() + pause * 3600 * 1000 });
     else Object.assign(patch, { lastInboundAt: ts, unread: FV.increment(1) });
-    if (!snap.exists) Object.assign(patch, { name: out ? "" : m.pushName || "", segment: "WhatsApp", type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: "WhatsApp" });
+    if (!snap.exists) Object.assign(patch, { name: out ? "" : m.pushName || "", segment: "WhatsApp", type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: "WhatsApp", owner: "" });
     else if (!out && !snap.get("name") && m.pushName) patch.name = m.pushName;
     tx.set(cref, patch, { merge: true });
     tx.set(mref, out ? { dir: "out", text: t.text, type: t.type, ts, waId: m.key.id, channel: "whatsapp", via: "qr", by: "celular", byName: "Desde el celular", status: "sent" }

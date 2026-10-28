@@ -3,6 +3,7 @@
 // lo público (si está conectado, nombre del bot, colores del chat web) vive en settings/channels.
 const crypto = require("crypto");
 const { toTelegramHtml, stripFormat } = require("./ficha");
+const ADS = require("./anuncios");
 
 const CHANNELS = {
   whatsapp: { prefix: "wa_", label: "WhatsApp", window: true },
@@ -24,7 +25,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
   const tgSecret = token => crypto.createHmac("sha256", "casa-dorada-tg").update(String(token)).digest("hex").slice(0, 48);
 
   // Guarda un mensaje entrante de cualquier canal y crea o actualiza el contacto
-  async function ingest({ channel, extId, msgId, text, type = "text", ts = Date.now(), name = "", extra = {}, media = null }) {
+  async function ingest({ channel, extId, msgId, text, type = "text", ts = Date.now(), name = "", extra = {}, media = null, ad = null }) {
     const ch = CHANNELS[channel];
     const cid = ch.prefix + String(extId).replace(/[^\w-]/g, "");
     const cref = db.doc("contacts/" + cid);
@@ -34,10 +35,11 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
       const [snap, msnap] = await Promise.all([t.get(cref), t.get(mref)]);
       if (msnap.exists) return; // reintentos del proveedor
       const patch = { lastInboundAt: ts, lastMessage: String(text).slice(0, 200), lastMessageDir: "in", lastChannel: channel,
-        ["channels." + channel]: String(extId), unread: admin.firestore.FieldValue.increment(1), updatedAt: Date.now(), updatedBy: ch.label, ...extra };
+        ["channels." + channel]: String(extId), unread: admin.firestore.FieldValue.increment(1), updatedAt: Date.now(), updatedBy: ch.label, ...extra,
+        ...ADS.contactPatch(ad, snap.exists && snap.get("ad")) }; // anuncio que trajo la conversación
       if (!snap.exists) {
         created = true;
-        Object.assign(patch, { name: name || "", segment: ch.label, type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: ch.label });
+        Object.assign(patch, { name: name || "", segment: ch.label, type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: ch.label, owner: "" });
         delete patch["channels." + channel];
         patch.channels = { [channel]: String(extId) };
         t.set(cref, patch, { merge: true });
@@ -45,7 +47,7 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         if (!snap.get("name") && name) patch.name = name;
         t.update(cref, patch);
       }
-      t.set(mref, { dir: "in", text: String(text), type, ts, channel, extId: String(msgId || ""), ...(media ? { media } : {}) });
+      t.set(mref, { dir: "in", text: String(text), type, ts, channel, extId: String(msgId || ""), ...(media ? { media } : {}), ...(ad ? { referral: ad } : {}) });
     });
     return { cid, created };
   }
@@ -157,7 +159,8 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         const name = exists ? "" : await metaProfile(ev.sender.id, channel);
         const kind = att && { image: "image", video: "video", audio: "audio", file: "document" }[att.type];
         await ingest({ channel, extId: ev.sender.id, msgId: m.mid, text, ts: ev.timestamp || Date.now(), name,
-          type: kind || "text", media: kind && att.payload && att.payload.url ? { kind, url: att.payload.url } : null });
+          type: kind || "text", media: kind && att.payload && att.payload.url ? { kind, url: att.payload.url } : null,
+          ad: ADS.fromMeta(ev.referral || m.referral, channel, ev.timestamp || Date.now()) });
       }
     }
   }
