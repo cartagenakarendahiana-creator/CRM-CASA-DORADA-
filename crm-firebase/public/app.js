@@ -103,6 +103,26 @@ const icon = k => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICO
 const STAGES = ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Negociación", "Ganado", "Perdido"];
 // Embudos: "ventas" es el de siempre; la administradora puede crear más, cada uno con sus etapas (siempre terminan en Ganado y Perdido)
 const DEFAULT_PIPE = { id: "ventas", name: "Ventas", stages: STAGES };
+// Submenú del Embudo: un acceso por cada embudo (Ventas, Línea Hotelera, Distribuidores…)
+function subPipes() {
+  const cur = (S.embF || {}).pipe || "ventas";
+  return `<div class="subnav">${pipes().map(p => `<button data-pipego="${esc(p.id)}" class="${p.id === cur ? "on" : ""}">${esc(p.name)}<span class="count soft">${S.contacts.filter(c => !c.archived && (c.pipeline || "ventas") === p.id).length}</span></button>`).join("")}</div>`;
+}
+// Embudos que trae House Chat (se crean una vez si no existen; la administradora puede renombrarlos o borrarlos)
+const BASE_PIPES = [
+  { id: "hoteles", name: "Línea Hotelera", stages: ["Nuevo", "Contactado", "Muestra o visita", "Cotización enviada", "Negociación", "Ganado", "Perdido"] },
+  { id: "distribuidores", name: "Distribuidores", stages: ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Negociación", "Ganado", "Perdido"] },
+  { id: "sitio_web", name: "Sitio web", stages: ["Nuevo", "Contactado", "Catálogo enviado", "Cotización enviada", "Ganado", "Perdido"] },
+  { id: "registro_web", name: "Registro en sitio web", stages: ["Nuevo", "Contactado", "Primera compra", "Ganado", "Perdido"] }];
+async function seedPipes(d) {
+  if (!isAdmin() || S.pipesSeeding || (d && d.seeded)) return;
+  S.pipesSeeding = true;
+  const cur = (d && d.list && d.list.length ? d.list : [DEFAULT_PIPE]).slice();
+  const has = re => cur.some(p => re.test(norm(p.name)));
+  const add = BASE_PIPES.filter(b => !has({ hoteles: /hotel/, distribuidores: /distribu|mayorist/, sitio_web: /(sitio|pagina) web(?!.*registro)/, registro_web: /registro/ }[b.id]) && !cur.some(p => p.id === b.id));
+  try { await fb.set("settings/pipelines", { list: [...(cur.some(p => p.id === "ventas") ? [] : [DEFAULT_PIPE]), ...cur, ...add].map(({ id, name, stages }) => ({ id, name, stages })), seeded: true }); }
+  catch (e) { console.warn("embudos", e); }
+}
 const pipes = () => { const l = (S.pipes && S.pipes.length ? S.pipes : [DEFAULT_PIPE]); return l.some(p => p.id === "ventas") ? l : [DEFAULT_PIPE, ...l]; };
 const pipeOf = c => pipes().find(p => p.id === ((c && c.pipeline) || "ventas")) || pipes()[0];
 const stagesOf = c => pipeOf(c).stages;
@@ -288,7 +308,7 @@ function startData() {
     S.unsubs.push(fb.watchDoc("settings/carritos", d => { S.cartCfg = d || {}; if (S.view === "carritos") scheduleRender(); }, () => { S.cartCfg = {}; }));
     S.unsubs.push(fb.watchDoc("settings/waTemplates", d => { S.waTpl = d; if (S.view === "plantillas") scheduleRender(); }, () => { S.waTpl = null; }));
   }
-  S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
+  S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; seedPipes(d); scheduleRender(); }, () => { S.pipes = []; }));
   window.addEventListener("hashchange", route);
   route();
   setInterval(() => { if (S.view === "hoy" && !document.hidden) scheduleRender(); }, 60000);
@@ -330,7 +350,7 @@ function renderShell() {
         <label class="side-search">${icon("buscar")}<input id="gsearch" placeholder="Buscar contacto" value="${esc(S.search)}" autocomplete="off"></label>
       </div>
       <nav class="nav">${NAV.map(([h, items]) => [h, items.filter(([k]) => canView(k))]).filter(([, items]) => items.length).map(([h, items]) => (h ? `<h4><button class="grp" data-grp="${h}" aria-expanded="${!navClosed(h)}">${h}${icon("chev")}</button></h4>` : "") + (h && navClosed(h) && !items.some(([k]) => navOn(k)) ? "" : items.map(([k, t]) =>
-        `<button data-go="${k}" class="${navOn(k) ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>`).join(""))).join("")}</nav>
+        `<button data-go="${k}" class="${navOn(k) ? "on" : ""}">${icon(k)}<span>${t}</span>${k === "hoy" && pend ? `<span class="count">${pend}</span>` : ""}${k === "conv" && unread ? `<span class="count">${unread}</span>` : ""}</button>${k === "embudo" && navOn(k) ? subPipes() : ""}`).join(""))).join("")}</nav>
       <div class="side-user"><button class="acc-btn" id="myAcc" title="Mi cuenta: cambiar contraseña"><div class="avatar">${esc((S.me.name || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(S.me.name || S.user.email)}</b><small>${S.me.role === "admin" ? "Administradora" : "Asesor"}</small></div></button>
         <button class="iconbtn" id="soundBtn" title="${soundOn() ? "Sonido de mensajes nuevos: activado" : "Sonido de mensajes nuevos: desactivado"}" aria-label="Sonido de mensajes nuevos">${icon(soundOn() ? "sonido" : "mudo")}</button>
@@ -342,6 +362,7 @@ function renderShell() {
       ${pushBanner()}${waAlert()}${!anyChannel() ? `<div class="banner"><span>Aún no hay canales conectados: los mensajes se abren en tu WhatsApp y los registras aquí. ${isAdmin() ? '<a href="#canales">Conectar canales</a>' : ""}</span></div>` : ""}
       <div class="view" id="view"></div>
     </main></div>`;
+  $$("[data-pipego]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.embF = { ...(S.embF || {}), pipe: b.dataset.pipego, seg: "" }; S.embMore = {}; S.embSel && S.embSel.clear(); renderShell(); });
   $$("[data-go]").forEach(b => b.onclick = () => { $("#side").classList.remove("open"); S.hoyOpen = false; if (location.hash.slice(1) === b.dataset.go) renderShell(); else go(b.dataset.go); });
   $("#logout").onclick = () => fb.logout();
   $("#pushBtn").onclick = () => S.pushOn ? openPushMenu() : enablePush();

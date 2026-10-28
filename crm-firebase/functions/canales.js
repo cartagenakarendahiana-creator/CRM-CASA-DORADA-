@@ -4,6 +4,7 @@
 const crypto = require("crypto");
 const { toTelegramHtml, stripFormat } = require("./ficha");
 const ADS = require("./anuncios");
+const EMB = require("./embudos");
 
 const CHANNELS = {
   whatsapp: { prefix: "wa_", label: "WhatsApp", window: true },
@@ -42,7 +43,10 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
         ...ADS.contactPatch(ad, snap.exists && snap.get("ad")) }; // anuncio que trajo la conversación
       if (!snap.exists) {
         created = true;
-        Object.assign(patch, { name: name || "", segment: ch.label, type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: ch.label, owner: "" });
+        // Chats nuevos del chat web → embudo "Sitio web" (si existe)
+        const sp = channel === "web" && EMB.findPipe(((await t.get(db.doc("settings/pipelines"))).data() || {}).list, "sitio");
+        Object.assign(patch, { name: name || "", segment: ch.label, type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: ch.label, owner: "" },
+          sp ? { pipeline: sp.id, stage: (sp.stages || ["Nuevo"])[0] } : {});
         if (lead) Object.assign(patch, { source: "Comentario en " + (channel === "instagram" ? "Instagram" : "Facebook"),
           comment: { text: String(lead.comment || lead.lastComment || "").slice(0, 300), post: lead.lastPost || "", url: (lead.post && lead.post.url) || "", at: lead.at || ts } });
         delete patch["channels." + channel];

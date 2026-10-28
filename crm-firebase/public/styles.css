@@ -1277,3 +1277,8 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .spark{width:100%;height:170px;display:block}.spark .ln{fill:none;stroke:var(--green,#0f7a4c);stroke-width:2;vector-effect:non-scaling-stroke}.spark .ar{fill:var(--green,#0f7a4c);opacity:.1}.spark .gl{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}
 .spark-x{display:flex;justify-content:space-between;font-size:12px}.attn{background:var(--amber-soft,#fdf0d9)}.attn-n{font-size:28px}.attn-n small{font-size:14px;font-weight:500}.attn ul{margin:6px 0 0;padding-left:18px}
 @media (max-width:760px){.hero{grid-template-columns:1fr}}
+/* Submenú del embudo */
+.subnav{display:grid;gap:2px;margin:2px 0 6px 22px;padding-left:12px;border-left:2px solid var(--line)}
+.subnav button{display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:inherit;font:inherit;font-size:14px;padding:7px 10px;border-radius:10px;cursor:pointer;opacity:.75}
+.subnav button:hover{background:rgba(0,0,0,.04);opacity:1}.subnav button.on{background:var(--bg,#fff);color:var(--green,#0f7a4c);font-weight:600;opacity:1}
+.subnav .count.soft{margin-left:auto;background:transparent;color:var(--muted);font-weight:500;font-size:12px}
