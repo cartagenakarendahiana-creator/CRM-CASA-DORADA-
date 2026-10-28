@@ -75,6 +75,8 @@ const ICONS = {
   carritos: '<path d="M3 4h2l2.4 11h10.2L20 8H6.2"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   cartera: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>',
   oportunidades: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  listas: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  ventacruzada: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
@@ -234,7 +236,7 @@ function fixOwners(list) {
 // Responsables que puede elegir la persona: la administradora, cualquiera del equipo; un asesor, solo él mismo
 const ownerOptions = () => (isAdmin() ? S.team.filter(u => u.active !== false).map(u => u.name) : [S.me.name]);
 // Lo que un asesor no ve: configuración, difusiones, promociones, formularios, anuncios, importar y exportar
-const ADMIN_ONLY = new Set(["carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
+const ADMIN_ONLY = new Set(["listas", "ventacruzada", "carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
 const canView = k => isAdmin() || !ADMIN_ONLY.has(k);
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
@@ -261,6 +263,8 @@ function startData() {
   w("forms", "forms");
   w("campaigns", "campaigns", { orderBy: ["createdAt", "desc"] });
   w("promos", "promos");
+  w("priceLists", "priceLists");
+  S.unsubs.push(fb.watchDoc("settings/ventaCruzada", d => { S.cross = d || {}; if (S.view === "ventacruzada") scheduleRender(); }, () => { S.cross = {}; }));
   S.unsubs.push(fb.watchDoc("settings/asesora", d => { S.ai = d || {}; scheduleRender(); }, () => { S.ai = {}; }));
   S.unsubs.push(fb.watchDoc("settings/channels", d => { S.ch = d || {}; scheduleRender(); }, () => { S.ch = {}; }));
   // Estado del puente de WhatsApp por QR (solo la administradora puede leerlo); late cada minuto, así que solo redibuja Canales
@@ -297,8 +301,8 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
-  ["Catálogo", [["productos", "Productos"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
+  ["Catálogo", [["productos", "Productos"], ["promociones", "Promociones"], ["listas", "Precios mayoristas"], ["ventacruzada", "Venta cruzada"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
@@ -339,7 +343,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, listas: viewListas, ventacruzada: viewVentaCruzada, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -1690,6 +1694,7 @@ function viewConv(el) {
 function contactSummary(c) {
   const qs = S.quotes.filter(q => q.contactId === c.id).slice(0, 5);
   return `${aiInsight(c)}${c.ad ? `<div class="ad-from">${icon("anuncios")}<span>Llegó por el anuncio <b>${esc(c.ad.headline || c.ad.id || "")}</b></span></div>` : ""}${c.comment ? `<div class="ad-from">${icon("captacion")}<span>Comentó: <b>"${esc(c.comment.text)}"</b>${c.comment.url ? ` · <a href="${esc(c.comment.url)}" target="_blank" rel="noopener">ver publicación</a>` : ""}</span></div>` : ""}${c.webFunnel ? `<div class="ad-from">${icon("captacion")}<span>Llegó por el mensaje automático <b>${esc(c.webFunnel.name || "de la web")}</b>${c.webPage ? ` en <a href="${esc(c.webPage)}" target="_blank" rel="noopener">${esc(c.webPage.replace(/^https?:\/\//, "").slice(0, 40))}</a>` : ""}</span></div>` : ""}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+    ${(S.priceLists || []).length ? `<div><p class="eyebrow">Lista de precios</p><select class="in" id="sList" ${isAdmin() ? "" : "disabled"}><option value="">${listFor({ ...c, priceList: "" }) ? "La del embudo: " + esc(listFor({ ...c, priceList: "" }).name) : "Precio normal"}</option>${S.priceLists.map(l => `<option value="${l.id}" ${c.priceList === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>` : ""}
     <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${ownerOptions().map(n => `<option ${c.owner === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Qué busca</p><div class="inline-edit" id="sLook">${esc(c.looking || "—")}</div></div>
     <div><p class="eyebrow">Producto elegido</p><div>${c.chosenProduct ? esc(c.chosenProduct.name) + " · " + money(c.chosenProduct.price) : "—"}</div><button class="btn sm" id="sProd" style="margin-top:6px">Elegir</button></div>
@@ -1701,6 +1706,7 @@ function bindSummary(c) {
   bindInsight(c);
   $("#sStage").onchange = e => setStage(c, e.target.value);
   $("#sOwner").onchange = e => fb.update("contacts/" + c.id, { owner: e.target.value, ...stamp() });
+  if ($("#sList")) $("#sList").onchange = e => fb.update("contacts/" + c.id, { priceList: e.target.value, ...stamp() });
   $("#sLook").onclick = () => editLooking(c);
   $("#sProd").onclick = () => chooseProduct(c);
   $("#sQuote").onclick = () => openQuote(null, c.id);
@@ -2076,7 +2082,7 @@ function openQuote(id, contactId) {
       <div class="mb">
         <div class="grid2"><div class="full"><label class="lb" for="qc">Cliente</label><input class="in" id="qc" list="qcl" placeholder="Escribe el nombre" value="${esc(c ? contactName(c) + (c.company && c.name ? " · " + c.company : "") : "")}" ${locked ? "disabled" : ""}>
           <datalist id="qcl">${S.contacts.slice(0, 2000).map(x => `<option value="${esc(contactName(x) + (x.company && x.name ? " · " + x.company : ""))}">`).join("")}</datalist></div></div>
-        <fieldset class="fs"><legend>Productos</legend><div class="lines">
+        <fieldset class="fs"><legend>Productos</legend>${listFor(c) ? `<p class="muted" style="margin:0 0 8px;font-size:13px">Este cliente tiene la lista <b>${esc(listFor(c).name)}</b>: los precios salen de ella.${listFor(c).minOrder ? " Pedido mínimo " + money(listFor(c).minOrder) + "." : ""}</p>` : ""}<div class="lines">
           ${q.items.map((it, i) => `<div class="line"><select class="in" data-i="${i}" data-f="productId" ${locked ? "disabled" : ""}><option value="">${it.name && !it.productId ? esc(it.name) : "Elige producto"}</option>${prods.map(p => `<option value="${p.id}" ${it.productId === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
             <input class="in tabnum" type="number" min="1" data-i="${i}" data-f="qty" value="${it.qty}" aria-label="Cantidad" ${locked ? "disabled" : ""}>
             <input class="in tabnum" inputmode="numeric" data-i="${i}" data-f="price" value="${it.price}" aria-label="Precio unitario" ${locked ? "disabled" : ""}>
@@ -2106,8 +2112,9 @@ function openQuote(id, contactId) {
     $("#qx").onclick = () => m.close();
     $$("[data-f]", m).forEach(inp => inp.onchange = () => {
       read(); const it = q.items[inp.dataset.i], f = inp.dataset.f;
-      if (f === "productId") { const p = byId(S.products, inp.value); it.productId = inp.value; it.name = p ? p.name : ""; it.price = priceFor(p, it.qty); }
-      else if (f === "qty") { it.qty = Math.max(1, Number(inp.value) || 1); const p = byId(S.products, it.productId); if (p) it.price = priceFor(p, it.qty); }
+      const lst = listFor(byId(S.contacts, q.contactId)), pr = (p, n) => { const lp = listPrice(p, n, lst); return lp !== null && lp < (p.priceRetail || Infinity) ? lp : priceFor(p, n); };
+      if (f === "productId") { const p = byId(S.products, inp.value); it.productId = inp.value; it.name = p ? p.name : ""; it.price = p ? pr(p, it.qty) : 0; }
+      else if (f === "qty") { it.qty = Math.max(1, Number(inp.value) || 1); const p = byId(S.products, it.productId); if (p) it.price = pr(p, it.qty); }
       else it.price = num(inp.value);
       draw();
     });
@@ -2574,6 +2581,113 @@ function viewOportunidades(el) {
   $$("[data-oc]", el).forEach(b => b.onclick = () => go("conv", b.dataset.oc));
 }
 
+// ======================= Precios mayoristas (listas de precios) y Venta cruzada =======================
+// Igual que functions/listas.js: la lista del contacto (ficha o embudo) y el precio por unidad con escalones
+const baseKey = name => norm(String(name || "").split(" · ")[0].split("|")[0]).trim();
+const listFor = c => c ? ((S.priceLists || []).find(l => l.id === c.priceList) || (S.priceLists || []).find(l => (l.pipelines || []).includes(c.pipeline || "ventas")) || null) : null;
+function listPrice(p, qty, list) {
+  if (!p || !list) return null;
+  const rules = list.rules || [];
+  const rule = rules.find(r => r.scope === "producto" && (r.match === p.id || String(p.id).startsWith(r.match + "_") || baseKey(r.match) === baseKey(p.name)))
+    || rules.find(r => r.scope === "categoria" && norm(r.match) && (norm(r.match) === norm(p.category) || baseKey(p.name).includes(norm(r.match))));
+  const tier = rule && (rule.tiers || []).filter(t => qty >= (Number(t.min) || 1) && Number(t.price) > 0).sort((a, b) => b.min - a.min)[0];
+  if (tier) return Math.round(Number(tier.price));
+  if (Number(list.pct) > 0 && p.priceRetail) return Math.round(p.priceRetail * (1 - Math.min(90, Number(list.pct)) / 100));
+  return null;
+}
+// Productos agrupados por nombre base (sin color ni medida)
+const productGroups = () => { const m = new Map(); S.products.forEach(p => { const k = baseKey(p.name); if (k && !m.has(k)) m.set(k, { key: k, name: String(p.name).split(" · ")[0].split("|")[0].trim(), id: p.shopifyProductId ? "shp_" + p.shopifyProductId : p.id, category: p.category || "" }); }); return [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); };
+function viewListas(el) {
+  const lists = S.priceLists || [];
+  el.innerHTML = `<div class="page" style="max-width:1000px"><div class="page-head"><div><h1>Precios mayoristas</h1><span class="sub">Precios especiales para quien compra por volumen, como hoteles y distribuidores.</span></div><span class="spacer"></span><button class="btn primary" id="nList">+ Nueva lista</button></div>
+    <div class="card" style="padding:14px 18px;margin-bottom:14px"><b>Cómo funciona</b><p class="muted" style="margin:4px 0 0">Creas una lista por tipo de cliente. Por ejemplo, en «Hoteles» pones 10% menos en todo y, en sábanas, $70.000 desde 20 unidades y $65.000 desde 50.
+      Después la conectas a un embudo (por ejemplo, Hoteles) o a un cliente desde su ficha, y cuando le haces una cotización, tú o ${esc(aiName())}, esos precios salen solos. La tienda y los precios del chat siguen siendo los normales.</p></div>
+    ${lists.length ? `<div class="promo-list">${lists.map(l => `<button class="promo-card" data-list="${l.id}"><div class="pc-h"><b>${esc(l.name)}</b></div>
+      <div class="pc-c">${[l.pct ? l.pct + "% sobre la tienda" : "", (l.rules || []).length ? (l.rules.length === 1 ? "1 regla" : l.rules.length + " reglas") : "", l.minOrder ? "mínimo " + money(l.minOrder) : "", l.validDays ? "vale " + l.validDays + " días" : ""].filter(Boolean).join(" · ") || "Sin precios aún"}</div>
+      <small class="muted">${(l.pipelines || []).length ? "Embudo: " + l.pipelines.map(id => esc((pipes().find(p => p.id === id) || {}).name || id)).join(", ") : "Sin embudo conectado"} · ${S.contacts.filter(c => listFor(c) && listFor(c).id === l.id).length} clientes</small></button>`).join("")}</div>`
+      : `<div class="empty"><p><b>Aún no hay listas.</b> Si solo vendes al detal, no tienes que hacer nada aquí.</p></div>`}</div>`;
+  $("#nList").onclick = () => openList(null);
+  $$("[data-list]", el).forEach(b => b.onclick = () => openList(b.dataset.list));
+}
+function openList(id) {
+  const l = id ? JSON.parse(JSON.stringify(byId(S.priceLists, id))) : { name: "", pct: 10, minOrder: 0, validDays: 15, pipelines: [], rules: [] }, m = $("#modal");
+  const cats = [...new Set(S.products.map(p => p.category).filter(c => c && !/^(f[ií]sico|otros?)$/i.test(c)))].sort(), groups = productGroups();
+  const read = () => {
+    l.name = $("#ln").value.trim(); l.pct = Number(String($("#lp").value).replace(",", ".")) || 0; l.minOrder = num($("#lmin").value); l.validDays = Number($("#lv").value) || 15;
+    l.pipelines = $$("[data-lpipe]:checked", m).map(x => x.dataset.lpipe);
+    l.rules = $$(".lrule", m).map(r => ({ scope: $(".lr-s", r).value, match: $(".lr-m", r).value, tiers: $$(".lr-t", r).map(t => ({ min: Number($(".lt-min", t).value) || 1, price: num($(".lt-p", t).value) })).filter(t => t.price > 0) })).filter(r => r.match);
+  };
+  const ruleHtml = (r, i) => `<div class="lrule card" data-i="${i}"><div class="grid2"><div><label class="lb">Aplica a</label><select class="in lr-s"><option value="categoria" ${r.scope !== "producto" ? "selected" : ""}>Una categoría</option><option value="producto" ${r.scope === "producto" ? "selected" : ""}>Un producto</option></select></div>
+      <div><label class="lb">Cuál</label><select class="in lr-m"><option value="">Elige…</option>${(r.scope === "producto" ? groups.map(g => [g.name, g.name]) : [...cats, "Sábanas", "Plumones", "Cobijas", "Almohadas", "Toallas", "Cortinas"].filter((x, j, a) => a.indexOf(x) === j).map(c => [c, c])).map(([v, t]) => `<option value="${esc(v)}" ${r.match === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div></div>
+      <label class="lb" style="margin-top:8px">Precio por unidad según cantidad</label>${(r.tiers && r.tiers.length ? r.tiers : [{ min: 1, price: 0 }]).map(t => `<div class="lr-t chrow"><span class="muted">Desde</span><input class="in lt-min" type="number" min="1" value="${t.min || 1}" style="width:90px"><span class="muted">unidades:</span><input class="in lt-p tabnum" inputmode="numeric" value="${t.price || ""}" placeholder="$ por unidad" style="width:150px"></div>`).join("")}
+      <div class="chrow"><button class="link" type="button" data-addtier="${i}">+ Otro escalón</button><span class="spacer"></span><button class="link danger" type="button" data-rmrule="${i}">Quitar regla</button></div></div>`;
+  const draw = () => {
+    m.innerHTML = `<form id="lf2"><div class="mh"><h2>${id ? "Lista de precios" : "Nueva lista de precios"}</h2><button class="iconbtn" type="button" id="lx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><div class="grid2"><div><label class="lb" for="ln">Nombre</label><input class="in" id="ln" required value="${esc(l.name)}" placeholder="Hoteles"></div>
+        <div><label class="lb" for="lp">Descuento general sobre la tienda (%)</label><input class="in" id="lp" inputmode="decimal" value="${l.pct || ""}" placeholder="10"></div>
+        <div><label class="lb" for="lmin">Pedido mínimo ($, opcional)</label><input class="in tabnum" id="lmin" inputmode="numeric" value="${l.minOrder || ""}"></div>
+        <div><label class="lb" for="lv">La cotización vale (días)</label><input class="in" id="lv" type="number" min="1" value="${l.validDays || 15}"></div>
+        <div class="full"><label class="lb">Se usa automáticamente en el embudo</label><div class="chrow">${pipes().map(p => `<label class="switch sm"><input type="checkbox" data-lpipe="${esc(p.id)}" ${(l.pipelines || []).includes(p.id) ? "checked" : ""}> <span>${esc(p.name)}</span></label>`).join("")}</div>
+          <small class="muted">Todos los clientes de ese embudo tendrán estos precios al cotizar (ojo con conectar Ventas si ahí está el detal). También puedes asignarla a un cliente desde su ficha, en «Lista de precios».</small></div></div>
+        <h3 style="margin:16px 0 6px">Precios especiales</h3><p class="muted" style="margin:0 0 8px">Lo que no tenga una regla usa el descuento general.</p>
+        <div style="display:grid;gap:8px">${l.rules.map(ruleHtml).join("")}</div><button class="btn sm" type="button" id="laddr" style="margin-top:8px">+ Agregar regla</button></div>
+      <div class="mf">${id ? '<button class="btn danger" type="button" id="ldel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="lc">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+    $("#lx").onclick = $("#lc").onclick = () => m.close();
+    $("#laddr").onclick = () => { read(); l.rules.push({ scope: "categoria", match: "", tiers: [{ min: 1, price: 0 }] }); draw(); };
+    $$(".lr-s", m).forEach((s, i) => s.onchange = () => { read(); l.rules[i] = { ...(l.rules[i] || {}), scope: s.value, match: "" }; draw(); });
+    $$("[data-addtier]", m).forEach(b => b.onclick = () => { read(); const r = l.rules[+b.dataset.addtier]; if (r) { r.tiers = [...(r.tiers || []), { min: ((r.tiers || []).slice(-1)[0] || {}).min * 2 || 20, price: 0 }]; } draw(); });
+    $$("[data-rmrule]", m).forEach(b => b.onclick = () => { read(); l.rules.splice(+b.dataset.rmrule, 1); draw(); });
+    if ($("#ldel")) $("#ldel").onclick = async () => { if (!await ask("¿Eliminar esta lista de precios?", "Eliminar")) return; await fb.remove("priceLists/" + id); m.close(); };
+    $("#lf2").onsubmit = async e => { e.preventDefault(); read(); const data = { ...l, ...stamp() }; delete data.id;
+      try { id ? await fb.set("priceLists/" + id, data, false) : await fb.add("priceLists", data); m.close(); toast("Lista guardada"); } catch (er) { toast(errMsg(er)); } };
+  };
+  draw(); m.showModal();
+}
+
+// ---- Venta cruzada: qué ofrece la asesora junto a cada producto ----
+const COMPLEMENTS = [[/sabana|juego de cama/, /almohada|protector/], [/plumon|edredon|cubrelecho|tendido/, /sabana|cojin|pie de cama/], [/almohada/, /protector de almohada|funda/], [/colchon/, /protector|sabana/], [/cobija|manta/, /cojin|almohada/], [/cortina/, /cortina|tapete/], [/toalla/, /tapete|toalla/]];
+function crossSuggestions() {
+  const cfg = S.cross || {}, have = new Set([...(cfg.pairs || []).map(p => p.from + ">" + p.to), ...(cfg.dismissed || [])]);
+  const groups = productGroups(), byKey = new Map(groups.map(g => [g.key, g])), score = new Map();
+  // 1) Comprados juntos en pedidos reales
+  S.orders.filter(o => o.status !== "Cancelado").forEach(o => {
+    const ks = [...new Set((o.items || []).map(i => baseKey(i.name)).filter(k => byKey.has(k)))];
+    ks.forEach(a => ks.forEach(b => { if (a !== b) { const k = a + ">" + b; score.set(k, { n: ((score.get(k) || {}).n || 0) + 1, why: "orders" }); } }));
+  });
+  // 2) Complementos lógicos del catálogo (sábanas → almohadas, plumón → sábanas…)
+  groups.forEach(a => COMPLEMENTS.forEach(([fa, fb2]) => { if (!fa.test(a.key)) return; groups.filter(b => b.key !== a.key && fb2.test(b.key)).slice(0, 2).forEach(b => { const k = a.key + ">" + b.key; if (!score.has(k)) score.set(k, { n: 0, why: "catalog" }); }); }));
+  return [...score.entries()].filter(([k]) => !have.has(k)).map(([k, v]) => { const [a, b] = k.split(">"); return { from: a, to: b, fromName: byKey.get(a).name, toName: byKey.get(b).name, ...v }; })
+    .sort((x, y) => y.n - x.n || x.fromName.localeCompare(y.fromName)).slice(0, 40);
+}
+function viewVentaCruzada(el) {
+  const cfg = S.cross || {}, pairs = cfg.pairs || [], sug = crossSuggestions();
+  el.innerHTML = `<div class="page" style="max-width:1000px"><div class="page-head"><div><h1>Venta cruzada</h1><span class="sub">Qué ofrece ${esc(aiName())} junto a cada producto cuando el cliente ya va a comprar. Solo lo que aceptes llega a ${esc(aiName())}.</span></div><span class="spacer"></span><button class="btn" id="xAdd">+ Agregar pareja</button></div>
+    <h2 class="sec-t">Activas <span class="pill">${pairs.length}</span></h2>
+    ${pairs.length ? `<div style="display:grid;gap:8px;margin-bottom:18px">${pairs.map((p, i) => `<div class="card" style="padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>${esc(p.fromName)}</b> → <b>${esc(p.toName)}</b>${p.note ? `<small class="muted" style="display:block">${esc(p.note)}</small>` : ""}</div><button class="btn sm" data-xrm="${i}">Quitar</button></div>`).join("")}</div>`
+      : `<p class="muted">Todavía no hay parejas activas: acepta las sugerencias de abajo o agrega una.</p>`}
+    <h2 class="sec-t">Sugerencias por revisar <span class="pill">${sug.length}</span></h2><p class="sec-s">Salen de lo que tus clientes compran juntos y de los complementos naturales de tu catálogo.</p>
+    ${sug.length ? `<div style="display:grid;gap:8px">${sug.map((s, i) => `<div class="card" style="padding:12px 16px"><div><b>${esc(s.fromName)}</b> → <b>${esc(s.toName)}</b> <span class="pill">Complemento (se ofrece al cerrar)</span></div>
+      <small class="muted">${s.n ? `Comprados juntos ${s.n} ${s.n === 1 ? "vez" : "veces"} en pedidos reales` : "Complemento sugerido por el tipo de producto"}</small>
+      <div class="chrow" style="margin-top:8px"><button class="btn sm primary" data-xok="${i}">Aceptar</button><button class="btn sm" data-xno="${i}">Descartar</button></div></div>`).join("")}</div>`
+      : `<p class="muted">No hay sugerencias nuevas.</p>`}</div>`;
+  const save = patch => fb.set("settings/ventaCruzada", patch).catch(er => toast(errMsg(er)));
+  $$("[data-xok]", el).forEach(b => b.onclick = () => { const s = sug[+b.dataset.xok]; save({ pairs: [...pairs, { from: s.from, to: s.to, fromName: s.fromName, toName: s.toName }] }); });
+  $$("[data-xno]", el).forEach(b => b.onclick = () => { const s = sug[+b.dataset.xno]; save({ dismissed: [...(cfg.dismissed || []), s.from + ">" + s.to].slice(-300) }); });
+  $$("[data-xrm]", el).forEach(b => b.onclick = () => save({ pairs: pairs.filter((_, i) => i !== +b.dataset.xrm) }));
+  $("#xAdd").onclick = () => {
+    const g = productGroups(), m = $("#modal"), opts = g.map(x => `<option value="${esc(x.key)}">${esc(x.name)}</option>`).join("");
+    m.innerHTML = `<form id="xf"><div class="mh"><h2>Nueva pareja</h2><button class="iconbtn" type="button" id="xx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><div class="grid2"><div><label class="lb" for="xa">Cuando compra</label><select class="in" id="xa" required>${opts}</select></div><div><label class="lb" for="xb">Ofrecer</label><select class="in" id="xb" required>${opts}</select></div>
+        <div class="full"><label class="lb" for="xn">Nota para ${esc(aiName())} (opcional)</label><input class="in" id="xn" placeholder="Ej: con 10% si lo lleva en el mismo pedido"></div></div></div>
+      <div class="mf"><span class="spacer"></span><button class="btn" type="button" id="xc">Cancelar</button><button class="btn primary">Agregar</button></div></form>`;
+    $("#xx").onclick = $("#xc").onclick = () => m.close();
+    $("#xf").onsubmit = e => { e.preventDefault(); const a = g.find(x => x.key === $("#xa").value), b2 = g.find(x => x.key === $("#xb").value);
+      if (!a || !b2 || a.key === b2.key) return toast("Elige dos productos distintos.");
+      save({ pairs: [...pairs, { from: a.key, to: b2.key, fromName: a.name, toName: b2.name, note: $("#xn").value.trim() }] }); m.close(); };
+    m.showModal();
+  };
+}
+
 function viewMetricas(el) {
   const rk = S.mRange || "mes", [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;
   const orders = S.orders.filter(o => o.status !== "Cancelado" && inR(o.createdAt));
@@ -2799,7 +2913,7 @@ function viewPromociones(el) {
   el.innerHTML = `<div class="page"><div class="page-head"><div><h1>Promociones</h1><span class="sub">Descuentos y beneficios que ${esc(aiName())} ofrece a los clientes mientras estén vigentes.</span></div><span class="spacer"></span>
       ${adm ? '<button class="btn primary" id="newPromo">+ Nueva promoción</button>' : ""}</div>
     ${list.length ? `<div class="promo-list">${list.map(pr => { const [st, cls] = promoState(pr); return `<button class="promo-card" data-promo="${pr.id}">
-        <div class="pc-h"><b>${esc(pr.name)}</b>${pr.source === "Shopify" ? '<span class="pill">Shopify</span>' : ""}<span class="pill ${cls}">${st}</span></div>
+        <div class="pc-h"><b>${esc(pr.name)}</b>${pr.source === "Shopify" ? '<span class="pill">Shopify</span>' : ""}${pr.visibility === "demanda" ? '<span class="pill">Bajo demanda</span>' : pr.visibility === "interna" ? '<span class="pill">Interna</span>' : ""}${pr.onlyBuyers ? '<span class="pill">Solo quien ya compró</span>' : ""}<span class="pill ${cls}">${st}</span></div>
         <div class="pc-c">${esc(promoCondition(pr))}</div>
         ${pr.desc ? `<p class="muted">${esc(pr.desc)}</p>` : ""}
         <small class="muted">${pr.start || pr.end ? `Vigencia: ${pr.start ? "desde " + pr.start : ""}${pr.end ? " hasta " + pr.end : ""}` : "Sin fecha de fin"}</small></button>`; }).join("")}</div>`
@@ -2816,6 +2930,7 @@ function openPromo(id) {
   const read = () => {
     pr.name = $("#prn").value.trim(); pr.desc = $("#prd").value.trim(); pr.type = $("#prt").value; pr.value = !$("#prv") ? 0 : pr.type === "porcentaje" ? Number(String($("#prv").value).replace(",", ".")) || 0 : num($("#prv").value);
     pr.scope = $("#prs").value; pr.minQty = Number($("#prm").value) || 0; pr.code = $("#prc").value.trim(); pr.start = $("#pra").value; pr.end = $("#prb").value; pr.on = $("#pro").checked;
+    pr.visibility = $("#prvis").value; pr.priority = Number($("#prpri").value) || 0; pr.when = $("#prwhen").value.trim(); pr.onlyBuyers = $("#prbuy").checked;
     if ($("#prcats")) pr.categories = $$("[data-cat]:checked", m).map(x => x.dataset.cat);
     if ($("#prprods")) { const seen = new Set($$("[data-pid]", m).map(x => x.dataset.pid)); pr.productIds = [...(pr.productIds || []).filter(x => !seen.has(x)), ...$$("[data-pid]:checked", m).map(x => x.dataset.pid)]; }
   };
@@ -2837,6 +2952,10 @@ function openPromo(id) {
         <div><label class="lb" for="prb">Hasta (opcional)</label><input class="in" id="prb" type="date" value="${esc(pr.end || "")}"></div>
         <div><label class="lb" for="prc">Código (opcional)</label><input class="in" id="prc" value="${esc(pr.code || "")}" placeholder="Ej: SABANAS15"></div>
         <div style="align-self:end"><label class="switch"><input type="checkbox" id="pro" ${pr.on !== false ? "checked" : ""}> <span>Activa</span></label></div>
+        <div><label class="lb" for="prvis">Quién la inicia</label><select class="in" id="prvis">${[["publica", `Pública (${esc(aiName())} la ofrece)`], ["demanda", "Bajo demanda (solo si el cliente da el código)"], ["interna", `Interna (${esc(aiName())} no la acepta)`]].map(([k, t]) => `<option value="${k}" ${(pr.visibility || "publica") === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div><label class="lb" for="prpri">Prioridad</label><input class="in" id="prpri" type="number" min="0" max="100" value="${Number(pr.priority) || 10}"></div>
+        <div class="full"><label class="lb" for="prwhen">Cuándo ofrecerla (lo lee ${esc(aiName())})</label><input class="in" id="prwhen" value="${esc(pr.when || "")}" placeholder="Ofrécelo si el cliente duda del precio"></div>
+        <div class="full"><label class="switch sm"><input type="checkbox" id="prbuy" ${pr.onlyBuyers ? "checked" : ""}> <span>Solo para quien ya compró</span></label><small class="muted" style="display:block">Se verifica con los pedidos del cliente: no se le muestra ni se le aplica a quien nunca ha comprado.</small></div>
       </div><p class="muted" style="margin:10px 0 0">${esc(aiName())} la ofrecerá así: <b id="prprev">${esc(promoCondition(pr))}</b></p></div>
       <div class="mf">${id ? '<button class="btn danger" type="button" id="prdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="prcancel">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
     $("#prx").onclick = $("#prcancel").onclick = () => m.close();

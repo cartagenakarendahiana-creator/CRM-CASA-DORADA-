@@ -1257,3 +1257,6 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 /* Cartera y pedidos */
 .pay-line{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:10px 0}
 .ship{padding:8px 12px;background:var(--soft);border-radius:10px;font-size:14px;margin-bottom:6px}
+/* Listas de precios */
+.lrule{padding:12px 14px}.lr-t{flex-wrap:nowrap;margin:4px 0}.lr-t .in{flex:0 0 130px;width:130px}.lr-t .lt-min{flex-basis:80px;width:80px}
+@media (max-width:560px){.lr-t{flex-wrap:wrap}}

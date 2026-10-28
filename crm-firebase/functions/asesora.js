@@ -3,6 +3,7 @@
 // solo pasa a una persona el cierre de la venta (pago, datos de envío, confirmar el pedido) o si el cliente pide una persona.
 const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
+const LISTAS = require("./listas");
 const FICHA = require("./ficha");
 const MEDIDAS = require("./medidas");
 
@@ -176,7 +177,7 @@ function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), m
   return (named.length ? named : withImg).filter(fresh).filter(p => !seen.has(p.image) && seen.add(p.image)).slice(0, Math.max(0, max - queued.length));
 }
 
-function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false }) {
+function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false, priceList = null, crossText = "" }) {
   // Solo lo que hay en stock (available=false: agotado en Shopify). Lo agotado solo sirve para decir que está agotado.
   const active = products.filter(p => p.active !== false && p.available !== false);
   const soldOut = products.filter(p => p.active !== false && p.available === false);
@@ -291,6 +292,9 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       for (const it of items || []) {
         const p = active.find(x => x.id === it.producto_id), qty = Math.max(1, Math.round(Number(it.cantidad) || 0));
         if (!p) return { error: soldOut.some(x => x.id === it.producto_id) ? `El producto ${it.producto_id} está AGOTADO: no lo cotices; dile al cliente que está agotado y ofrécele una alternativa disponible.` : `El producto ${it.producto_id} no existe en el catálogo. Búscalo con buscar_productos.` };
+        // Cliente con lista de precios (hotel, distribuidor…): manda la lista; si no, el mejor precio con las promociones
+        const lp = LISTAS.listPrice(p, qty, priceList);
+        if (lp !== null && lp < (p.priceRetail || Infinity)) { lines.push({ productId: p.id, name: p.name, qty, price: lp, listPrice: p.priceRetail || lp, priceListName: priceList.name }); continue; }
         const base = priceFor(p, qty), b = PROMOS.bestPrice(p, qty, base, promos);
         lines.push({ productId: p.id, name: p.name, qty, price: b.price, ...(b.promo ? { listPrice: base, promo: b.promo.name } : {}) });
       }
@@ -302,9 +306,10 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         const n = (s.exists ? s.get("n") || 0 : 0) + 1;
         const num = "COT-" + String(n).padStart(4, "0");
         t.set(cr, { n });
-        const promoNote = [...new Set(lines.filter(l => l.promo).map(l => l.promo))].map(n => "Promoción aplicada: " + n).join("\n");
+        const promoNote = [...new Set(lines.filter(l => l.promo).map(l => l.promo))].map(n => "Promoción aplicada: " + n).join("\n")
+          + (lines.some(l => l.priceListName) ? (lines.some(l => l.promo) ? "\n" : "") + "Precios de la lista " + priceList.name : "");
         t.set(qref, { contactId: cref.id, contactName: contact.name || contact.company || contact.phone || "", items: lines, subtotal, discount: 0, total: subtotal,
-          status: quoteAuto ? "Enviada" : "Borrador", ...(quoteAuto ? { sentAt: now, sentByName: aiName } : {}), validUntil: isoDay(now + 15 * 864e5), notes: [String(notas || ""), promoNote].filter(Boolean).join("\n").slice(0, 1000), number: num, aiCreated: true,
+          status: quoteAuto ? "Enviada" : "Borrador", ...(quoteAuto ? { sentAt: now, sentByName: aiName } : {}), validUntil: isoDay(now + ((priceList && Number(priceList.validDays)) || 15) * 864e5), ...(priceList ? { priceList: priceList.id } : {}), notes: [String(notas || ""), promoNote].filter(Boolean).join("\n").slice(0, 1000), number: num, aiCreated: true,
           createdAt: now, createdBy: "asesora", createdByName: aiName, updatedAt: now, updatedBy: aiName });
         return num;
       });
@@ -332,7 +337,7 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         : "Listo. Dile que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, catalog, found, kb, promos, saleText, quoteAuto, quoteTried, captionFor, cardText };
+  return { run, done, photos, docs, catalog, found, kb, promos, saleText, crossText, priceList, quoteAuto, quoteTried, captionFor, cardText };
 }
 
 // Valida a mano lo que la herramienta espera (además de strict:true)
@@ -358,7 +363,8 @@ async function think({ apiKey, cfg, contact, history, tools }) {
   if (!messages.length || messages[messages.length - 1].role !== "user") return { text: "" };
   const system = [
     { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
-    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) + (tools.saleText ? "\n\n" + tools.saleText : "") },
+    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) + (tools.saleText ? "\n\n" + tools.saleText : "") + (tools.crossText ? "\n\n" + tools.crossText : "")
+      + (tools.priceList ? `\n\nEste cliente tiene la lista de precios «${tools.priceList.name}»: al cotizar, crear_cotizacion ya aplica sus precios.${tools.priceList.minOrder ? ` Pedido mínimo de la lista: ${money(tools.priceList.minOrder)}.` : ""}` : "") },
   ];
   const wantsQuote = tools.quoteAuto && quoteAsked(history);
   if (wantsQuote) system[1].text += "\n\nEl cliente acaba de pedir una cotización: créala en esta respuesta con crear_cotizacion.";
@@ -433,13 +439,19 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   if (claim !== "ok") return claim;
 
   const contact = (await cref.get()).data();
-  const [hs, ps, ks, prs] = await Promise.all([
+  const [hs, ps, ks, prs, pls, xs] = await Promise.all([
     cref.collection("messages").orderBy("ts", "desc").limit(HISTORY).get(),
     db.collection("products").get(),
     db.collection("knowledge").get(),
     db.collection("promos").get(),
+    db.collection("priceLists").get().catch(() => ({ docs: [] })),
+    db.doc("settings/ventaCruzada").get().catch(() => null),
   ]);
-  const promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
+  // Promociones que aplican a este cliente: sin las internas, las "bajo demanda" solo si escribió el código, las de clientes solo si ya compró
+  const said = hs.docs.map(d => d.data()).filter(m => m.dir === "in").slice(0, 15).map(m => m.text || "");
+  const promos = PROMOS.forContact(PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() }))), contact, said);
+  const priceList = LISTAS.listFor(contact, pls.docs.map(d => ({ id: d.id, ...d.data() })));
+  const crossText = LISTAS.crossText(xs && xs.exists ? (xs.data() || {}).pairs : []);
   const kb = ks.docs.map(d => d.data()).filter(k => k.on !== false && k.title).sort((a, b) => String(a.title).localeCompare(String(b.title)));
   const history = hs.docs.map(d => d.data()).reverse();
   // Lee del bucket privado las 3 fotos más recientes del cliente (Claude acepta hasta ~5 MB por imagen)
@@ -449,7 +461,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   }
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
-  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
+  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, priceList, crossText, quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
 
   let res;
   try { res = await think({ apiKey, cfg, contact, history, tools }); }
