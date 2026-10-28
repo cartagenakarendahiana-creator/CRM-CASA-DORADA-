@@ -322,7 +322,8 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
     async pasar_a_humano({ motivo, resumen }) {
       if (!HANDOFF_REASONS.includes(motivo)) return { error: "Esto lo resuelves tú: solo se pasa a una persona para cerrar la venta (pago, envío, confirmar el pedido) o si el cliente pide una persona. Ayúdale con las promociones, la información del catálogo y la base de conocimiento, y si hace falta anota y agenda un seguimiento." };
       const at = Date.now();
-      await cref.set({ aiHandoff: { reason: String(motivo || "Otro"), summary: String(resumen || "").slice(0, 1000), at }, updatedAt: at, updatedBy: aiName }, { merge: true });
+      // aiClosedAt: la asesora llevó la conversación hasta el cierre de la venta (para el reporte de anuncios)
+      await cref.set({ aiHandoff: { reason: String(motivo || "Otro"), summary: String(resumen || "").slice(0, 1000), at }, ...(motivo === "Cerrar pedido" ? { aiClosedAt: at } : {}), updatedAt: at, updatedBy: aiName }, { merge: true });
       done.push(`pasó el chat a una persona (${motivo}): ${resumen}`);
       return { ok: true, aviso: motivo === "Cerrar pedido" ? "Listo. Dile que una asesora del equipo le escribe en breve para finalizar su compra. Ya no responderás más en este chat."
         : "Listo. Dile que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };

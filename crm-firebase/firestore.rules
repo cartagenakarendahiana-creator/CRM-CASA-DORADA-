@@ -13,14 +13,21 @@ service cloud.firestore {
       allow read: if request.auth != null && (request.auth.uid == uid || member());
       allow write: if isAdmin();
     }
+    // Asesores: solo ven y trabajan sus contactos asignados y los que no tienen responsable (owner vacío);
+    // pueden tomar un contacto sin asignar (ponerse de responsables), pero no pasarlo a otra persona.
+    function canSee(d) { return isAdmin() || d.get('owner', '') == '' || d.get('owner', '') == me().name; }
+    function ownerOk(d) { return isAdmin() || d.get('owner', '') in ['', me().name]; }
     match /contacts/{id} {
-      allow read, create, update: if member();
+      allow read: if member() && canSee(resource.data);
+      allow create: if member() && ownerOk(request.resource.data);
+      allow update: if member() && canSee(resource.data) && ownerOk(request.resource.data);
       allow delete: if isAdmin();
       // Los mensajes de WhatsApp los escriben las funciones; desde la app solo notas y registros manuales
       match /messages/{mid} {
-        allow read: if member();
+        allow read: if member() && canSee(get(/databases/$(database)/documents/contacts/$(id)).data);
         allow create: if member() && request.resource.data.dir in ['note', 'out']
-          && request.resource.data.by == request.auth.uid && !('waId' in request.resource.data);
+          && request.resource.data.by == request.auth.uid && !('waId' in request.resource.data)
+          && canSee(get(/databases/$(database)/documents/contacts/$(id)).data);
         allow update, delete: if false;
       }
     }

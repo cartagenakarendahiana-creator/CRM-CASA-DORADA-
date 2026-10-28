@@ -45,7 +45,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     if (name && !(ex.exists && ex.get("name"))) patch.name = name;
     if (addr.city && !(ex.exists && ex.get("city"))) patch.city = addr.city;
     if (addr.company && !(ex.exists && ex.get("company"))) patch.company = addr.company;
-    if (!ex.exists) Object.assign(patch, { type: "Prospecto", segment: "Tienda en línea", stage: "Nuevo", stageAt: now, source: src, createdAt: now, unread: 0 });
+    if (!ex.exists) Object.assign(patch, { type: "Prospecto", segment: "Tienda en línea", stage: "Nuevo", stageAt: now, source: src, createdAt: now, unread: 0, owner: "" });
     await ref.set(patch, { merge: true });
     return { ref, existed: ex.exists };
   }

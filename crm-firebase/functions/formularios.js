@@ -52,7 +52,7 @@ module.exports = function formularios({ db, admin, phoneId, nextAssignee }) {
     if (!ex.exists) {
       const owner = f.owner === "rotar" ? await nextAssignee() : f.owner || "";
       Object.assign(patch, { type: "Prospecto", segment: f.segment || "Formulario", pipeline: f.pipeline || "ventas", stage: f.stage || "Nuevo", stageAt: now,
-        source: "Formulario: " + (f.name || id), createdAt: now, unread: 1, ...(owner ? { owner } : {}),
+        source: "Formulario: " + (f.name || id), createdAt: now, unread: 1, owner: owner || "",
         nextDate: new Date(now).toLocaleDateString("en-CA", { timeZone: "America/Bogota" }), nextAction: "Contactar: llenó el formulario " + (f.name || "") });
     } else {
       // Ya existía: no cambia su etapa, pero queda la tarea de atenderlo
