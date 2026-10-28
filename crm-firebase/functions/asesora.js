@@ -108,7 +108,10 @@ ${(cfg.instructions || "No hay instrucciones adicionales.").trim()}${kbText(kb)}
 function contactText(c) {
   const f = [["Nombre", c.name], ["Empresa", c.company], ["Ciudad", c.city], ["Correo", c.email], ["Segmento", c.segment], ["Tipo", c.type],
     ["Etapa", c.stage], ["Temperatura", c.temperature], ["Qué busca", c.looking], ["Producto elegido", c.chosenProduct && `${c.chosenProduct.name} ${money(c.chosenProduct.price)}`],
-    ["Próximo seguimiento", c.nextDate && `${c.nextDate} ${c.nextAction || ""}`], ["Observaciones", c.obs]];
+    ["Próximo seguimiento", c.nextDate && `${c.nextDate} ${c.nextAction || ""}`], ["Observaciones", c.obs],
+    // De dónde llegó: anuncio, comentario en una publicación o mensaje automático de la página web
+    ["Llegó por el anuncio", c.ad && (c.ad.headline || c.ad.body || "").slice(0, 160)], ["Comentó en una publicación", c.comment && `"${c.comment.text}"`],
+    ["Llegó desde la página web", c.webFunnel && `${c.webFunnel.name || ""}${c.webPage ? " (" + c.webPage + ")" : ""}`]];
   const canal = { whatsapp: "WhatsApp", telegram: "Telegram", messenger: "Messenger", instagram: "Instagram", web: "el chat de la página web" }[c.lastChannel || "whatsapp"];
   return `Hoy es ${nowText()}. El cliente escribe por ${canal}${c.lastChannel && c.lastChannel !== "whatsapp" && !c.phone ? " (si quiere comprar, pídele su número de celular y guárdalo en la nota)" : ""}.\nFicha actual del cliente:\n` + f.filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`).join("\n");
 }

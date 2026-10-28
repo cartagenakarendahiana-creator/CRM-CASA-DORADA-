@@ -39,6 +39,7 @@ const WA_WABA_ID = defineString("WA_WABA_ID", { default: "" });   // cuenta de W
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");     // clave de la API de Claude (asesora virtual)
 const asesora = require("./asesora");
 const CH = require("./canales")({ db, admin, GRAPH });
+const COM = require("./comentarios")({ db, admin, GRAPH, privateCfg: f => CH.privateCfg(f) }); // comentarios → respuesta y DM
 const PROJECT = process.env.GCLOUD_PROJECT || (JSON.parse(process.env.FIREBASE_CONFIG || "{}").projectId) || "";
 
 const DAY = 24 * 3600 * 1000;
@@ -102,7 +103,11 @@ exports.whatsappWebhook = onRequest({ region: REGION, invoker: "public", secrets
 });
 
 async function handleWebhook(body) {
-  if (body.object === "page" || body.object === "instagram") return CH.metaEvents(body); // Messenger e Instagram
+  if (body.object === "page" || body.object === "instagram") { // Messenger e Instagram: mensajes y comentarios
+    await CH.metaEvents(body);
+    await COM.handle(body);
+    return;
+  }
   for (const entry of body.entry || []) {
     for (const ch of entry.changes || []) {
       const v = ch.value || {};
@@ -608,6 +613,20 @@ exports.disconnectChannel = onCall({ region: REGION, invoker: "public" }, async 
   return { ok: true };
 });
 
+// Plantillas de WhatsApp: crearlas desde House Chat, enviarlas a Meta y seguir su aprobación (ver plantillas-wa.js)
+const PWA = require("./plantillas-wa");
+const plantillasWA = () => PWA({ db, GRAPH, token: WA_TOKEN.value(), waba: WA_WABA_ID.value() });
+exports.plantillasWhatsApp = onCall({ region: REGION, invoker: "public", secrets: [WA_TOKEN] }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora maneja las plantillas de WhatsApp.");
+  const d = req.data || {};
+  try {
+    if (d.action === "crear") return await plantillasWA().create(d.template || {}, me);
+    if (d.action === "eliminar") return { list: await plantillasWA().remove(d.name) };
+    return { list: await plantillasWA().sync() };
+  } catch (e) { throw new HttpsError(e.code === "invalid-argument" ? "invalid-argument" : "failed-precondition", e.message); }
+});
+
 // ---------- Automatizaciones y campañas ----------
 // Envío común: plantilla de WhatsApp fuera de la ventana, o texto por el canal del contacto
 async function autoSend({ cref, contact, text, template, byName, campaign }) {
@@ -651,6 +670,7 @@ exports.autoMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mi
 exports.autoSinRespuesta = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 540 }, async () => {
   console.log("auto sin respuesta", await AUTO.sweepNoReply());
   if (WA_PHONE_ID.value()) await waCheck().catch(e => console.error("revisión de WhatsApp", e)); // revisión automática cada hora
+  if (WA_WABA_ID.value()) await plantillasWA().sync().catch(e => console.error("plantillas de WhatsApp", e)); // estado de aprobación de las plantillas
 });
 exports.runCampaign = onCall({ ...AUTO_OPTS, invoker: "public", timeoutSeconds: 540, memory: "512MiB" }, async req => {
   const me = await requireMember(req);

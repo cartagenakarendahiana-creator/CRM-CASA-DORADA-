@@ -31,21 +31,32 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     const cref = db.doc("contacts/" + cid);
     const mref = cref.collection("messages").doc(String(msgId || db.collection("x").doc().id).replace(/[\/]/g, "_"));
     let created = false;
+    // Si la persona comentó una publicación y le escribimos por privado, su chat llega ligado a ese comentario
+    const leadRef = channel === "messenger" || channel === "instagram" ? db.doc(`comentLeads/${channel}_${extId}`) : null;
     await db.runTransaction(async t => {
-      const [snap, msnap] = await Promise.all([t.get(cref), t.get(mref)]);
+      const [snap, msnap, lsnap] = await Promise.all([t.get(cref), t.get(mref), leadRef ? t.get(leadRef) : null]);
       if (msnap.exists) return; // reintentos del proveedor
+      const lead = lsnap && lsnap.exists && !lsnap.get("cid") ? lsnap.data() : null;
       const patch = { lastInboundAt: ts, lastMessage: String(text).slice(0, 200), lastMessageDir: "in", lastChannel: channel,
         ["channels." + channel]: String(extId), unread: admin.firestore.FieldValue.increment(1), updatedAt: Date.now(), updatedBy: ch.label, ...extra,
         ...ADS.contactPatch(ad, snap.exists && snap.get("ad")) }; // anuncio que trajo la conversación
       if (!snap.exists) {
         created = true;
         Object.assign(patch, { name: name || "", segment: ch.label, type: "Prospecto", stage: "Nuevo", createdAt: ts, stageAt: ts, source: ch.label, owner: "" });
+        if (lead) Object.assign(patch, { source: "Comentario en " + (channel === "instagram" ? "Instagram" : "Facebook"),
+          comment: { text: String(lead.comment || lead.lastComment || "").slice(0, 300), post: lead.lastPost || "", url: (lead.post && lead.post.url) || "", at: lead.at || ts } });
         delete patch["channels." + channel];
         patch.channels = { [channel]: String(extId) };
         t.set(cref, patch, { merge: true });
       } else {
         if (!snap.get("name") && name) patch.name = name;
         t.update(cref, patch);
+      }
+      if (lead) { // el comentario y el DM que se le mandó quedan en el chat, para que Sofía y el equipo tengan el contexto
+        t.set(cref.collection("messages").doc("coment_" + String(lead.commentId || "c").replace(/\//g, "_")), { dir: "note", type: "note", ts: Math.min(lead.dmAt || ts, ts) - 2,
+          text: `💬 Comentó en ${channel === "instagram" ? "Instagram" : "Facebook"}: "${String(lead.comment || lead.lastComment || "").slice(0, 300)}"` + (lead.post && lead.post.url ? `\n${lead.post.url}` : ""), byName: "House Chat" });
+        if (lead.dm) t.set(cref.collection("messages").doc("dm_" + String(lead.commentId || "c").replace(/\//g, "_")), { dir: "out", type: "text", ts: Math.min(lead.dmAt || ts, ts) - 1, text: lead.dm, channel, byName: "Respuesta automática" });
+        t.set(leadRef, { cid }, { merge: true });
       }
       t.set(mref, { dir: "in", text: String(text), type, ts, channel, extId: String(msgId || ""), ...(media ? { media } : {}), ...(ad ? { referral: ad } : {}) });
     });
@@ -168,11 +179,14 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     const page = await (await fetchFn(`${GRAPH}/me?fields=id,name,instagram_business_account&access_token=${encodeURIComponent(pageToken)}`)).json().catch(() => ({}));
     if (!page.id) throw new Error("El token de la página no es válido: " + ((page.error && page.error.message) || ""));
     const ig = igId || (page.instagram_business_account && page.instagram_business_account.id) || "";
-    const sub = await (await fetchFn(`${GRAPH}/${page.id}/subscribed_apps?subscribed_fields=messages&access_token=${encodeURIComponent(pageToken)}`, { method: "POST" })).json().catch(() => ({}));
+    // Mensajes, anuncios y comentarios de la página (feed); si el token no tiene permiso para comentarios, solo mensajes
+    const subscribe = async fields => (await fetchFn(`${GRAPH}/${page.id}/subscribed_apps?subscribed_fields=${fields}&access_token=${encodeURIComponent(pageToken)}`, { method: "POST" })).json().catch(() => ({}));
+    let sub = await subscribe("messages,messaging_referrals,feed"), comments = !!sub.success;
+    if (!sub.success) sub = await subscribe("messages");
     await db.doc("private/channels").set({ meta: { pageToken, pageId: page.id, igId: ig } }, { merge: true });
-    await db.doc("settings/channels").set({ messenger: { on: true, pageName: page.name, at: Date.now() }, instagram: { on: !!ig, at: Date.now() } }, { merge: true });
+    await db.doc("settings/channels").set({ messenger: { on: true, pageName: page.name, comments, at: Date.now() }, instagram: { on: !!ig, at: Date.now() } }, { merge: true });
     cache = null;
-    return { pageName: page.name, instagram: !!ig, subscribed: !!sub.success };
+    return { pageName: page.name, instagram: !!ig, subscribed: !!sub.success, comments };
   }
 
   // ---------- Chat web ----------
@@ -181,9 +195,12 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     res.set("Access-Control-Allow-Headers", "Content-Type");
     res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
-    const pub = ((await db.doc("settings/channels").get()).data() || {}).web || {};
+    const chs = (await db.doc("settings/channels").get()).data() || {}, pub = chs.web || {};
+    const funnels = (chs.webFunnels || []).filter(f => f && f.on !== false && f.id && f.text);
     if (req.method === "GET" && req.query.cfg) {
-      return res.json({ on: !!pub.on, title: pub.title || "Casa Dorada", greeting: pub.greeting || "¡Hola! ¿En qué te podemos ayudar?", color: pub.color || "#0f7a4c", askName: pub.askName !== false });
+      return res.json({ on: !!pub.on, title: pub.title || "Casa Dorada", greeting: pub.greeting || "¡Hola! ¿En qué te podemos ayudar?", color: pub.color || "#0f7a4c", askName: pub.askName !== false,
+        // Mensajes automáticos según la página que visita la persona: { id, match (parte de la dirección), delay (segundos), text }
+        funnels: funnels.map(f => ({ id: String(f.id), match: String(f.match || ""), delay: Math.max(0, Math.min(600, Number(f.delay) || 0)), text: String(f.text).slice(0, 500) })) });
     }
     if (!pub.on) return res.status(403).json({ error: "El chat no está activo." });
     const sid = String((req.method === "GET" ? req.query.sid : (req.body || {}).sid) || "");
@@ -210,6 +227,12 @@ module.exports = function canales({ db, admin, GRAPH, fetchFn = (...a) => fetch(
     if (b.page) extra.webPage = String(b.page).slice(0, 300);
     if (name && c.name !== name && !c.name) extra.name = name;
     const ts = Date.now();
+    // Respondió a un mensaje automático de la página: ese mensaje queda en el chat, antes de su respuesta
+    const funnel = b.funnel && !c.webFunnel ? funnels.find(f => String(f.id) === String(b.funnel)) : null;
+    if (funnel) {
+      extra.webFunnel = { id: String(funnel.id), name: String(funnel.name || "").slice(0, 80), at: ts };
+      await cref.collection("messages").doc("funnel_" + funnel.id).set({ dir: "out", type: "text", ts: ts - 1, text: String(funnel.text).slice(0, 500), channel: "web", byName: "Mensaje automático" });
+    }
     await ingest({ channel: "web", extId: sid, msgId: "web_in_" + ts + "_" + crypto.randomBytes(3).toString("hex"), text, ts, name, extra });
     return res.json({ ok: true, ts });
   }

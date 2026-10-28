@@ -1236,3 +1236,21 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .ad-t tbody tr{cursor:pointer}
 .ad-from{display:flex;gap:8px;align-items:center;font-size:13px;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .ad-from svg{width:16px;height:16px;color:var(--muted);flex:none}
+
+/* Comentarios y web */
+.com-t td{vertical-align:top}.com-t .chi{width:16px;height:16px;vertical-align:-3px}
+.post-l{display:flex;gap:8px;align-items:center;color:inherit;text-decoration:none;max-width:240px}.post-l img{width:36px;height:36px;border-radius:6px;object-fit:cover;flex:none}
+.post-l span{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.post-pick{display:grid;gap:6px;max-height:260px;overflow:auto;padding:4px 0}
+.post-o{display:flex;gap:10px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:13.5px}
+.post-o img{width:40px;height:40px;border-radius:6px;object-fit:cover}.post-o input{width:18px;height:18px}
+.err{color:var(--red,#b3261e)}
+.banner.warn{padding:10px 14px;border-radius:10px;margin:8px 0 12px;font-size:14px}
+.wa-prev{background:var(--wa-bg,#efeae2);border-radius:12px;padding:14px;display:grid;justify-items:start}
+.wa-prev .bub{background:#fff;color:#111b21;border-radius:10px;padding:8px 10px;max-width:100%;box-shadow:0 1px .5px rgba(0,0,0,.13);white-space:pre-wrap;font-size:14px;line-height:1.4}
+.wa-prev .bub b.h{display:block;margin-bottom:4px}.wa-prev .bub small{display:block;color:#667781;margin-top:4px;font-size:12.5px}
+.wa-prev .btns{display:grid;gap:4px;margin-top:4px;width:100%}.wa-prev .btns span{background:#fff;color:#027eb5;text-align:center;border-radius:10px;padding:7px;font-size:14px;box-shadow:0 1px .5px rgba(0,0,0,.13)}
+.var-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.var-chips button{border:1px solid var(--line);background:var(--soft);border-radius:999px;padding:3px 10px;font-size:12.5px;cursor:pointer;color:inherit}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}@media (max-width:560px){.grid3{grid-template-columns:1fr}}
+.wt-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:20px;align-items:start}.wt-side{position:sticky;top:0}
+@media (max-width:720px){.wt-grid{grid-template-columns:1fr}.wt-side{position:static}}

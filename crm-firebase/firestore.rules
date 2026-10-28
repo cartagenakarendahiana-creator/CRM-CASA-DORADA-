@@ -48,6 +48,9 @@ service cloud.firestore {
     match /pushSubs/{id} { allow read, write: if false; }
     // A qué ficha pertenece cada mensaje de WhatsApp enviado (para los vistos): solo las funciones
     match /waIds/{id} { allow read, write: if false; }
+    // Comentarios de Facebook e Instagram atendidos automáticamente: los escribe la función; la administradora los ve
+    match /comentarios/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /comentLeads/{id} { allow read, write: if false; }
     match /automations/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /knowledge/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /forms/{id} { allow read: if member(); allow write: if isAdmin(); }

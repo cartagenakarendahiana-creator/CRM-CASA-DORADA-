@@ -71,6 +71,7 @@ const ICONS = {
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   anuncios: '<path d="M3 10v4h3l6 4V6L6 10z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
+  captacion: '<path d="M4 5h16v10H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
   exportar: '<path d="M12 15V3M7 8l5-5 5 5M4 21h16"/>',
   automatizaciones: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   campanas: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1zM16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/>',
@@ -230,7 +231,7 @@ function fixOwners(list) {
 // Responsables que puede elegir la persona: la administradora, cualquiera del equipo; un asesor, solo él mismo
 const ownerOptions = () => (isAdmin() ? S.team.filter(u => u.active !== false).map(u => u.name) : [S.me.name]);
 // Lo que un asesor no ve: configuración, difusiones, promociones, formularios, anuncios, importar y exportar
-const ADMIN_ONLY = new Set(["campanas", "promociones", "formularios", "anuncios", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
+const ADMIN_ONLY = new Set(["campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
 const canView = k => isAdmin() || !ADMIN_ONLY.has(k);
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
@@ -262,6 +263,11 @@ function startData() {
   // Estado del puente de WhatsApp por QR (solo la administradora puede leerlo); late cada minuto, así que solo redibuja Canales
   S.unsubs.push(fb.watchDoc("waqr/state", d => { S.waqr = d; if (S.view === "canales" || S.view === "integraciones") scheduleRender(); }, () => { S.waqr = null; }));
   S.unsubs.push(fb.watchDoc("settings/apps", d => { S.apps = d || {}; scheduleRender(); }, () => { S.apps = {}; }));
+  if (isAdmin()) { // comentarios automáticos y plantillas de Meta: solo la administradora
+    S.unsubs.push(fb.watchDoc("settings/comentarios", d => { S.com = d || {}; if (S.view === "captacion") scheduleRender(); }, () => { S.com = {}; }));
+    S.unsubs.push(fb.watch("comentarios", l => { S.comLog = l; if (S.view === "captacion") scheduleRender(); }, { orderBy: ["at", "desc"], limit: 100 }, () => { S.comLog = []; }));
+    S.unsubs.push(fb.watchDoc("settings/waTemplates", d => { S.waTpl = d; if (S.view === "plantillas") scheduleRender(); }, () => { S.waTpl = null; }));
+  }
   S.unsubs.push(fb.watchDoc("settings/pipelines", d => { S.pipes = (d && d.list) || []; scheduleRender(); }, () => { S.pipes = []; }));
   window.addEventListener("hashchange", route);
   route();
@@ -286,7 +292,7 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["promociones", "Promociones"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
   ["Catálogo", [["productos", "Productos"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -328,7 +334,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -1126,8 +1132,8 @@ function viewCanales(el) {
 }
 function metaSteps(hook) {
   return `<ol class="steps"><li>En <b>developers.facebook.com</b>, en tu app de Meta (la misma de WhatsApp), agrega los productos <b>Messenger</b> e <b>Instagram</b>.</li>
-    <li>En cada uno, configura el webhook con esta URL y tu palabra de verificación (WA_VERIFY_TOKEN), y suscribe el campo <b>messages</b>:<br><code class="sel">${esc(hook)}</code></li>
-    <li>Genera un <b>token de acceso de la página</b> (permisos <code>pages_messaging</code> e <code>instagram_manage_messages</code>) y pégalo aquí:</li></ol>
+    <li>En cada uno, configura el webhook con esta URL y tu palabra de verificación (WA_VERIFY_TOKEN), y suscribe el campo <b>messages</b> (y <b>feed</b> en Página y <b>comments</b> en Instagram para <a href="#captacion">responder comentarios</a>):<br><code class="sel">${esc(hook)}</code></li>
+    <li>Genera un <b>token de acceso de la página</b> (permisos <code>pages_messaging</code> e <code>instagram_manage_messages</code>; para comentarios también <code>pages_manage_engagement</code>, <code>pages_read_user_content</code> e <code>instagram_manage_comments</code>) y pégalo aquí:</li></ol>
     <form id="mf" class="chform"><input class="in" id="mpt" placeholder="Token de acceso de la página (EAAG…)" autocomplete="off">
     <input class="in" id="mig" placeholder="ID de Instagram (opcional, se detecta solo)" autocomplete="off"><div class="chrow"><button class="btn primary">Conectar</button></div></form>`;
 }
@@ -1678,7 +1684,7 @@ function viewConv(el) {
 }
 function contactSummary(c) {
   const qs = S.quotes.filter(q => q.contactId === c.id).slice(0, 5);
-  return `${aiInsight(c)}${c.ad ? `<div class="ad-from">${icon("anuncios")}<span>Llegó por el anuncio <b>${esc(c.ad.headline || c.ad.id || "")}</b></span></div>` : ""}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+  return `${aiInsight(c)}${c.ad ? `<div class="ad-from">${icon("anuncios")}<span>Llegó por el anuncio <b>${esc(c.ad.headline || c.ad.id || "")}</b></span></div>` : ""}${c.comment ? `<div class="ad-from">${icon("captacion")}<span>Comentó: <b>"${esc(c.comment.text)}"</b>${c.comment.url ? ` · <a href="${esc(c.comment.url)}" target="_blank" rel="noopener">ver publicación</a>` : ""}</span></div>` : ""}${c.webFunnel ? `<div class="ad-from">${icon("captacion")}<span>Llegó por el mensaje automático <b>${esc(c.webFunnel.name || "de la web")}</b>${c.webPage ? ` en <a href="${esc(c.webPage)}" target="_blank" rel="noopener">${esc(c.webPage.replace(/^https?:\/\//, "").slice(0, 40))}</a>` : ""}</span></div>` : ""}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${ownerOptions().map(n => `<option ${c.owner === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Qué busca</p><div class="inline-edit" id="sLook">${esc(c.looking || "—")}</div></div>
     <div><p class="eyebrow">Producto elegido</p><div>${c.chosenProduct ? esc(c.chosenProduct.name) + " · " + money(c.chosenProduct.price) : "—"}</div><button class="btn sm" id="sProd" style="margin-top:6px">Elegir</button></div>
@@ -2297,6 +2303,123 @@ function viewAnuncios(el) {
     m.showModal();
   });
 }
+// ======================= Comentarios y web: captación automática =======================
+// Comentarios de Instagram y Facebook → respuesta pública + DM (reglas por palabra clave, settings/comentarios),
+// y mensajes automáticos del chat web según la página que visita la persona (settings/channels.webFunnels).
+const COM_ST = { respondido: ["green", "Respondido"], repetido: ["", "Ya se le había escrito"], "sin regla": ["", "Sin regla"], error: ["red", "Error"], "sin conexión": ["red", "Sin conexión"], recibido: ["", "Recibido"] };
+const comName = c => c.channel === "instagram" ? "@" + (c.fromName || "usuario") : c.fromName || "Persona";
+const soldC = c => S.orders.some(o => o.contactId === c.id && o.status !== "Cancelado") || c.stage === "Ganado";
+function viewCaptacion(el) {
+  const st = S.com || {}, rules = st.rules || [], log = S.comLog || [], ch = S.ch || {}, funnels = ch.webFunnels || [];
+  const metaOn = !!(ch.messenger && ch.messenger.on), web = ch.web || {};
+  const fromCom = S.contacts.filter(c => c.comment), fromWeb = S.contacts.filter(c => c.webFunnel);
+  const dms = log.filter(l => l.dm).length;
+  el.innerHTML = `<div class="page" style="max-width:1100px"><div class="page-head"><div><h1>Comentarios y web</h1><span class="sub">Responde solo los comentarios con un mensaje privado y saluda a quien visita tu página. Cuando la persona contesta, ${esc(aiName())} sigue la conversación.</span></div></div>
+    <div class="tiles">
+      <div class="tile"><small>Comentarios atendidos</small><b>${log.filter(l => l.status === "respondido").length}</b><span>de los últimos ${log.length} recibidos</span></div>
+      <div class="tile"><small>Mensajes privados enviados</small><b>${dms}</b><span>${fromCom.length} respondieron y ya son chats</span></div>
+      <div class="tile"><small>Chats desde la página web</small><b>${fromWeb.length}</b><span>${fromWeb.filter(soldC).length} compraron</span></div>
+    </div>
+    <h2 class="sec-t">Comentarios de Instagram y Facebook → mensaje privado</h2>
+    ${metaOn ? (ch.messenger.comments === false ? `<div class="banner warn">Facebook no dio permiso para leer los comentarios. Revisa los pasos de abajo y vuelve a conectar la página en <a href="#canales">Canales</a>.</div>` : "")
+      : `<div class="banner warn">Primero conecta Messenger e Instagram en <a href="#canales">Canales</a>.</div>`}
+    <label class="switch" style="margin:6px 0 12px"><input type="checkbox" id="comOn" ${st.on !== false ? "checked" : ""}> <span>Responder comentarios automáticamente</span></label>
+    <div style="display:grid;gap:10px">${rules.map((r, i) => { const s = (st.stats || {})[r.id] || {}; return `<div class="card rule-c" data-rule="${i}" style="padding:14px 16px;cursor:pointer">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(r.name || "Regla")}</b>${r.on === false ? '<span class="pill">Apagada</span>' : '<span class="pill green">Activa</span>'}
+        <span class="pill">${r.keywords ? "Si dicen: " + esc(r.keywords) : "Cualquier comentario"}</span>${r.posts && r.posts.length ? `<span class="pill">${r.posts.length === 1 ? "1 publicación" : r.posts.length + " publicaciones"}</span>` : ""}
+        <span class="spacer"></span><small class="muted">${s.n || 0} comentarios · ${s.dm || 0} DM</small></div>
+      ${r.reply ? `<p class="muted" style="margin:6px 0 0"><b>Responde:</b> ${esc(r.reply.split("\n")[0])}${r.reply.includes("\n") ? " (y otras variantes)" : ""}</p>` : ""}
+      ${r.dm ? `<p style="margin:4px 0 0;white-space:pre-wrap"><b>DM:</b> ${esc(r.dm)}</p>` : ""}</div>`; }).join("")
+      || `<div class="empty"><p><b>Aún no tienes reglas.</b> Ejemplo: si comentan "precio", "info" o "cuánto", se responde "¡Te escribimos por DM! 💌" y se envía un mensaje privado.</p></div>`}</div>
+    <div class="chrow" style="margin-top:10px"><button class="btn primary" id="newRule">+ Nueva regla</button>${!rules.length ? '<button class="btn" id="seedRule">Crear la regla de ejemplo</button>' : ""}</div>
+    <details class="wa-api" style="margin-top:12px"><summary>Qué necesita Meta para los comentarios</summary><ol class="steps">
+      <li>En tu app de Meta, el token de la página debe tener los permisos <code>pages_manage_engagement</code>, <code>pages_read_user_content</code>, <code>pages_manage_metadata</code> e <code>instagram_manage_comments</code>.</li>
+      <li>En el webhook de la app suscribe el campo <b>feed</b> (Página) y el campo <b>comments</b> (Instagram), con la misma URL de los mensajes.</li>
+      <li>Vuelve a conectar la página en <a href="#canales">Canales</a> con el token nuevo.</li>
+      <li>Meta permite un solo mensaje privado por comentario y durante los 7 días siguientes. House Chat le escribe una sola vez a cada persona por publicación.</li></ol></details>
+    <h3 style="margin:18px 0 8px">Últimos comentarios</h3>
+    ${log.length ? `<div class="table-wrap"><table class="t com-t"><thead><tr><th>Cuándo</th><th>Persona</th><th>Comentario</th><th>Publicación</th><th>Resultado</th></tr></thead><tbody>
+      ${log.slice(0, 60).map(l => { const [cl, tx] = COM_ST[l.status] || ["", l.status || ""]; const c = S.contacts.find(x => x.comment && x.id === (l.channel === "instagram" ? "ig_" : "fb_") + l.fromId);
+        return `<tr><td class="muted" style="white-space:nowrap">${chIcon(l.channel)} ${ago(l.at)}</td><td>${c ? `<a href="#conv/${esc(c.id)}">${esc(comName(l))}</a>` : esc(comName(l))}</td><td>${esc(l.text)}</td>
+        <td>${l.post && l.post.url ? `<a class="post-l" href="${esc(l.post.url)}" target="_blank" rel="noopener">${l.post.thumb ? `<img src="${esc(l.post.thumb)}" alt="" loading="lazy">` : ""}<span>${esc((l.post.caption || "Ver publicación").slice(0, 50))}</span></a>` : '<span class="muted">—</span>'}</td>
+        <td><span class="pill ${cl}" title="${esc(l.replyError || l.dmError || l.dmSkipped || "")}">${tx}</span>${l.ruleName ? `<small class="muted" style="display:block">${esc(l.ruleName)}${l.dm ? " · DM enviado" : ""}</small>` : ""}${l.replyError || l.dmError ? `<small class="err" style="display:block">${esc(l.replyError || l.dmError)}</small>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<p class="muted">Cuando alguien comente tus publicaciones aparecerá aquí, con lo que se le respondió.</p>`}
+
+    <h2 class="sec-t" style="margin-top:28px">Mensajes automáticos en tu página web</h2>
+    ${web.on ? "" : `<div class="banner warn">El chat web está apagado. Actívalo y pega el código en tu página desde <a href="#canales">Canales</a>.</div>`}
+    <p class="muted" style="max-width:75ch">Después de unos segundos en una página, la burbuja del chat saluda con un mensaje. Se muestra una sola vez a cada visitante, solo si aún no ha chateado. Si la persona responde, el chat entra a Conversaciones y ${esc(aiName())} continúa.</p>
+    <div style="display:grid;gap:10px">${funnels.map((f, i) => { const cs = fromWeb.filter(c => c.webFunnel.id === f.id); return `<div class="card" data-fun="${i}" style="padding:14px 16px;cursor:pointer">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(f.name || "Mensaje")}</b>${f.on === false ? '<span class="pill">Apagado</span>' : '<span class="pill green">Activo</span>'}
+        <span class="pill">${f.match ? "Páginas con: " + esc(f.match) : "Todas las páginas"}</span><span class="pill">a los ${Number(f.delay) || 0} s</span>
+        <span class="spacer"></span><small class="muted">${cs.length} chats · ${cs.filter(soldC).length} ventas</small></div>
+      <p style="margin:6px 0 0;white-space:pre-wrap">${esc(f.text)}</p></div>`; }).join("")
+      || `<div class="empty"><p><b>Aún no hay mensajes automáticos.</b> Ejemplo: en las páginas de sábanas, a los 8 segundos: "¿Buscas sábanas? Dime la medida de tu cama y te muestro las opciones 😊".</p></div>`}</div>
+    <div class="chrow" style="margin-top:10px"><button class="btn primary" id="newFun">+ Nuevo mensaje automático</button></div></div>`;
+  $("#comOn").onchange = async e => { try { await fb.set("settings/comentarios", { on: e.target.checked }); toast(e.target.checked ? "Respuestas a comentarios activadas" : "Respuestas a comentarios apagadas"); } catch (er) { toast("No se pudo guardar: " + errMsg(er)); } };
+  $("#newRule").onclick = () => openComRule(-1);
+  if ($("#seedRule")) $("#seedRule").onclick = () => fb.set("settings/comentarios", { on: true, rules: [{ id: "r" + Date.now().toString(36), name: "Piden precio o información", on: true, channels: [], posts: [], keywords: "precio, info, cuanto, valor, costo, disponible, medidas",
+    reply: "¡Hola {nombre}! Te escribimos por mensaje privado 💌\n¡Ya te enviamos la información por DM! 😊\n¡Revisa tus mensajes {nombre}! 💌", dm: "¡Hola {nombre}! 😊 Gracias por comentar. Te cuento con gusto: ¿para qué medida de cama lo buscas?" }] }).then(() => toast("Regla creada"));
+  $$("[data-rule]", el).forEach(d => d.onclick = () => openComRule(+d.dataset.rule));
+  $("#newFun").onclick = () => openFunnel(-1);
+  $$("[data-fun]", el).forEach(d => d.onclick = () => openFunnel(+d.dataset.fun));
+}
+function openComRule(i) {
+  const rules = [...((S.com || {}).rules || [])], r = i >= 0 ? rules[i] : { on: true, channels: [], posts: [] }, m = $("#modal");
+  // Publicaciones recientes vistas en los comentarios, para limitar la regla a algunas
+  const posts = new Map();
+  (S.comLog || []).forEach(l => { if (l.postId && !posts.has(l.postId)) posts.set(l.postId, l); });
+  (r.posts || []).forEach(p => { if (!posts.has(p)) posts.set(p, { postId: p }); });
+  m.innerHTML = `<form id="rf"><div class="mh"><h2>${i >= 0 ? "Regla de comentarios" : "Nueva regla"}</h2><button class="iconbtn" type="button" id="rx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><div class="grid2">
+      <div><label class="lb" for="rn">Nombre</label><input class="in" id="rn" required value="${esc(r.name || "")}" placeholder="Piden precio"></div>
+      <div><label class="lb">Dónde</label><div class="chrow"><label class="switch sm"><input type="checkbox" id="rig" ${!r.channels.length || r.channels.includes("instagram") ? "checked" : ""}> <span>Instagram</span></label>
+        <label class="switch sm"><input type="checkbox" id="rfb" ${!r.channels.length || r.channels.includes("messenger") ? "checked" : ""}> <span>Facebook</span></label></div></div>
+      <div class="full"><label class="lb" for="rk">Palabras que activan la regla (separadas por coma)</label><input class="in" id="rk" value="${esc(r.keywords || "")}" placeholder="precio, info, cuánto, valor"><small class="muted">Déjalo vacío para responder cualquier comentario. No importan las mayúsculas ni las tildes.</small></div>
+      <div class="full"><label class="lb">Publicaciones</label>${posts.size ? `<div class="post-pick"><label class="switch sm"><input type="radio" name="rp" value="all" ${!r.posts.length ? "checked" : ""}> <span>Todas</span></label>
+        ${[...posts.values()].slice(0, 12).map(p => `<label class="post-o"><input type="checkbox" value="${esc(p.postId)}" ${r.posts.includes(p.postId) ? "checked" : ""}>${p.post && p.post.thumb ? `<img src="${esc(p.post.thumb)}" alt="">` : ""}<span>${esc((p.post && p.post.caption || "Publicación " + p.postId).slice(0, 60))}</span></label>`).join("")}</div>`
+        : `<p class="muted" style="margin:4px 0">Todas. Cuando lleguen comentarios podrás elegir publicaciones específicas.</p>`}</div>
+      <div class="full"><label class="lb" for="rr">Respuesta pública al comentario (una por línea: se elige una al azar)</label><textarea class="in" id="rr" rows="3" placeholder="¡Hola {nombre}! Te escribimos por DM 💌">${esc(r.reply || "")}</textarea></div>
+      <div class="full"><label class="lb" for="rd">Mensaje privado (DM)</label><textarea class="in" id="rd" rows="4" placeholder="¡Hola {nombre}! Gracias por comentar 😊 ¿Para qué medida de cama lo buscas?">${esc(r.dm || "")}</textarea>
+        <small class="muted">{nombre} se cambia por el primer nombre en Facebook (en Instagram se omite). Termina con una pregunta: así la persona responde y ${esc(aiName())} sigue la conversación.</small></div>
+      <label class="switch sm full"><input type="checkbox" id="ron" ${r.on !== false ? "checked" : ""}> <span>Regla activa</span></label></div></div>
+    <div class="mf">${i >= 0 ? '<button class="btn danger" type="button" id="rdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="rc">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+  $("#rx").onclick = $("#rc").onclick = () => m.close();
+  $$(".post-o input", m).forEach(x => x.onchange = () => { const all = $("[name=rp]", m); if (all) all.checked = !$$(".post-o input:checked", m).length; });
+  if ($("[name=rp]", m)) $("[name=rp]", m).onchange = e => { if (e.target.checked) $$(".post-o input", m).forEach(x => { x.checked = false; }); };
+  if ($("#rdel")) $("#rdel").onclick = async () => { if (!await ask("¿Eliminar esta regla?", "Eliminar")) return; rules.splice(i, 1); await fb.set("settings/comentarios", { rules }); m.close(); };
+  $("#rf").onsubmit = async e => {
+    e.preventDefault();
+    const chans = [$("#rig").checked && "instagram", $("#rfb").checked && "messenger"].filter(Boolean);
+    if (!chans.length) return toast("Elige Instagram, Facebook o ambos.");
+    const data = { id: r.id || "r" + Date.now().toString(36), name: $("#rn").value.trim(), on: $("#ron").checked, channels: chans.length === 2 ? [] : chans,
+      keywords: $("#rk").value.trim(), posts: $$(".post-o input:checked", m).map(x => x.value), reply: $("#rr").value.trim(), dm: $("#rd").value.trim() };
+    if (!data.reply && !data.dm) return toast("Escribe la respuesta pública, el mensaje privado o ambos.");
+    if (i >= 0) rules[i] = data; else rules.push(data);
+    try { await fb.set("settings/comentarios", { rules, ...(S.com && "on" in S.com ? {} : { on: true }) }); m.close(); toast("Regla guardada"); } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+  };
+  m.showModal();
+}
+function openFunnel(i) {
+  const list = [...((S.ch || {}).webFunnels || [])], f = i >= 0 ? list[i] : { on: true, delay: 8 }, m = $("#modal");
+  m.innerHTML = `<form id="ff"><div class="mh"><h2>${i >= 0 ? "Mensaje automático" : "Nuevo mensaje automático"}</h2><button class="iconbtn" type="button" id="fx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><div class="grid2">
+      <div><label class="lb" for="fn">Nombre</label><input class="in" id="fn" required value="${esc(f.name || "")}" placeholder="Visitantes de sábanas"></div>
+      <div><label class="lb" for="fd">Mostrar a los (segundos)</label><input class="in" id="fd" type="number" min="2" max="600" value="${Number(f.delay) || 8}"></div>
+      <div class="full"><label class="lb" for="fm">En las páginas cuya dirección contiene</label><input class="in" id="fm" value="${esc(f.match || "")}" placeholder="/collections/sabanas"><small class="muted">Vacío = todas las páginas. Si varias aplican, se usa la primera de la lista.</small></div>
+      <div class="full"><label class="lb" for="ft">Mensaje</label><textarea class="in" id="ft" rows="3" maxlength="500" required placeholder="¿Buscas sábanas? Dime la medida de tu cama y te muestro las opciones 😊">${esc(f.text || "")}</textarea></div>
+      <label class="switch sm full"><input type="checkbox" id="fon" ${f.on !== false ? "checked" : ""}> <span>Activo</span></label></div></div>
+    <div class="mf">${i >= 0 ? '<button class="btn danger" type="button" id="fdel">Eliminar</button>' : ""}<span class="spacer"></span><button class="btn" type="button" id="fc">Cancelar</button><button class="btn primary">Guardar</button></div></form>`;
+  $("#fx").onclick = $("#fc").onclick = () => m.close();
+  if ($("#fdel")) $("#fdel").onclick = async () => { if (!await ask("¿Eliminar este mensaje automático?", "Eliminar")) return; list.splice(i, 1); await fb.set("settings/channels", { webFunnels: list }); m.close(); };
+  $("#ff").onsubmit = async e => {
+    e.preventDefault();
+    const data = { id: f.id || "f" + Date.now().toString(36), name: $("#fn").value.trim(), delay: Math.max(2, Math.min(600, +$("#fd").value || 8)), match: $("#fm").value.trim(), text: $("#ft").value.trim(), on: $("#fon").checked };
+    if (i >= 0) list[i] = data; else list.push(data);
+    try { await fb.set("settings/channels", { webFunnels: list }); m.close(); toast("Mensaje automático guardado"); } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
+  };
+  m.showModal();
+}
+
 function viewMetricas(el) {
   const rk = S.mRange || "mes", [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;
   const orders = S.orders.filter(o => o.status !== "Cancelado" && inR(o.createdAt));
@@ -2583,12 +2706,71 @@ function viewPlantillas(el) {
     <p class="muted" style="max-width:70ch">El mensaje sugerido en Hoy sale de la plantilla de cada situación. Puedes usar {nombre}, {producto}, {precio}, {cotizacion}, {total}, {hotel}, {asesor} y {empresa}.
       Si la plantilla está aprobada en WhatsApp (Meta), escribe su nombre exacto para poder enviarla cuando la ventana de 24 h esté cerrada.</p>
     ${!list.length && isAdmin() ? `<div class="empty"><p>No hay plantillas guardadas: se usan las de ejemplo.</p><button class="btn primary" id="seed">Crear las plantillas de ejemplo</button></div>` : ""}
+    ${isAdmin() ? waTplSection() : ""}
+    <h2 class="sec-t">Plantillas del CRM</h2>
     <div style="display:grid;gap:10px;margin-top:12px">${(list.length ? list : DEFAULT_TEMPLATES).map(t => `<div class="card" style="padding:14px 16px;cursor:${list.length ? "pointer" : "default"}" data-id="${t.id || ""}">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(t.name)}</b><span class="pill">${esc(SITUATIONS[t.key] || t.key || "Otra")}</span>${t.waName ? `<span class="pill green">WhatsApp: ${esc(t.waName)}</span>` : ""}</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(t.name)}</b><span class="pill">${esc(SITUATIONS[t.key] || t.key || "Otra")}</span>${t.waName ? `<span class="pill ${!t.waStatus || t.waStatus === "APPROVED" ? "green" : t.waStatus === "REJECTED" ? "red" : ""}">WhatsApp: ${esc(t.waName)}${t.waStatus && t.waStatus !== "APPROVED" ? " · " + esc(WA_ST[t.waStatus] || t.waStatus) : ""}</span>` : ""}</div>
       <p style="margin:6px 0 0;white-space:pre-wrap">${esc(t.text)}</p></div>`).join("")}</div></div>`;
   if ($("#nt")) $("#nt").onclick = () => openTemplate(null);
+  if ($("#nwt")) $("#nwt").onclick = () => openWaTemplate();
+  if ($("#syncWt")) $("#syncWt").onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Consultando a Meta…";
+    try { const r = await fb.call("plantillasWhatsApp", { action: "listar" }); toast(r.list.length + " plantillas en Meta"); } catch (er) { toast(errMsg(er)); } finally { b.disabled = false; b.textContent = "Actualizar estado"; } };
+  $$("[data-delwt]", el).forEach(b => b.onclick = async () => { if (!await ask(`¿Eliminar la plantilla «${b.dataset.delwt}» de Meta? No se puede deshacer y el nombre no se podrá reusar por 30 días.`, "Eliminar")) return;
+    try { await fb.call("plantillasWhatsApp", { action: "eliminar", name: b.dataset.delwt }); toast("Plantilla eliminada de Meta"); } catch (er) { toast(errMsg(er)); } });
   if ($("#seed")) $("#seed").onclick = async () => { for (const t of DEFAULT_TEMPLATES) await fb.add("templates", { ...t, ...stamp() }); toast("Plantillas creadas"); };
   if (list.length && isAdmin()) $$("[data-id]", el).forEach(d => d.onclick = () => openTemplate(d.dataset.id));
+}
+// ---- Plantillas de WhatsApp en Meta: se crean aquí y Meta las revisa (normalmente en minutos) ----
+const WA_ST = { APPROVED: "Aprobada", PENDING: "En revisión", IN_APPEAL: "En apelación", REJECTED: "Rechazada", PAUSED: "Pausada", DISABLED: "Desactivada", PENDING_DELETION: "Eliminándose" };
+const WA_CAT = { MARKETING: "Marketing", UTILITY: "Utilidad", AUTHENTICATION: "Autenticación" };
+const WA_REASON = { PROMOTIONAL: "Meta la consideró promocional: créala como Marketing.", INVALID_FORMAT: "Formato inválido: revisa los campos y el texto.", ABUSIVE_CONTENT: "Meta la consideró contenido no permitido.", TAG_CONTENT_MISMATCH: "La categoría no corresponde al contenido.", SCAM: "Meta la marcó como posible estafa." };
+const WA_FIELDS = { nombre: "María", producto: "Juego de sábanas", precio: "$189.900", cotizacion: "COT-0012", total: "$350.000", hotel: "Hotel Central", asesor: "Luisa", empresa: "Casa Dorada" };
+function waTplSection() {
+  const d = S.waTpl, list = (d && d.list) || [];
+  return `<h2 class="sec-t">Plantillas de WhatsApp (aprobadas por Meta)</h2>
+    <p class="muted" style="max-width:75ch">Con ellas escribes a clientes después de 24 horas sin respuesta, y envías difusiones desde <a href="#campanas">Campañas</a>. Créalas aquí: House Chat las envía a Meta para aprobación y te muestra el estado.</p>
+    <div class="chrow" style="margin:8px 0 12px"><button class="btn primary" id="nwt">+ Crear plantilla de WhatsApp</button><button class="btn" id="syncWt">Actualizar estado</button>${d && d.at ? `<small class="muted">Revisado ${ago(d.at)}</small>` : ""}</div>
+    ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Plantilla</th><th>Categoría</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${list.map(t => `<tr><td><b class="mono" style="font-size:13px">${esc(t.name)}</b><small class="muted" style="display:block;white-space:pre-wrap">${esc((t.body || "").slice(0, 140))}</small></td><td>${esc(WA_CAT[t.category] || t.category)}</td>
+        <td><span class="pill ${t.status === "APPROVED" ? "green" : t.status === "REJECTED" || t.status === "DISABLED" ? "red" : ""}">${esc(WA_ST[t.status] || t.status)}</span>${t.reason ? `<small class="err" style="display:block">${esc(WA_REASON[t.reason] || t.reason)}</small>` : ""}</td>
+        <td class="num"><button class="link" data-delwt="${esc(t.name)}">Eliminar</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">${d ? "No hay plantillas en tu cuenta de WhatsApp Business." : "Toca «Actualizar estado» para traer las plantillas de tu cuenta."}</p>`}`;
+}
+function openWaTemplate() {
+  const m = $("#modal");
+  m.innerHTML = `<form id="wtf"><div class="mh"><h2>Nueva plantilla de WhatsApp</h2><button class="iconbtn" type="button" id="wtx" aria-label="Cerrar">✕</button></div>
+    <div class="mb"><div class="wt-grid"><div style="display:grid;gap:10px">
+      <div><label class="lb" for="wtn">Nombre</label><input class="in" id="wtn" required maxlength="60" placeholder="Seguimiento de cotización"><small class="muted" id="wtslug"></small></div>
+      <div class="grid2"><div><label class="lb" for="wtc">Categoría</label><select class="in" id="wtc"><option value="MARKETING">Marketing (promociones, difusiones)</option><option value="UTILITY">Utilidad (pedidos, cotizaciones, citas)</option></select></div>
+        <div><label class="lb" for="wtk">Se usa para</label><select class="in" id="wtk">${Object.entries(SITUATIONS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="otra" selected>Difusiones o envío a mano</option></select></div></div>
+      <div><label class="lb" for="wth">Encabezado (opcional)</label><input class="in" id="wth" maxlength="60" placeholder="🎉 Promoción de la semana"></div>
+      <div><label class="lb" for="wtb">Mensaje</label><textarea class="in" id="wtb" rows="6" maxlength="1024" required placeholder="Hola {nombre}, tenemos {producto} con 30% de descuento solo esta semana. ¿Te envío las fotos?"></textarea>
+        <div class="var-chips">${Object.keys(WA_FIELDS).map(k => `<button type="button" data-var="${k}">{${k}}</button>`).join("")}</div>
+        <small class="muted">Toca un campo para insertarlo; se llena con los datos de cada cliente. No empieces ni termines el mensaje con un campo.</small></div>
+      <div><label class="lb" for="wtf2">Pie (opcional)</label><input class="in" id="wtf2" maxlength="60" placeholder="Casa Dorada · Responde SALIR para no recibir más"></div>
+      <div><label class="lb">Botones de respuesta rápida (opcional, hasta 3)</label><div class="grid3"><input class="in wtq" maxlength="25" placeholder="Sí, quiero verlas" aria-label="Botón 1"><input class="in wtq" maxlength="25" placeholder="Ahora no" aria-label="Botón 2"><input class="in wtq" maxlength="25" aria-label="Botón 3"></div></div>
+      <div class="grid2"><div><label class="lb" for="wtut">Botón con enlace (opcional)</label><input class="in" id="wtut" maxlength="25" placeholder="Ver tienda"></div><div><label class="lb" for="wtuu">Enlace</label><input class="in" id="wtuu" placeholder="https://casadorada.co"></div></div>
+    </div><div class="wt-side"><label class="lb">Así se verá</label><div class="wa-prev" id="wtp"></div><small class="muted" style="display:block;margin-top:8px">Meta la revisa, normalmente en minutos. Las de Marketing tienen costo por mensaje en WhatsApp; las de Utilidad son más baratas pero solo para información de pedidos o cotizaciones, no promociones.</small></div></div></div>
+    <div class="mf"><span class="spacer"></span><button class="btn" type="button" id="wtc2">Cancelar</button><button class="btn primary" id="wts">Enviar a Meta</button></div></form>`;
+  const slugOf = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+  const prev = () => {
+    const fill = t => esc(t).replace(/\{\s*([a-záéíóúñ]+)\s*\}/gi, (x, k) => WA_FIELDS[k.toLowerCase()] ? `<b>${esc(WA_FIELDS[k.toLowerCase()])}</b>` : x);
+    const q = $$(".wtq", m).map(x => x.value.trim()).filter(Boolean).slice(0, 3), u = $("#wtut").value.trim();
+    $("#wtslug").textContent = $("#wtn").value.trim() ? "En Meta: " + slugOf($("#wtn").value) : "";
+    $("#wtp").innerHTML = `<div class="bub">${$("#wth").value.trim() ? `<b class="h">${esc($("#wth").value.trim())}</b>` : ""}${fill($("#wtb").value || "Escribe el mensaje…")}${$("#wtf2").value.trim() ? `<small>${esc($("#wtf2").value.trim())}</small>` : ""}</div>
+      ${q.length || u ? `<div class="btns">${q.map(x => `<span>${esc(x)}</span>`).join("")}${u ? `<span>↗ ${esc(u)}</span>` : ""}</div>` : ""}`;
+  };
+  prev(); $$("input,textarea", m).forEach(x => x.addEventListener("input", prev));
+  $$("[data-var]", m).forEach(b => b.onclick = () => { const ta = $("#wtb"), p = ta.selectionStart ?? ta.value.length; ta.value = ta.value.slice(0, p) + "{" + b.dataset.var + "}" + ta.value.slice(ta.selectionEnd ?? p); ta.focus(); prev(); });
+  $("#wtx").onclick = $("#wtc2").onclick = () => m.close();
+  $("#wtf").onsubmit = async e => {
+    e.preventDefault(); const b = $("#wts"); b.disabled = true; b.textContent = "Enviando…";
+    const template = { name: $("#wtn").value.trim(), title: $("#wtn").value.trim(), category: $("#wtc").value, key: $("#wtk").value, header: $("#wth").value, body: $("#wtb").value, footer: $("#wtf2").value,
+      buttons: $$(".wtq", m).map(x => x.value.trim()).filter(Boolean), url: $("#wtut").value.trim() || $("#wtuu").value.trim() ? { text: $("#wtut").value.trim(), url: $("#wtuu").value.trim() } : null };
+    try { const r = await fb.call("plantillasWhatsApp", { action: "crear", template }); m.close(); toast(`Plantilla enviada a Meta (${WA_ST[r.status] || r.status})`); }
+    catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Enviar a Meta"; }
+  };
+  m.showModal();
 }
 function openTemplate(id) {
   const t = id ? byId(S.templates, id) : { key: "seguimiento", waLang: "es", waParams: ["nombre"] }, m = $("#modal");
