@@ -91,6 +91,8 @@ ${ctx.cfg.instructions ? "Políticas del negocio:\n" + String(ctx.cfg.instructio
       productos: { type: "array", items: { type: "string" }, description: "Productos que le interesan (máx. 5)" },
       valor_estimado: { type: "integer", description: "Valor estimado de la venta en pesos; 0 si no se sabe" },
       urgente: { type: "boolean", description: "true si el cliente espera respuesta o está listo para comprar ya" },
+      faltante: { type: "string", enum: ["ninguno", "variante_no_disponible", "no_manejamos"], description: "variante_no_disponible: pidió un producto que existe pero no en esa medida, color o talla (o estaba agotado); no_manejamos: pidió algo que la tienda no vende; ninguno: no pasó" },
+      faltante_detalle: { type: "string", description: "Qué pidió exactamente que no había (ej. 'sábana king color verde'); vacío si faltante es ninguno" },
     }) };
     const a = await ask(`Eres analista comercial experto de un CRM de ventas por WhatsApp. Analiza la conversación con objetividad, sin inventar datos. Escribe en español, breve y concreto.
 ${business(ctx)}
@@ -103,7 +105,7 @@ Hoy es ${new Date().toLocaleDateString("es-CO", { timeZone: "America/Bogota", we
       etapa: ctx.stages.includes(a.etapa_sugerida) ? a.etapa_sugerida : "", siguiente: String(a.siguiente_paso || "").slice(0, 300),
       riesgo: String(a.riesgo || "").slice(0, 300), objeciones: (a.objeciones || []).slice(0, 4).map(x => String(x).slice(0, 120)),
       productos: (a.productos || []).slice(0, 5).map(x => String(x).slice(0, 80)), valor: Math.max(0, Math.round(Number(a.valor_estimado) || 0)),
-      urgente: !!a.urgente, at: Date.now(), hasta: Math.max(ctx.contact.lastInboundAt || 0, ctx.contact.lastOutboundAt || 0, ...ctx.msgs.map(m => m.ts || 0)), // así no se repite sin mensajes nuevos
+      urgente: !!a.urgente, faltante: ["variante_no_disponible", "no_manejamos"].includes(a.faltante) ? { tipo: a.faltante, detalle: String(a.faltante_detalle || "").slice(0, 120) } : null, at: Date.now(), hasta: Math.max(ctx.contact.lastInboundAt || 0, ctx.contact.lastOutboundAt || 0, ...ctx.msgs.map(m => m.ts || 0)), // así no se repite sin mensajes nuevos
     };
     await ctx.cref.set({ ai, ...(!ctx.contact.temperature && ai.temperatura ? { temperature: ai.temperatura } : {}) }, { merge: true });
     return ai;
