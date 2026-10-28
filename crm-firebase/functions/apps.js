@@ -163,12 +163,33 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const url = src.startsWith("//") ? "https:" + src : src;
     return /cdn\.shopify\.com/.test(url) && !/[?&]width=/.test(url) ? url + (url.includes("?") ? "&" : "?") + "width=1200" : url;
   }
-  // ¿Hay stock? Catálogo público: "available". API de Admin: si no lleva inventario, si se vende sin stock o si hay unidades.
-  const inStock = v => ("available" in v ? v.available !== false
-    : !v.inventory_management || v.inventory_policy === "continue" || Number(v.inventory_quantity) > 0);
+  // ¿Hay stock? 1) Catálogo público ("available": lo mismo que ve el cliente en la tienda). 2) Lo que dice el catálogo
+  // público de esa variante cuando se importa con el acceso de Admin (pub). 3) API de Admin: si no lleva inventario, si se
+  // vende sin stock o si hay unidades. Si Shopify no manda la cantidad (la app no tiene el permiso read_inventory), no se
+  // puede saber: se toma como disponible, nunca como agotado.
+  const inStock = (v, pub) => {
+    if ("available" in v) return v.available !== false;
+    if (pub && pub.has(String(v.id))) return pub.get(String(v.id));
+    if (!v.inventory_management || v.inventory_policy === "continue") return true;
+    if (v.inventory_quantity === undefined || v.inventory_quantity === null) return true;
+    return Number(v.inventory_quantity) > 0;
+  };
+  // Disponibilidad de cada variante en el catálogo público de la tienda (tienda.com/products.json): variante → true/false
+  async function publicAvailability(shop) {
+    const map = new Map();
+    try {
+      for (let page = 1; page <= 40; page++) {
+        const r = await fetchFn(`https://${shop}/products.json?limit=250&page=${page}`, { headers: { Accept: "application/json" } });
+        const j = r.ok ? await r.json().catch(() => null) : null;
+        if (!j || !Array.isArray(j.products) || !j.products.length) break;
+        for (const p of j.products) for (const v of p.variants || []) if ("available" in v) map.set(String(v.id), v.available !== false);
+      }
+    } catch (e) { console.error("catálogo público", e.message); }
+    return map;
+  }
   // Guarda un producto de Shopify: una ficha por variante (color, medida…), con su foto, su precio y si hay stock.
   // Borra las fichas de ese producto que ya no existen en la tienda.
-  async function saveShopifyProduct(p, active) {
+  async function saveShopifyProduct(p, active, pub) {
     const vs = (p.variants || []).length ? p.variants : [{}];
     const multi = vs.length > 1;
     const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", shopifyProductId: String(p.id), updatedAt: Date.now(), updatedBy: "Shopify" };
@@ -179,8 +200,8 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       const price = Math.round(Number(v.price) || 0), before = Math.round(Number(v.compare_at_price) || 0);
       // compareAt: "precio de comparación" de Shopify (producto en oferta: antes compareAt, ahora priceRetail)
       await db.doc("products/" + id).set({ ...base, name: p.title + vt, priceRetail: price, sku: v.sku || "",
-        compareAt: before > price ? before : 0, image: shopifyImage(p, v), available: inStock(v),
-        ...("inventory_quantity" in v ? { stock: Number(v.inventory_quantity) || 0 } : {}) }, { merge: true });
+        compareAt: before > price ? before : 0, image: shopifyImage(p, v), available: inStock(v, pub),
+        ...(v.inventory_management && v.inventory_quantity != null ? { stock: Number(v.inventory_quantity) || 0 } : {}) }, { merge: true });
       keep.add(id);
     }
     const olds = await db.collection("products").where("shopifyProductId", "==", String(p.id)).get().catch(() => ({ docs: [] }));
@@ -197,7 +218,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const r = await fetchFn(`https://${c.shop}/admin/oauth/access_token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams({ grant_type: "client_credentials", client_id: c.clientId, client_secret: c.clientSecret }).toString() });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.access_token) throw new Error("Shopify no entregó el acceso con ese Client ID y Client secret. Revisa que la app esté instalada en tu tienda y tenga los permisos read_discounts y read_products. " + (j.error_description || j.error || "(" + r.status + ")"));
+    if (!r.ok || !j.access_token) throw new Error("Shopify no entregó el acceso con ese Client ID y Client secret. Revisa que la app esté instalada en tu tienda y tenga los permisos read_discounts, read_products y read_inventory. " + (j.error_description || j.error || "(" + r.status + ")"));
     const exp = Date.now() + ((Number(j.expires_in) || 86400) - 60) * 1000;
     await setPriv({ shopify: { cct: j.access_token, cctExp: exp } });
     return j.access_token;
@@ -211,12 +232,13 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     const c = { ...c0, token: await adminToken(c0) };
     let n = 0;
     if (c.token) {
+      const pub = await publicAvailability(c.shop); // el stock que ve el cliente, por si la API no manda las cantidades
       let url = `https://${c.shop}/admin/api/${SHOPIFY_API}/products.json?limit=250&status=active`, pages = 0;
       while (url && pages++ < 20) {
         const r = await fetchFn(url, { headers: { "X-Shopify-Access-Token": c.token, "Content-Type": "application/json" } });
         if (!r.ok) throw new Error(r.status === 401 ? "Shopify rechazó el token de acceso." : "Shopify respondió " + r.status);
         const j = await r.json();
-        for (const p of j.products || []) n += await saveShopifyProduct(p, p.status !== "archived");
+        for (const p of j.products || []) n += await saveShopifyProduct(p, p.status !== "archived", pub);
         const link = (r.headers && r.headers.get && r.headers.get("link")) || "";
         const m = link.match(/<([^>]+)>;\s*rel="next"/);
         url = m ? m[1] : null;
