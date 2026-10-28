@@ -71,6 +71,15 @@ function kbText(kb = []) {
   if (full.length <= KB_INLINE) return `\n\nBase de conocimiento de la empresa (úsala para responder; no inventes nada que no esté aquí o en el catálogo):\n${full}`;
   return `\n\nBase de conocimiento: hay ${kb.length} artículos (${kb.map(k => k.title).join("; ")}). Consúltalos con buscar_conocimiento antes de responder sobre esos temas.`;
 }
+// Pagos, entrega y sedes que la administradora llena en Configuración
+function businessText(cfg) {
+  const out = [];
+  if (cfg.payments) out.push("Formas de pago (dilas tal cual cuando pregunten cómo pagar):\n" + String(cfg.payments).trim().slice(0, 2000));
+  if (cfg.delivery) out.push("Entrega y envíos:\n" + String(cfg.delivery).trim().slice(0, 2000));
+  const sedes = (cfg.sedes || []).filter(x => x && x.name);
+  if (sedes.length) out.push("Sedes y puntos de venta:\n" + sedes.slice(0, 12).map(x => `- ${x.name}${x.address ? ": " + x.address : ""}${x.city ? ", " + x.city : ""}${x.hours ? " · horario " + x.hours : ""}${x.phone ? " · tel " + x.phone : ""}${x.map ? " · mapa " + x.map : ""}`).join("\n"));
+  return out.length ? "\n\n" + out.join("\n\n") : "";
+}
 function systemPrompt(cfg, kb) {
   const name = cfg.name || "Sofía";
   return `Eres ${name}, asesora virtual de ventas de ${cfg.empresa || "Casa Dorada"}. Atiendes chats de WhatsApp, Instagram, Messenger, Telegram y el chat de la página web. Escribes en español de Colombia, cálido, cercano y breve (mensajes cortos, como una persona por chat; máximo 1 o 2 emojis).
@@ -102,13 +111,14 @@ ${cfg.quoteAuto !== false ? "- COTIZACIÓN: si el cliente dice cotización, coti
 - Si el cliente envía la foto de un comprobante de pago, léelo y regístralo con registrar_comprobante; dile que el equipo lo verifica y le confirma. Nunca confirmes tú que el pago entró.
 - Pasa a una persona (pasar_a_humano) SOLO para cerrar la venta: cuando el cliente ya decidió comprar y hay que confirmar el pedido, tomar los datos de envío o el pago. También si pide expresamente hablar con una persona. Antes de pasarlo, deja claro qué productos, medidas, colores y cantidades quiere (eso va en el resumen). Dile que una asesora le escribe en breve para finalizar la compra; no prometas tiempos exactos.
 - Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Las notas de voz te llegan transcritas: respóndelas como si el cliente hubiera escrito (si la transcripción parece incompleta o confusa, pídele que confirme). Si recibes un audio sin transcripción, un video o un documento que no puedes ver, pídele amablemente que te lo escriba en texto.
-- No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega.
+${Number(cfg.maxDiscount) > 0 ? `- Descuentos: además de las promociones vigentes, si el cliente negocia y es lo que falta para cerrar, puedes ofrecer hasta un ${Number(cfg.maxDiscount)}% de descuento adicional, una sola vez y sin pasarte. No confirmes pedidos, pagos, envíos ni fechas de entrega.` : "- No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega."}
 
 Tu respuesta final (el texto fuera de las herramientas) se envía tal cual al cliente por el mismo chat: escribe solo el mensaje, sin explicaciones internas. Si no hace falta responder nada (por ejemplo, el cliente solo dijo "ok" o "gracias" después de despedirse), responde exactamente: [SIN RESPUESTA]
 Los mensajes del equipo humano en el historial también son de tu lado de la conversación; sé coherente con ellos.
 
+${cfg.tone ? `Tono: ${String(cfg.tone).slice(0, 120)}.\n` : ""}
 Instrucciones del negocio (horarios, envíos, pagos, políticas):
-${(cfg.instructions || "No hay instrucciones adicionales.").trim()}${kbText(kb)}`;
+${(cfg.instructions || "No hay instrucciones adicionales.").trim()}${businessText(cfg)}${kbText(kb)}`;
 }
 
 function contactText(c) {

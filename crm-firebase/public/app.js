@@ -292,6 +292,7 @@ function startData() {
   w("aiStats", "aiStats");
   S.unsubs.push(fb.watchDoc("settings/lineaBase", d => { S.base = d || {}; if (S.view === "lineabase") scheduleRender(); }, () => { S.base = {}; }));
   if (isAdmin()) {
+    S.unsubs.push(fb.watchDoc("settings/voz", d => { S.voz = d || {}; if (S.view === "asesora") scheduleRender(); }, () => { S.voz = {}; }));
     S.unsubs.push(fb.watchDoc("settings/ads", d => { S.ads = d || {}; if (S.view === "anuncios") scheduleRender(); }, () => { S.ads = {}; }));
     S.unsubs.push(fb.watch("adSpend", l => { S.adSpend = Object.fromEntries(l.map(x => [x.id, x])); if (S.view === "anuncios") scheduleRender(); }, {}, () => { S.adSpend = {}; }));
   }
@@ -336,7 +337,7 @@ const NAV = [
   ["Catálogo", [["productos", "Productos"], ["promociones", "Promociones"], ["listas", "Precios mayoristas"], ["ventacruzada", "Venta cruzada"]]],
   ["Crecimiento", [["campanas", "Campañas"], ["segmentos", "Segmentos"], ["formularios", "Formularios"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"], ["plantillas", "Plantillas"]]],
   ["Análisis", [["metricas", "Métricas"], ["calificaciones", "Calificaciones"], ["lineabase", "Línea base"]]],
-  ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Configuración", [["equipo", "Equipo"], ["integraciones", "Integraciones"], ["automatizaciones", "Automatizaciones"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"], ["asesora", "Configuración"]]],
 ];
 function renderShell() {
   if (!S.me) return;
@@ -1212,54 +1213,125 @@ function openKb(id) {
   m.showModal();
 }
 function viewAsesora(el) {
-  const a = S.ai || {}, adm = isAdmin();
+  const a = S.ai || {}, adm = isAdmin(), dis = adm ? "" : "disabled";
+  const TABS = [["agente", "Agente"], ["politicas", "Políticas de la tienda"], ["sedes", "Sedes"], ["empresa", "Datos de la empresa"], ["comprobantes", "Comprobantes de pago"], ["voz", "Voz de la tienda"]];
+  const SECS = [["agente", "Tu agente"], ["atencion", "Atención y seguimiento"], ["pagos", "Pagos"], ["entrega", "Entrega"], ["descuentos", "Descuentos y margen"], ["permisos", "Permisos de contacto"], ["prueba", "Números de prueba"]];
+  const tab = S.cfgTab || "agente", sec = S.cfgSec || "agente";
+  const save = (patch, msg = "Guardado") => fb.set("settings/asesora", { ...patch, empresa: EMPRESA, ...stamp() }).then(() => toast(msg)).catch(er => toast("No se pudo guardar: " + errMsg(er)));
+  const card = (t, sub, body, btn = true) => `<form class="card cfg-card" id="cfgf"><h2>${t}</h2><p class="muted cfg-sub">${sub}</p>${body}${adm && btn ? '<div class="chrow" style="margin-top:16px"><button class="btn primary">Guardar</button></div>' : ""}${adm ? "" : '<p class="muted">Solo la administradora puede cambiar esta configuración.</p>'}</form>`;
+  const field = (id, label, help, input, top) => `<div class="cfg-f"><label class="lb" for="${id}">${label}</label>${help && top ? `<small class="muted">${help}</small>` : ""}${input}${help && !top ? `<small class="muted">${help}</small>` : ""}</div>`;
   const waiting = S.contacts.filter(c => c.aiHandoff).sort((x, y) => y.aiHandoff.at - x.aiHandoff.at);
-  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-  const today = S.contacts.filter(c => isAiName(c.lastOutboundBy) && (c.lastOutboundAt || 0) >= t0.getTime()).length;
-  const drafts = S.quotes.filter(q => q.aiCreated && q.status === "Borrador").length;
-  el.innerHTML = `<div class="page"><div class="page-head"><h1>Asesora virtual</h1><span class="spacer"></span>
-      <span class="pill ${a.enabled ? "green" : ""}">${a.enabled ? "Activa" : "Apagada"}</span></div>
-    ${anyChannel() ? "" : `<div class="card" style="margin-bottom:16px;padding:12px 16px"><b>Necesita al menos un canal conectado.</b><p class="muted" style="margin:6px 0 0">La asesora responde lo que llega por WhatsApp, Instagram, Messenger, Telegram o el chat web. Conéctalos en <a href="#canales">Canales</a>; puedes dejarla configurada desde ya.</p></div>`}
-    <div class="kpis" style="margin-bottom:16px;width:fit-content"><div><b>${today}</b>chats respondidos hoy</div><div><b>${waiting.length}</b>esperando a una persona</div><div><b>${drafts}</b>cotizaciones por revisar</div></div>
-    <form id="aif" class="card ai-form">
-      <label class="switch"><input type="checkbox" id="aen" ${a.enabled ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Responder automáticamente los mensajes de todos los canales, las 24 horas</span></label>
-      <div class="grid2">
-        <div><label class="lb" for="anm">Nombre de la asesora</label><input class="in" id="anm" value="${esc(a.name || "Sofía")}" ${adm ? "" : "disabled"}></div>
-        <div><label class="lb" for="aph">Se pausa en un chat cuando una persona escribe, durante (horas)</label><input class="in tabnum" id="aph" type="number" min="1" max="168" value="${a.pauseHours || 12}" ${adm ? "" : "disabled"}></div>
-        <div class="full"><label class="lb" for="amd">Modelo de IA</label><select class="in" id="amd" ${adm ? "" : "disabled"}>
-          ${[["haiku", "Haiku 5.5 · rápido y económico (recomendado) · ≈ US$0,001–0,003 por respuesta"], ["sonnet", "Sonnet 5.5 · más inteligente · ≈ US$0,02–0,05 por respuesta"], ["opus", "Opus 5.5 · el más inteligente · ≈ US$0,05–0,10 por respuesta"]]
-            .map(([k, l]) => `<option value="${k}" ${(a.model || "haiku") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-      </div>
-      <div><label class="lb" for="atn">Números de prueba (opcional)</label><input class="in" id="atn" value="${esc((a.testNumbers || []).join(", "))}" placeholder="300 111 2233, 310 444 5566" ${adm ? "" : "disabled"}>
-        <small class="muted">Mientras haya números aquí, ${esc(a.name || "Sofía")} solo responde a esos: sirve para probarla antes de soltarla con clientes. Déjalo vacío para que atienda a todos.</small></div>
-      <label class="switch"><input type="checkbox" id="aqa" ${a.quoteAuto !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Cuando el cliente pida cotización, enviársela de una vez en PDF por el chat (si lo apagas, queda en borrador para que el equipo la revise)</span></label>
-      <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Copiloto: analizar solas las conversaciones, sin dar clic (cada 10 minutos y al abrir un chat) (probabilidad de compra, siguiente paso y riesgo) · ≈ US$0,002 por análisis</span></label>
-      <div><label class="lb" for="ain">Lo que debe saber del negocio</label>
-        <textarea class="in" id="ain" rows="12" ${adm ? "" : "disabled"} placeholder="Ejemplo:&#10;- Horario de atención: lunes a sábado de 8 a.m. a 6 p.m.&#10;- Envíos a todo Colombia por Servientrega; en Medellín entrega en 1 a 2 días.&#10;- Pagos: transferencia Bancolombia o Nequi; pedidos por mayor con 50% de anticipo.&#10;- Medidas de sábanas: sencilla 1.00, semidoble 1.20, doble 1.40, queen 1.60, king 2.00.&#10;- Bordado de logo para hoteles desde 24 unidades.&#10;- No ofrecemos descuentos adicionales sin autorización.">${esc(a.instructions || "")}</textarea>
-        <small class="muted">Los precios los toma del Catálogo de Productos. Aquí escribe horarios, envíos, formas de pago, medidas, tiempos y políticas.</small></div>
-      <div class="card soft"><b>Qué hace sola</b><p class="muted" style="margin:4px 0 0">Todo lo de la venta: productos, precios, medidas, colores, fotos y catálogo por medida; promociones y descuentos vigentes; cotizaciones en PDF; negociación (ofrece las promociones y el precio por mayor, sin inventar descuentos); quejas y dudas (las anota en la ficha y agenda el seguimiento); llena la ficha y agenda seguimientos.</p>
-        <b style="display:block;margin-top:10px">Qué pasa a una persona</b><p class="muted" style="margin:4px 0 0">Solo el cierre de la venta (confirmar el pedido, datos de envío y pago) o si el cliente pide hablar con una persona. Esos chats aparecen de primeros en Hoy con lo que quiere comprar, y ella deja de responder ahí hasta que la reactives.</p></div>
-      ${adm ? '<div><button class="btn primary" type="submit">Guardar</button></div>' : '<p class="muted">Solo la administradora puede cambiar esta configuración.</p>'}
-    </form>
-    <h2 class="sec-t">Base de conocimiento <small class="muted">· lo que la asesora sabe de tu empresa</small></h2>
-    <div class="kb">${(S.knowledge || []).slice().sort((x, y) => String(x.title).localeCompare(String(y.title))).map(k => `<button class="kb-item ${k.on === false ? "off" : ""}" data-kb="${k.id}">
-        <b>${esc(k.title)}</b><span>${esc(String(k.content || "").slice(0, 140))}${String(k.content || "").length > 140 ? "…" : ""}</span><small class="muted">${String(k.content || "").length.toLocaleString("es-CO")} caracteres${k.on === false ? " · apagado" : ""}</small></button>`).join("")}
-      ${adm ? `<button class="kb-item add" id="kbNew"><b>+ Agregar artículo</b><span>Preguntas frecuentes, políticas de envío y garantía, cuidados de las sábanas, medidas, formas de pago… También puedes subir un archivo .txt.</span></button>` : ""}</div>
-    ${(S.knowledge || []).length ? "" : '<p class="muted" style="font-size:12.5px">Mientras más le enseñes, mejor responde. Si un tema no está aquí ni en el catálogo, la asesora pasa el chat a una persona.</p>'}
-    <h2 style="margin-top:24px">Esperando a una persona</h2>
-    <div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th>Motivo</th><th>Resumen</th><th>Hace</th></tr></thead><tbody>
-      ${waiting.map(c => `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.aiHandoff.reason || "")}</td><td>${esc(c.aiHandoff.summary || "")}</td><td>${ago(c.aiHandoff.at)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">Ninguno.</td></tr>'}</tbody></table></div></div>`;
+  let body = "", onSave = null;
+  if (tab === "agente") {
+    let panel = "";
+    if (sec === "agente") {
+      panel = card("Tu agente", "Define cómo se presenta y cómo atiende a tus clientes.",
+        `<label class="switch" style="margin-bottom:14px"><input type="checkbox" id="aen" ${a.enabled ? "checked" : ""} ${dis}> <span>Responder automáticamente los mensajes de todos los canales, las 24 horas</span></label>
+        ${field("anm", "Nombre del agente", "Cómo se presenta en WhatsApp.", `<input class="in" id="anm" value="${esc(a.name || "Sofía")}" ${dis}>`)}
+        ${field("aton", "Tono", "", `<input class="in" id="aton" value="${esc(a.tone || "cercano, amigable")}" placeholder="cercano, amigable" ${dis}>`)}
+        ${field("ain", "Instrucciones para atender", "Lo que el agente tiene que saber de tu negocio para atender como lo harías tú. Lo lee completo en cada conversación. Escribe un tema por párrafo, con una línea en blanco entre uno y otro.",
+          `<textarea class="in cfg-big" id="ain" rows="14" ${dis} placeholder="Cómo se vende en Casa Dorada: primero entiendo qué necesita la persona…">${esc(a.instructions || "")}</textarea>`, true)}
+        ${field("amd", "Modelo de IA", "", `<select class="in" id="amd" ${dis}>${[["haiku", "Haiku 5.5 · rápido y económico (recomendado)"], ["sonnet", "Sonnet 5.5 · más inteligente"], ["opus", "Opus 5.5 · el más inteligente"]].map(([k, l]) => `<option value="${k}" ${(a.model || "haiku") === k ? "selected" : ""}>${l}</option>`).join("")}</select>`)}`);
+      onSave = () => save({ enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", tone: $("#aton").value.trim(), instructions: $("#ain").value.trim(), model: $("#amd").value });
+    } else if (sec === "atencion") {
+      panel = card("Atención y seguimiento", "Cuándo responde el agente, cuándo se aparta y qué hace solo.",
+        `${field("aph", "Se pausa en un chat cuando una persona del equipo escribe, durante (horas)", "", `<input class="in tabnum" id="aph" type="number" min="1" max="168" value="${a.pauseHours || 12}" ${dis} style="max-width:140px">`)}
+        <label class="switch"><input type="checkbox" id="aqa" ${a.quoteAuto !== false ? "checked" : ""} ${dis}> <span>Cuando el cliente pida cotización, enviársela de una vez en PDF por el chat</span></label>
+        <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${dis}> <span>Copiloto: analizar solas las conversaciones (probabilidad de compra, siguiente paso, lo que piden y no hay)</span></label>
+        <div class="card soft" style="margin-top:12px"><b>Qué pasa a una persona</b><p class="muted" style="margin:4px 0 0">Solo el cierre de la venta (confirmar el pedido, datos de envío y pago) o si el cliente pide hablar con una persona. Todo lo demás lo resuelve el agente.</p></div>
+        <h3 style="margin:18px 0 8px">Esperando a una persona <span class="pill">${waiting.length}</span></h3>
+        ${waiting.length ? `<div class="table-wrap"><table class="t"><tbody>${waiting.map(c => `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.aiHandoff.reason || "")}</td><td class="muted">${esc(c.aiHandoff.summary || "")}</td><td>${ago(c.aiHandoff.at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nadie esperando.</p>'}`);
+      onSave = () => save({ pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), quoteAuto: $("#aqa").checked, autoAnalisis: $("#aan").checked });
+    } else if (sec === "pagos") {
+      panel = card("Pagos", "Cómo te pagan los clientes. El agente lo dice tal cual cuando preguntan cómo pagar, y cuando le mandan un comprobante te avisa para que lo verifiques.",
+        field("apay", "Formas de pago", "Cuentas, Nequi, Daviplata, contra entrega, anticipo para pedidos por mayor…", `<textarea class="in cfg-big" id="apay" rows="8" ${dis} placeholder="Transferencia Bancolombia cuenta de ahorros 000-000000-00 a nombre de Casa Dorada S.A.S.&#10;Nequi 300 000 0000&#10;Contra entrega en Medellín y área metropolitana&#10;Pedidos por mayor: 50% de anticipo y 50% antes del despacho">${esc(a.payments || "")}</textarea>`));
+      onSave = () => save({ payments: $("#apay").value.trim() });
+    } else if (sec === "entrega") {
+      panel = card("Entrega", "Envíos, cobertura, tiempos y costos. El agente lo usa para responder, sin prometer fechas exactas.",
+        field("adel", "Entrega y envíos", "", `<textarea class="in cfg-big" id="adel" rows="8" ${dis} placeholder="Envíos a todo Colombia con Servientrega e Interrapidísimo.&#10;Medellín: 1 a 2 días hábiles. Otras ciudades: 2 a 5 días hábiles.&#10;Envío gratis desde $200.000.">${esc(a.delivery || "")}</textarea>`));
+      onSave = () => save({ delivery: $("#adel").value.trim() });
+    } else if (sec === "descuentos") {
+      panel = card("Descuentos y margen", "Cuánto puede negociar el agente y el margen de tus ventas (para saber si la pauta da plata).",
+        `${field("amax", "Descuento máximo que el agente puede dar al negociar (%)", "0 = solo ofrece las promociones vigentes y el precio por mayor. Si pones, por ejemplo, 5, puede dar hasta 5% extra una vez para cerrar la venta.", `<input class="in tabnum" id="amax" type="number" min="0" max="30" value="${Number(a.maxDiscount) || 0}" ${dis} style="max-width:140px">`)}
+        ${field("amar", "Margen de tus ventas (%)", "Lo que te queda de cada venta después del costo del producto. Se usa en Anuncios para decir si la pauta gana o pierde plata.", `<input class="in tabnum" id="amar" type="number" min="1" max="95" value="${Number((S.ads || {}).margin) || 25}" ${dis} style="max-width:140px">`)}
+        <p class="muted">Las promociones y los códigos se manejan en <a href="#promociones">Promociones</a>; los precios por volumen en <a href="#listas">Precios mayoristas</a>.</p>`);
+      onSave = async () => { await fb.set("settings/ads", { margin: Math.max(1, Math.min(95, Number($("#amar").value) || 25)) }); return save({ maxDiscount: Math.max(0, Math.min(30, Number($("#amax").value) || 0)) }); };
+    } else if (sec === "permisos") {
+      const out = S.contacts.filter(c => c.optOut);
+      panel = card("Permisos de contacto", "A quién se le puede escribir con difusiones y recordatorios automáticos.",
+        `<ul class="cfg-list"><li>Si un cliente escribe <b>SALIR</b>, <b>STOP</b>, "no me escriban más" o "darme de baja", queda marcado y no le llegan más difusiones ni recordatorios. En su ficha aparece el aviso.</li>
+          <li>Las difusiones salen goteadas (un mensaje cada 45 a 90 segundos, de 8 a. m. a 8 p. m.) y nadie recibe dos plantillas de difusión en menos de 3 días.</li>
+          <li>Los recordatorios de carritos solo van a quien dio permiso, salvo que lo cambies en <a href="#carritos">Carritos</a>.</li></ul>
+        <h3 style="margin:16px 0 8px">Pidieron no recibir mensajes <span class="pill">${out.length}</span></h3>
+        ${out.length ? `<div class="table-wrap"><table class="t"><tbody>${out.slice(0, 100).map(c => `<tr><td><b>${esc(contactName(c))}</b></td><td class="muted">${c.optOutAt ? fmtDT(c.optOutAt) : ""}</td><td class="num">${adm ? `<button class="link" type="button" data-optin="${c.id}">Volver a permitir</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nadie por ahora.</p>'}`, false);
+    } else if (sec === "prueba") {
+      panel = card("Números de prueba", "Mientras haya números aquí, el agente solo responde a esos. Sirve para probar cambios antes de soltarlo con los clientes.",
+        field("atn", "Números", "Sepáralos con coma. Déjalo vacío para que atienda a todos.", `<input class="in" id="atn" value="${esc((a.testNumbers || []).join(", "))}" placeholder="300 111 2233, 310 444 5566" ${dis}>`)
+        + ((a.testNumbers || []).length ? `<div class="banner warn">Modo de prueba: ${esc(a.name || "Sofía")} solo responde a ${(a.testNumbers || []).length} ${(a.testNumbers || []).length === 1 ? "número" : "números"}.</div>` : ""));
+      onSave = () => save({ testNumbers: $("#atn").value.split(/[,;\n]/).map(x => x.replace(/\D/g, "")).filter(x => x.length >= 7) });
+    }
+    body = `<div class="cfg-layout"><nav class="cfg-side">${SECS.map(([k, t]) => `<button type="button" class="${k === sec ? "on" : ""}" data-sec="${k}">${t}</button>`).join("")}</nav><div>${panel}</div></div>`;
+  } else if (tab === "politicas") {
+    body = `<div class="card cfg-card"><h2>Políticas de la tienda</h2><p class="muted cfg-sub">Garantías, cambios y devoluciones, cuidados de los productos, preguntas frecuentes… El agente las busca cuando un cliente pregunta. También puedes subir un archivo .txt.</p>
+      <div class="kb">${(S.knowledge || []).slice().sort((x, y) => String(x.title).localeCompare(String(y.title))).map(k => `<button class="kb-item ${k.on === false ? "off" : ""}" data-kb="${k.id}"><b>${esc(k.title)}</b><span>${esc(String(k.content || "").slice(0, 140))}${String(k.content || "").length > 140 ? "…" : ""}</span><small class="muted">${String(k.content || "").length.toLocaleString("es-CO")} caracteres${k.on === false ? " · apagado" : ""}</small></button>`).join("")}
+        ${adm ? '<button class="kb-item add" id="kbNew"><b>+ Agregar política</b><span>Cambios y devoluciones, garantía, cuidados de las sábanas, medidas…</span></button>' : ""}</div></div>`;
+  } else if (tab === "sedes") {
+    const sedes = a.sedes || [];
+    body = `<form class="card cfg-card" id="cfgf"><h2>Sedes</h2><p class="muted cfg-sub">Tus tiendas, bodegas o puntos de entrega. El agente las da cuando preguntan dónde están o si pueden recoger.</p>
+      <div id="sedesL" style="display:grid;gap:10px">${(sedes.length ? sedes : [{}]).map((x, i) => `<div class="card soft sede" data-i="${i}"><div class="grid2">
+        <div><label class="lb">Nombre</label><input class="in" data-k="name" value="${esc(x.name || "")}" placeholder="Tienda principal" ${dis}></div><div><label class="lb">Ciudad</label><input class="in" data-k="city" value="${esc(x.city || "")}" placeholder="Medellín" ${dis}></div>
+        <div class="full"><label class="lb">Dirección</label><input class="in" data-k="address" value="${esc(x.address || "")}" placeholder="Calle 10 # 40-20, local 105" ${dis}></div>
+        <div><label class="lb">Horario</label><input class="in" data-k="hours" value="${esc(x.hours || "")}" placeholder="Lun a sáb 9 a. m. a 6 p. m." ${dis}></div><div><label class="lb">Teléfono</label><input class="in" data-k="phone" value="${esc(x.phone || "")}" ${dis}></div>
+        <div class="full"><label class="lb">Enlace de Google Maps (opcional)</label><input class="in" data-k="map" value="${esc(x.map || "")}" placeholder="https://maps.app.goo.gl/…" ${dis}></div></div>
+        ${adm ? '<button class="link danger" type="button" data-rmsede>Quitar sede</button>' : ""}</div>`).join("")}</div>
+      ${adm ? '<div class="chrow" style="margin-top:12px"><button class="btn" type="button" id="addSede">+ Agregar sede</button><span class="spacer"></span><button class="btn primary">Guardar</button></div>' : ""}</form>`;
+    onSave = () => save({ sedes: $$(".sede", el).map(d => Object.fromEntries($$("[data-k]", d).map(i => [i.dataset.k, i.value.trim().slice(0, 200)]))).filter(x => x.name) });
+  } else if (tab === "empresa") {
+    const d = S.qbrand || {};
+    if (!S.qbrandLoaded) { S.qbrandLoaded = true; fb.get("settings/cotizacion").then(x => { S.qbrand = x || {}; if (S.view === "asesora" && S.cfgTab === "empresa") renderShell(); }).catch(() => {}); }
+    const f = (k, l, ph = "", full) => `<div class="${full ? "full" : ""}"><label class="lb" for="qb_${k}">${l}</label><input class="in" id="qb_${k}" value="${esc(d[k] || "")}" placeholder="${esc(ph)}" ${dis}></div>`;
+    body = `<form class="card cfg-card" id="cfgf"><h2>Datos de la empresa</h2><p class="muted cfg-sub">Salen en el encabezado y el pie de las cotizaciones en PDF, y el agente los usa cuando se los piden.</p>
+      <div class="grid2">${f("nombre", "Nombre de la empresa", EMPRESA)}${f("lema", "Lema", "Textiles para el hogar y la hotelería")}${f("nit", "NIT", "901.234.567-8")}${f("telefono", "Teléfono", "+57 300 000 0000")}
+        ${f("correo", "Correo", "ventas@casadorada.co")}${f("web", "Sitio web", "casadorada.co")}${f("direccion", "Dirección", "Medellín, Colombia", true)}
+        <div class="full"><label class="lb" for="qb_condiciones">Condiciones de las cotizaciones (opcional)</label><textarea class="in" id="qb_condiciones" rows="4" ${dis}>${esc(d.condiciones || "")}</textarea></div></div>
+      ${adm ? '<div class="chrow" style="margin-top:16px"><button class="btn primary">Guardar</button></div>' : ""}</form>`;
+    onSave = async () => { const data = Object.fromEntries(["nombre", "lema", "nit", "telefono", "correo", "web", "direccion", "condiciones"].map(k => [k, $("#qb_" + k).value.trim().slice(0, k === "condiciones" ? 1500 : 160)]));
+      await fb.set("settings/cotizacion", { ...data, ...stamp() }); S.qbrand = data; toast("Guardado: las cotizaciones salen con estos datos"); };
+  } else if (tab === "comprobantes") {
+    const all = S.contacts.filter(c => c.paymentProof).sort((x, y) => y.paymentProof.at - x.paymentProof.at);
+    body = `<div class="card cfg-card"><h2>Comprobantes de pago</h2><p class="muted cfg-sub">Cuando un cliente manda la foto de su pago, el agente lee el valor, el banco y la referencia, le dice que lo verifican y te avisa. Aquí confirmas si la plata entró.</p>
+      ${proofsBlock() || '<p class="muted">No hay comprobantes por revisar.</p>'}
+      <h3 style="margin:16px 0 8px">Revisados</h3>${all.filter(c => c.paymentProof.status !== "por revisar").length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th class="num">Valor</th><th>Banco</th><th>Estado</th><th>Revisó</th></tr></thead><tbody>${all.filter(c => c.paymentProof.status !== "por revisar").slice(0, 80).map(c => { const p = c.paymentProof; return `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td class="num tabnum">${p.monto ? money(p.monto) : "—"}</td><td>${esc(p.banco || "")}</td><td><span class="pill ${p.status === "confirmado" ? "green" : "red"}">${esc(p.status)}</span></td><td class="muted">${esc(p.reviewedBy || "")} ${p.reviewedAt ? ago(p.reviewedAt) : ""}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Todavía no hay comprobantes revisados.</p>'}</div>`;
+  } else if (tab === "voz") {
+    const v = S.voz || {};
+    body = `<div class="card cfg-card"><h2>Voz de la tienda</h2><p class="muted cfg-sub">Conecta ElevenLabs para que el agente tenga una voz propia y natural, como una asesora real.</p>
+      ${v.on ? `<div class="grid2"><div><label class="lb" for="vzv">Voz</label><select class="in" id="vzv" ${dis}>${(v.voices || []).map(x => `<option value="${esc(x.id)}" ${x.id === v.voiceId ? "selected" : ""}>${esc(x.name)}${x.lang ? " · " + esc(x.lang) : ""}</option>`).join("")}</select></div>
+          <div class="full"><label class="lb" for="vzt">Texto de prueba</label><input class="in" id="vzt" value="¡Hola! Soy ${esc(a.name || "Sofía")}, de ${esc(EMPRESA)}. ¿En qué te puedo ayudar hoy?"></div></div>
+        <div class="chrow" style="margin-top:12px"><button class="btn" type="button" id="vzTry">▶ Escuchar</button>${adm ? '<button class="btn primary" type="button" id="vzSave">Guardar voz</button><span class="spacer"></span><button class="link" type="button" id="vzOff">Desconectar</button>' : ""}</div><audio id="vzAudio" controls hidden style="margin-top:10px;width:100%"></audio>
+        <p class="muted" style="margin-top:12px">Las respuestas con nota de voz a los clientes se activan en el siguiente paso.</p>`
+      : adm ? `<form id="vzF" class="grid2"><div class="full"><label class="lb" for="vzk">Clave de API de ElevenLabs</label><input class="in" id="vzk" type="password" autocomplete="off" placeholder="sk_…"></div>
+          <div class="full chrow"><button class="btn primary">Conectar</button></div></form><p class="muted" style="font-size:12.5px">La clave se guarda en el servidor y nadie del equipo la puede ver. La sacas en elevenlabs.io › tu perfil › API Keys.</p>` : '<p class="muted">Pídele a la administradora que la conecte.</p>'}</div>`;
+  }
+  el.innerHTML = `<div class="page" style="max-width:1150px"><div class="page-head"><h1>Configuración</h1><span class="spacer"></span><span class="pill ${a.enabled ? "green" : ""}">${esc(a.name || "Sofía")}: ${a.enabled ? "activa" : "apagada"}</span></div>
+    <div class="cfg-tabs" role="tablist">${TABS.map(([k, t]) => `<button role="tab" class="${k === tab ? "on" : ""}" data-tab="${k}">${t}</button>`).join("")}</div>
+    <p class="muted" style="margin:12px 0 16px">Gestiona tus conexiones en <a href="#integraciones">Integraciones</a>.</p>${body}</div>`;
+  $$("[data-tab]", el).forEach(b => b.onclick = () => { S.cfgTab = b.dataset.tab; renderShell(); });
+  $$("[data-sec]", el).forEach(b => b.onclick = () => { S.cfgSec = b.dataset.sec; renderShell(); });
   $$("[data-c]", el).forEach(tr => tr.onclick = () => go("conv", tr.dataset.c));
   $$("[data-kb]", el).forEach(b => b.onclick = () => openKb(b.dataset.kb));
   if ($("#kbNew")) $("#kbNew").onclick = () => openKb(null);
-  $("#aif").onsubmit = async e => {
-    e.preventDefault(); if (!adm) return;
-    try {
-      await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), model: $("#amd").value, autoAnalisis: $("#aan").checked, quoteAuto: $("#aqa").checked,
-        instructions: $("#ain").value.trim(), empresa: EMPRESA, testNumbers: $("#atn").value.split(/[,;\n]/).map(x => x.replace(/\D/g, "")).filter(x => x.length >= 7), ...stamp() });
-      toast("Guardado");
-    } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
-  };
+  if ($("#cfgf") && onSave) $("#cfgf").onsubmit = async e => { e.preventDefault(); if (adm) { try { await onSave(); } catch (er) { toast(errMsg(er)); } } };
+  $$("[data-optin]", el).forEach(b => b.onclick = () => fb.update("contacts/" + b.dataset.optin, { optOut: false, ...stamp() }).then(() => toast("Puede volver a recibir mensajes")));
+  if ($("#addSede")) $("#addSede").onclick = () => { const cur = $$(".sede", el).map(d => Object.fromEntries($$("[data-k]", d).map(i => [i.dataset.k, i.value]))); S.ai = { ...a, sedes: [...cur, {}] }; renderShell(); };
+  $$("[data-rmsede]", el).forEach(b => b.onclick = () => { const i = +b.closest(".sede").dataset.i, cur = $$(".sede", el).map(d => Object.fromEntries($$("[data-k]", d).map(x => [x.dataset.k, x.value]))); cur.splice(i, 1); S.ai = { ...a, sedes: cur }; renderShell(); });
+  bindProofs(el);
+  if ($("#vzF")) $("#vzF").onsubmit = async e => { e.preventDefault(); const b = $("#vzF button"); b.disabled = true; b.textContent = "Conectando…";
+    try { const r = await fb.call("voz", { action: "conectar", apiKey: $("#vzk").value.trim() }); toast(`ElevenLabs conectado: ${r.voices} voces`); } catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Conectar"; } };
+  if ($("#vzTry")) $("#vzTry").onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Generando…";
+    try { const r = await fb.call("voz", { action: "probar", voiceId: $("#vzv").value, text: $("#vzt").value }); const au = $("#vzAudio"); au.src = "data:audio/mpeg;base64," + r.audio; au.hidden = false; au.play().catch(() => {}); }
+    catch (er) { toast(errMsg(er)); } finally { b.disabled = false; b.textContent = "▶ Escuchar"; } };
+  if ($("#vzSave")) $("#vzSave").onclick = () => fb.set("settings/voz", { voiceId: $("#vzv").value }).then(() => toast("Voz guardada"));
+  if ($("#vzOff")) $("#vzOff").onclick = async () => { if (await ask("¿Desconectar ElevenLabs?", "Desconectar")) await fb.call("voz", { action: "desconectar" }); };
 }
 
 // ======================= Plantillas de mensaje =======================
