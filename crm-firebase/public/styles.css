@@ -1260,3 +1260,8 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 /* Listas de precios */
 .lrule{padding:12px 14px}.lr-t{flex-wrap:nowrap;margin:4px 0}.lr-t .in{flex:0 0 130px;width:130px}.lr-t .lt-min{flex-basis:80px;width:80px}
 @media (max-width:560px){.lr-t{flex-wrap:wrap}}
+/* Pauta, segmentos */
+.verdict{border-radius:10px;padding:12px 14px;border:1px solid var(--line)}.verdict.red{background:var(--red-soft,#fbe5e2);color:var(--red,#b3261e)}.verdict.green{background:var(--green-soft,#e3f2ea)}.verdict.amber{background:var(--amber-soft,#fdf0d9)}
+.verdict .in{width:90px}.todo-c{display:flex;gap:12px;padding:12px 16px;align-items:flex-start}.todo-n{width:26px;height:26px;border-radius:50%;background:var(--soft);display:grid;place-items:center;font-weight:600;flex:none}
+.seg-c{display:flex;gap:14px;align-items:center;padding:14px 16px;cursor:pointer;flex-wrap:wrap}.seg-n{text-align:right;display:grid}.seg-n b{font-size:22px}.seg-count{margin:12px 0 0;padding:10px 12px;background:var(--soft);border-radius:10px}
+.verdict .chrow .in{flex:0 0 90px;width:90px}

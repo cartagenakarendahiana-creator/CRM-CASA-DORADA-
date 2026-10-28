@@ -5,6 +5,7 @@
 // Campañas en campaigns/{id}: { name, filter, text, template, status, counts } y campaigns/{id}/recipients/{contactId}
 const DAY = 24 * 3600 * 1000;
 const BY = "Automatización";
+const SEG = require("./segmentos");
 
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 const isoDay = ms => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
@@ -124,7 +125,13 @@ module.exports = function automatizaciones({ db, admin, send, waQrOn = async () 
     if (camp.status === "enviando" || camp.status === "enviada") throw new Error("Esta campaña ya se envió.");
     await cref.set({ status: "enviando", startedAt: Date.now(), startedBy: by }, { merge: true });
     const empresa = await empresaOf();
-    const all = (await db.collection("contacts").get()).docs.map(d => ({ id: d.id, ref: db.doc("contacts/" + d.id), ...d.data() })).filter(c => matches(c, camp.filter));
+    let all = (await db.collection("contacts").get()).docs.map(d => ({ id: d.id, ref: db.doc("contacts/" + d.id), ...d.data() })).filter(c => matches(c, camp.filter));
+    if (camp.filter && camp.filter.segmentId) { // difusión a un segmento (manual o dinámico)
+      const seg = (await db.doc("segments/" + camp.filter.segmentId).get()).data();
+      if (!seg) throw new Error("El segmento de esta campaña ya no existe.");
+      const stats = SEG.orderStats((await db.collection("orders").get()).docs.map(d => d.data()));
+      all = all.filter(c => SEG.inSegment(c, seg, stats));
+    }
     const counts = { total: all.length, sent: 0, failed: 0, skipped: 0 };
     const waQr = await waQrOn();
     for (const c of all) {
