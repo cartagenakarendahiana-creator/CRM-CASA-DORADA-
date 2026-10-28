@@ -308,6 +308,11 @@ exports.asesoraVirtual = onDocumentCreated({ document: "contacts/{cid}/messages/
   if ((m.channel || "whatsapp") === "whatsapp" && !WA_PHONE_ID.value() && !m.line && m.via !== "qr") return;
   const result = await asesora.handleInbound({ db, admin, cid: event.params.cid, mid: event.params.mid, apiKey: ANTHROPIC_API_KEY.value(), loadMedia: p => MEDIA.read(p),
     quoteLink, discountCard, catalogLink,
+    // Comprobante de pago: aviso a las administradoras y al responsable del contacto
+    notify: async (cid, contact, proof) => {
+      const team = (await db.collection("users").get()).docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.active !== false && (u.role === "admin" || u.name === contact.owner));
+      return PUSH.sendTo(team.map(u => u.uid), { title: "💳 Comprobante por revisar", body: `${contact.name || contact.phone || "Cliente"}${proof.monto ? " · $" + proof.monto.toLocaleString("es-CO") : ""}${proof.banco ? " · " + proof.banco : ""}`, tag: "pago_" + cid, url: "/#conv/" + cid });
+    },
     send: ({ cref, contact, text, byName, image, document }) => CH.deliver({ cref, contact, text, image, document, channel: m.channel || contact.lastChannel,
       msg: { by: "asesora", byName, ai: true }, sendWhatsApp: waText(contact) }) });
   console.log("asesora", event.params.cid, result);
@@ -498,6 +503,13 @@ exports.notificaciones = onCall({ region: REGION, invoker: "public" }, async req
 });
 exports.notificarMensaje = onDocumentCreated({ document: "contacts/{cid}/messages/{mid}", region: REGION }, async event => {
   const m = event.data && event.data.data();
+  // Primera respuesta al cliente (para el tiempo de primera respuesta en Métricas)
+  if (m && m.dir === "out" && m.ts) {
+    const cref = db.doc("contacts/" + event.params.cid), c = (await cref.get()).data();
+    if (c && !c.firstReplyAt && c.lastInboundAt && m.ts >= (c.firstInboundAt || c.createdAt || c.lastInboundAt))
+      await cref.set({ firstReplyAt: m.ts, firstReplySecs: Math.max(0, Math.round((m.ts - (c.firstInboundAt || c.createdAt || c.lastInboundAt)) / 1000)) }, { merge: true });
+    return;
+  }
   if (!m || m.dir !== "in") return;
   console.log("push", event.params.cid, await PUSH.onInbound(event.params.cid, m));
 });
@@ -672,12 +684,17 @@ exports.autoSinRespuesta = onSchedule({ schedule: "every 60 minutes", timeZone: 
   if (WA_PHONE_ID.value()) await waCheck().catch(e => console.error("revisión de WhatsApp", e)); // revisión automática cada hora
   if (WA_WABA_ID.value()) await plantillasWA().sync().catch(e => console.error("plantillas de WhatsApp", e)); // estado de aprobación de las plantillas
 });
+// Difusiones goteadas: cada minuto se envía el siguiente mensaje de cada difusión en curso (ver automatizaciones.js)
+exports.goteoDifusiones = onSchedule({ schedule: "every 1 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 120 }, async () => {
+  const r = await AUTO.dripTick(); if (r.length) console.log("difusiones", r);
+});
+exports._dripTick = now => AUTO.dripTick(now); // para pruebas
 exports.runCampaign = onCall({ ...AUTO_OPTS, invoker: "public", timeoutSeconds: 540, memory: "512MiB" }, async req => {
   const me = await requireMember(req);
   if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora puede enviar campañas.");
   const id = String((req.data || {}).id || "");
   if (!id) throw new HttpsError("invalid-argument", "Falta la campaña.");
-  try { return await AUTO.runCampaign(id, me.name || ""); }
+  try { const a = (req.data || {}).action; return a === "pausar" || a === "reanudar" ? await AUTO.pauseCampaign(id, a === "pausar", me.name || "") : await AUTO.runCampaign(id, me.name || ""); }
   catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
 

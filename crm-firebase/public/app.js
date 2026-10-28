@@ -75,6 +75,8 @@ const ICONS = {
   carritos: '<path d="M3 4h2l2.4 11h10.2L20 8H6.2"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   cartera: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>',
   oportunidades: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  calificaciones: '<path d="M7 11v9H4v-9zM7 11l4-8a2.5 2.5 0 0 1 2.5 2.5V9h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 17.5 20H7"/>',
+  lineabase: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
   segmentos: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.4 3-5.4 6-5.4s5.4 2 6 5.4"/><path d="M16 4.6a3 3 0 0 1 0 6.2M21 20c-.4-2.6-1.8-4.3-3.8-5"/>',
   listas: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   ventacruzada: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
@@ -237,7 +239,7 @@ function fixOwners(list) {
 // Responsables que puede elegir la persona: la administradora, cualquiera del equipo; un asesor, solo él mismo
 const ownerOptions = () => (isAdmin() ? S.team.filter(u => u.active !== false).map(u => u.name) : [S.me.name]);
 // Lo que un asesor no ve: configuración, difusiones, promociones, formularios, anuncios, importar y exportar
-const ADMIN_ONLY = new Set(["segmentos", "listas", "ventacruzada", "carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
+const ADMIN_ONLY = new Set(["lineabase", "segmentos", "listas", "ventacruzada", "carritos", "campanas", "promociones", "formularios", "anuncios", "captacion", "integraciones", "canales", "conectores", "apps", "asesora", "automatizaciones", "plantillas", "equipo", "importar", "exportar"]);
 const canView = k => isAdmin() || !ADMIN_ONLY.has(k);
 function startData() {
   const w = (name, path, opts) => S.unsubs.push(fb.watch(path, list => { S[name] = list; S.loaded[name] = true; S.syncedAt = Date.now(); scheduleRender(); }, opts,
@@ -266,6 +268,9 @@ function startData() {
   w("promos", "promos");
   w("priceLists", "priceLists");
   w("segments", "segments");
+  w("ratings", "ratings", { orderBy: ["at", "desc"], limit: 600 });
+  w("aiStats", "aiStats");
+  S.unsubs.push(fb.watchDoc("settings/lineaBase", d => { S.base = d || {}; if (S.view === "lineabase") scheduleRender(); }, () => { S.base = {}; }));
   if (isAdmin()) {
     S.unsubs.push(fb.watchDoc("settings/ads", d => { S.ads = d || {}; if (S.view === "anuncios") scheduleRender(); }, () => { S.ads = {}; }));
     S.unsubs.push(fb.watch("adSpend", l => { S.adSpend = Object.fromEntries(l.map(x => [x.id, x])); if (S.view === "anuncios") scheduleRender(); }, {}, () => { S.adSpend = {}; }));
@@ -307,7 +312,7 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["segmentos", "Segmentos"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["segmentos", "Segmentos"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"], ["calificaciones", "Calificaciones"], ["lineabase", "Línea base"]]],
   ["Catálogo", [["productos", "Productos"], ["promociones", "Promociones"], ["listas", "Precios mayoristas"], ["ventacruzada", "Venta cruzada"]]],
   ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
@@ -349,7 +354,7 @@ function renderShell() {
   $("#menuBtn").onclick = () => $("#side").classList.toggle("open");
   $("#gsearch").oninput = e => { S.search = e.target.value; if (S.view !== "contactos") go("contactos"); else renderShell(); };
   const views = { hoy: viewHoy, conv: viewConv, embudo: viewEmbudo, contactos: viewContactos, cotizaciones: viewCotizaciones,
-    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, listas: viewListas, segmentos: viewSegmentos, ventacruzada: viewVentaCruzada, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
+    pedidos: viewPedidos, agenda: viewAgenda, reposicion: viewReposicion, metricas: viewMetricas, anuncios: viewAnuncios, captacion: viewCaptacion, carritos: viewCarritos, listas: viewListas, segmentos: viewSegmentos, calificaciones: viewCalificaciones, lineabase: viewLineaBase, ventacruzada: viewVentaCruzada, cartera: viewCartera, oportunidades: viewOportunidades, exportar: viewExportar, productos: viewProductos, plantillas: viewPlantillas, asesora: viewAsesora, canales: viewCanales, integraciones: viewIntegraciones, conectores: viewConectores, apps: viewApps, formularios: viewFormularios, automatizaciones: viewAutomatizaciones, campanas: viewCampanas, promociones: viewPromociones, equipo: viewEquipo, importar: viewImportar };
   (views[S.view] || viewHoy)($("#view"));
   hydrateMedia($("#view")); // fotos y audios de los clientes (Hoy, Conversaciones)
   $(".view").scrollTop = keepScroll;
@@ -637,7 +642,7 @@ const reachHtml = r => `<b>${r.total}</b> contactos · <span class="ok">${r.now}
   <div class="reach-ch">${Object.entries(r.byCh).map(([k, n]) => `${chIcon(k)} ${n}`).join(" ")}</div>`;
 function viewCampanas(el) {
   const adm = isAdmin(), list = S.campaigns || [];
-  const st = s => ({ borrador: '<span class="pill">Borrador</span>', enviando: '<span class="pill amber">Enviando…</span>', enviada: '<span class="pill green">Enviada</span>' }[s] || "");
+  const st = s => ({ borrador: '<span class="pill">Borrador</span>', enviando: '<span class="pill amber">Enviando de a poco…</span>', pausada: '<span class="pill red">Pausada</span>', enviada: '<span class="pill green">Enviada</span>' }[s] || "");
   el.innerHTML = `<div class="page"><div class="page-head"><h1>Campañas</h1><span class="sub">Mensajes a un grupo de clientes, con resultados.</span><span class="spacer"></span>
       ${adm ? '<button class="btn primary" id="newCamp">+ Nueva campaña</button>' : ""}</div>
     ${list.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Campaña</th><th>Estado</th><th>Fecha</th><th class="num">Destinatarios</th><th class="num">Enviados</th><th class="num">Respondieron</th><th class="num">Omitidos / fallidos</th></tr></thead><tbody>
@@ -673,11 +678,12 @@ function openCampaign(id, preset) {
           <div style="margin-top:10px"><label class="lb" for="cptpl">Plantilla de WhatsApp para quienes tienen la ventana cerrada</label>
           <select class="in" id="cptpl" ${locked ? "disabled" : ""}><option value="">No enviar a quienes tienen la ventana cerrada</option>${waTpls.map(t => `<option value="${t.id}" ${cp.template && cp.template.name === t.waName ? "selected" : ""}>${esc(t.name)} (${esc(t.waName)})</option>`).join("")}</select>
           ${waTpls.length ? "" : '<small class="muted">No tienes plantillas con "Nombre en Meta". Configúralas en Plantillas.</small>'}</div></fieldset>
+        ${["enviando", "pausada"].includes(cp.status) ? `<div class="banner ${cp.status === "pausada" ? "warn" : ""}" style="${cp.status === "enviando" ? "background:var(--soft)" : ""}">${cp.status === "pausada" ? "⏸ " + esc(cp.pausedReason || "Pausada") : `Enviando de a poco: ${((cp.counts || {}).sent || 0) + ((cp.counts || {}).skipped || 0) + ((cp.counts || {}).failed || 0)} de ${(cp.counts || {}).total || 0}. Solo de 8 a. m. a 8 p. m., un mensaje cada 45 a 90 segundos.`}</div>` : ""}
         ${locked ? `<fieldset class="fs"><legend>Resultados</legend><div class="camp-k">${(() => { const s = campStats(cp); return `<div><b>${s.sent || 0}</b>enviados</div><div><b>${s.replied}</b>respondieron</div><div><b>${s.skipped || 0}</b>omitidos</div><div><b>${s.failed || 0}</b>fallidos</div>`; })()}</div>
           <div class="table-wrap" style="max-height:260px;margin-top:10px"><table class="t"><thead><tr><th>Contacto</th><th>Canal</th><th>Estado</th><th>Detalle</th></tr></thead><tbody id="cprec"><tr><td colspan="4" class="muted">Cargando…</td></tr></tbody></table></div></fieldset>` : ""}
       </div>
       <div class="mf">${id && !locked && adm ? '<button class="btn danger" type="button" id="cpdel">Eliminar</button><span class="spacer"></span>' : ""}
-        <button class="btn" type="button" id="cpc">Cerrar</button>
+        <button class="btn" type="button" id="cpc">Cerrar</button>${adm && cp.status === "enviando" ? '<button class="btn" type="button" id="cppause">⏸ Pausar</button>' : ""}${adm && cp.status === "pausada" ? '<button class="btn primary" type="button" id="cpresume">▶ Reanudar</button>' : ""}
         ${!locked && adm ? `<button class="btn" type="submit">Guardar borrador</button><button class="btn primary" type="button" id="cpsend" ${reach.now + reach.tpl ? "" : "disabled"}>${icon("send")}Enviar a ${reach.now + reach.tpl}</button>` : ""}</div></form>`;
     $("#cpx").onclick = $("#cpc").onclick = () => m.close();
     const upd = () => { read(); const r = campReach(S.contacts.filter(c => campMatch(c, cp.filter)), cp); $("#reach").innerHTML = reachHtml(r);
@@ -686,14 +692,16 @@ function openCampaign(id, preset) {
     if ($("#cpt")) $("#cpt").oninput = upd;
     if ($("#cptpl")) $("#cptpl").onchange = upd;
     if ($("#cpdel")) $("#cpdel").onclick = async () => { if (!await ask("¿Eliminar esta campaña?", "Eliminar")) return; await fb.remove("campaigns/" + id); m.close(); };
+    [["#cppause", "pausar"], ["#cpresume", "reanudar"]].forEach(([sel, action]) => { if ($(sel)) $(sel).onclick = async () => {
+      try { await fb.call("runCampaign", { id, action }); toast(action === "pausar" ? "Difusión pausada" : "Difusión reanudada"); m.close(); } catch (er) { toast(errMsg(er)); } }; });
     if ($("#cpsend")) $("#cpsend").onclick = async () => {
       read(); if (!cp.name.trim()) return toast("Ponle un nombre a la campaña.");
       const r = campReach(S.contacts.filter(c => campMatch(c, cp.filter)), cp);
-      if (!await ask(`Se enviará a ${r.now + r.tpl} contactos${r.no ? ` (${r.no} se omiten)` : ""}. ¿Enviar ahora?`, "Enviar")) return;
+      const n = r.now + r.tpl, mins = Math.round(n * 1.1);
+      if (!await ask(`Se enviará a ${n} contactos${r.no ? ` (${r.no} se omiten)` : ""}, goteado: un mensaje cada 45 a 90 segundos, máximo el 20% en la primera hora y solo de 8 a. m. a 8 p. m. Tardará unas ${mins < 90 ? mins + " minutos" : Math.round(mins / 60) + " horas"}. Si fallan 5 envíos seguidos, se pausa sola. ¿Empezar?`, "Empezar")) return;
       const cid = await save();
-      toast("Enviando campaña… puedes seguir trabajando");
       m.close();
-      fb.call("runCampaign", { id: cid }).then(k => toast(`Campaña enviada: ${k.sent} enviados${k.skipped ? `, ${k.skipped} omitidos` : ""}${k.failed ? `, ${k.failed} fallidos` : ""}`))
+      fb.call("runCampaign", { id: cid }).then(k => toast(`Difusión en curso: ${k.total} destinatarios. Puedes ver el avance en Campañas.`))
         .catch(er => toast("La campaña no se pudo enviar: " + errMsg(er)));
     };
     if (locked && id) {
@@ -1199,6 +1207,8 @@ function viewAsesora(el) {
           ${[["haiku", "Haiku 5.5 · rápido y económico (recomendado) · ≈ US$0,001–0,003 por respuesta"], ["sonnet", "Sonnet 5.5 · más inteligente · ≈ US$0,02–0,05 por respuesta"], ["opus", "Opus 5.5 · el más inteligente · ≈ US$0,05–0,10 por respuesta"]]
             .map(([k, l]) => `<option value="${k}" ${(a.model || "haiku") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       </div>
+      <div><label class="lb" for="atn">Números de prueba (opcional)</label><input class="in" id="atn" value="${esc((a.testNumbers || []).join(", "))}" placeholder="300 111 2233, 310 444 5566" ${adm ? "" : "disabled"}>
+        <small class="muted">Mientras haya números aquí, ${esc(a.name || "Sofía")} solo responde a esos: sirve para probarla antes de soltarla con clientes. Déjalo vacío para que atienda a todos.</small></div>
       <label class="switch"><input type="checkbox" id="aqa" ${a.quoteAuto !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Cuando el cliente pida cotización, enviársela de una vez en PDF por el chat (si lo apagas, queda en borrador para que el equipo la revise)</span></label>
       <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${adm ? "" : "disabled"}> <span>Copiloto: analizar solas las conversaciones, sin dar clic (cada 10 minutos y al abrir un chat) (probabilidad de compra, siguiente paso y riesgo) · ≈ US$0,002 por análisis</span></label>
       <div><label class="lb" for="ain">Lo que debe saber del negocio</label>
@@ -1223,7 +1233,7 @@ function viewAsesora(el) {
     e.preventDefault(); if (!adm) return;
     try {
       await fb.set("settings/asesora", { enabled: $("#aen").checked, name: $("#anm").value.trim() || "Sofía", pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), model: $("#amd").value, autoAnalisis: $("#aan").checked, quoteAuto: $("#aqa").checked,
-        instructions: $("#ain").value.trim(), empresa: EMPRESA, ...stamp() });
+        instructions: $("#ain").value.trim(), empresa: EMPRESA, testNumbers: $("#atn").value.split(/[,;\n]/).map(x => x.replace(/\D/g, "")).filter(x => x.length >= 7), ...stamp() });
       toast("Guardado");
     } catch (er) { toast("No se pudo guardar: " + errMsg(er)); }
   };
@@ -1481,7 +1491,8 @@ function bubble(m, tail = true, withDate = true) {
   // El texto "[Imagen]" o "[Audio]" sobra cuando ya se ve el archivo; queda solo el pie de foto, si lo hay
   let txt = pic && m.media ? String(m.text || "").replace(/^\[(Imagen|Audio|Nota de voz|Video|Documento|Sticker)\]\s*/, "") : m.text;
   if (pic && m.media && txt.trim() === String(m.media.filename || "").trim()) txt = "";
-  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${fmtWa(txt)}</span>` : ""}${t}${m.status === "failed" ? `<span class="bfail">⚠ No se entregó${m.error ? ": " + esc(failText(m.error)) : ""}</span>` : ""}</div>`;
+  const rate = out && m.id && (m.ai || isAiName(m.byName)) && txt ? `<span class="rate" aria-label="Calificar la respuesta">${[[1, "👍", "Buena respuesta"], [-1, "👎", "Mala respuesta"]].map(([v, e, l]) => `<button type="button" class="${m.rating && m.rating.v === v ? "on" : ""}" data-rv="${v}" data-mid="${esc(m.id)}" title="${l}" aria-label="${l}">${e}</button>`).join("")}</span>` : "";
+  return `<div class="bubble ${out ? "out" : "in"}${tail ? " tail" : ""}${pic ? " has-img" : ""}">${tail ? who : ""}${pic}${txt ? `<span class="btx">${fmtWa(txt)}</span>` : ""}${t}${rate}${m.status === "failed" ? `<span class="bfail">⚠ No se entregó${m.error ? ": " + esc(failText(m.error)) : ""}</span>` : ""}</div>`;
 }
 // Motivo de un mensaje no entregado, en palabras simples
 function failText(e) {
@@ -1703,7 +1714,7 @@ function viewConv(el) {
 }
 function contactSummary(c) {
   const qs = S.quotes.filter(q => q.contactId === c.id).slice(0, 5);
-  return `${aiInsight(c)}${c.ad ? `<div class="ad-from">${icon("anuncios")}<span>Llegó por el anuncio <b>${esc(c.ad.headline || c.ad.id || "")}</b></span></div>` : ""}${c.comment ? `<div class="ad-from">${icon("captacion")}<span>Comentó: <b>"${esc(c.comment.text)}"</b>${c.comment.url ? ` · <a href="${esc(c.comment.url)}" target="_blank" rel="noopener">ver publicación</a>` : ""}</span></div>` : ""}${c.webFunnel ? `<div class="ad-from">${icon("captacion")}<span>Llegó por el mensaje automático <b>${esc(c.webFunnel.name || "de la web")}</b>${c.webPage ? ` en <a href="${esc(c.webPage)}" target="_blank" rel="noopener">${esc(c.webPage.replace(/^https?:\/\//, "").slice(0, 40))}</a>` : ""}</span></div>` : ""}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+  return `${aiInsight(c)}${c.ad ? `<div class="ad-from">${icon("anuncios")}<span>Llegó por el anuncio <b>${esc(c.ad.headline || c.ad.id || "")}</b></span></div>` : ""}${c.paymentProof && c.paymentProof.status === "por revisar" ? `<div class="ad-from proof">💳<span>Envió un comprobante${c.paymentProof.monto ? " por <b>" + money(c.paymentProof.monto) + "</b>" : ""}${c.paymentProof.banco ? " · " + esc(c.paymentProof.banco) : ""}: revísalo en <a href="#oportunidades">Oportunidades</a></span></div>` : ""}${c.optOut ? `<div class="ad-from">🚫<span>Pidió no recibir mensajes: no le llegan difusiones ni recordatorios</span></div>` : ""}${c.comment ? `<div class="ad-from">${icon("captacion")}<span>Comentó: <b>"${esc(c.comment.text)}"</b>${c.comment.url ? ` · <a href="${esc(c.comment.url)}" target="_blank" rel="noopener">ver publicación</a>` : ""}</span></div>` : ""}${c.webFunnel ? `<div class="ad-from">${icon("captacion")}<span>Llegó por el mensaje automático <b>${esc(c.webFunnel.name || "de la web")}</b>${c.webPage ? ` en <a href="${esc(c.webPage)}" target="_blank" rel="noopener">${esc(c.webPage.replace(/^https?:\/\//, "").slice(0, 40))}</a>` : ""}</span></div>` : ""}<div><p class="eyebrow">Etapa${pipes().length > 1 ? " · " + esc(pipeOf(c).name) : ""}</p><select class="in" id="sStage">${stagesOf(c).map(s => `<option ${c.stage === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
     ${(S.priceLists || []).length ? `<div><p class="eyebrow">Lista de precios</p><select class="in" id="sList" ${isAdmin() ? "" : "disabled"}><option value="">${listFor({ ...c, priceList: "" }) ? "La del embudo: " + esc(listFor({ ...c, priceList: "" }).name) : "Precio normal"}</option>${S.priceLists.map(l => `<option value="${l.id}" ${c.priceList === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>` : ""}
     <div><p class="eyebrow">Responsable</p><select class="in" id="sOwner"><option value="">Sin asignar</option>${ownerOptions().map(n => `<option ${c.owner === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div><p class="eyebrow">Qué busca</p><div class="inline-edit" id="sLook">${esc(c.looking || "—")}</div></div>
@@ -2584,6 +2595,7 @@ function viewOportunidades(el) {
   const won = S.quotes.filter(q => q.status === "Convertida" && now - (q.updatedAt || q.createdAt || 0) < 30 * D);
   const reach = ops.filter(o => o.c && winOpen(o.c)).length;
   el.innerHTML = `<div class="page" style="max-width:1100px"><div class="page-head"><div><h1>Oportunidades</h1><span class="sub">Lo que todavía puedes cerrar, recuperar o volver a activar, ordenado por lo más urgente.</span></div></div>
+    ${proofsBlock()}
     <div class="tiles"><div class="tile"><small>Oportunidades abiertas</small><b>${ops.length}</b><span class="tabnum">${money(ops.reduce((s, o) => s + (o.value || 0), 0))} en juego</span></div>
       <div class="tile"><small>Puedes escribirles gratis ahora</small><b>${reach}</b><span>ventana de 24 h abierta</span></div>
       <div class="tile money"><small>Recuperado en 30 días</small><b class="tabnum">${money(rec.reduce((s, c) => s + (c.orderTotal || c.total || 0), 0) + won.reduce((s, q) => s + (q.total || 0), 0))}</b><span>${rec.length} carritos · ${won.length} cotizaciones convertidas</span></div></div>
@@ -2594,6 +2606,7 @@ function viewOportunidades(el) {
         ${o.c ? `<button class="btn sm primary" data-oc="${esc(o.c.id)}">Abrir chat</button>` : k === "carrito" ? '<a class="btn sm" href="#carritos">Ver carrito</a>' : ""}</div>`).join("")}</div>` : ""; }).join("")
       || `<div class="empty"><p><b>No hay oportunidades pendientes. ¡Todo al día!</b></p></div>`}</div>`;
   $$("[data-oc]", el).forEach(b => b.onclick = () => go("conv", b.dataset.oc));
+  bindProofs(el);
 }
 
 // ======================= Precios mayoristas (listas de precios) y Venta cruzada =======================
@@ -2855,6 +2868,140 @@ function bindIcs() {
   if ($("#icsCopy")) $("#icsCopy").onclick = () => copy(S.icsUrl);
 }
 
+// ======================= Calificaciones de la asesora =======================
+const RATE_REASONS = { entendio: "No entendió", invento: "Inventó algo", venta: "No avanzó la venta", persona: "No suena a persona", otro: "Otro" };
+// Semana que empieza el lunes (igual que en el servidor): "2026-10-26"
+const weekOf = ms => { const d = new Date(new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Bogota" }) + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+async function rateMessage(cid, mid, v) {
+  const m = (S.msgs || []).find(x => x.id === mid) || {};
+  let reason = "", note = "";
+  if (v === -1) {
+    const r = await rateAsk(); if (!r) return; reason = r.reason; note = r.note;
+  }
+  const at = Date.now(), rating = { v, reason, by: S.user.uid, byName: S.me.name || "", at };
+  try {
+    await fb.update(`contacts/${cid}/messages/${mid}`, { rating });
+    await fb.set("ratings/" + cid + "_" + mid, { cid, mid, v, reason, note, text: String(m.text || "").slice(0, 600), by: S.user.uid, byName: S.me.name || "", at, week: weekOf(m.ts || at) }, false);
+    toast(v === 1 ? "Gracias: respuesta marcada como buena" : `Anotado. ${aiName()} lo tendrá en cuenta en las próximas respuestas`);
+  } catch (er) { toast(errMsg(er)); }
+}
+function rateAsk() {
+  return new Promise(res => {
+    const m = $("#modal");
+    m.innerHTML = `<form id="rtf"><div class="mh"><h2>¿Qué salió mal?</h2><button class="iconbtn" type="button" id="rtx" aria-label="Cerrar">✕</button></div>
+      <div class="mb"><div class="chips-r">${Object.entries(RATE_REASONS).map(([k, t], i) => `<label class="rchip"><input type="radio" name="rr" value="${k}" ${i ? "" : "checked"}> <span>${t}</span></label>`).join("")}</div>
+        <label class="lb" for="rtn" style="margin-top:10px">¿Qué debió responder? (opcional, ${esc(aiName())} lo aprende)</label><textarea class="in" id="rtn" rows="3" placeholder="Ej: El envío gratis es solo desde $200.000"></textarea></div>
+      <div class="mf"><span class="spacer"></span><button class="btn" type="button" id="rtc">Cancelar</button><button class="btn primary">Guardar 👎</button></div></form>`;
+    const done = v => { m.close(); res(v); };
+    $("#rtx").onclick = $("#rtc").onclick = () => done(null);
+    $("#rtf").onsubmit = e => { e.preventDefault(); done({ reason: ($("[name=rr]:checked", m) || {}).value || "otro", note: $("#rtn").value.trim().slice(0, 300) }); };
+    m.showModal();
+  });
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("[data-rv]");
+  if (!b || !S.msgsFor) return;
+  e.preventDefault(); rateMessage(S.msgsFor, b.dataset.mid, Number(b.dataset.rv));
+});
+function viewCalificaciones(el) {
+  const rs = S.ratings || [], weeks = [];
+  for (let i = 0; i < 6; i++) weeks.push(weekOf(Date.now() - i * 7 * DAY));
+  const stats = Object.fromEntries((S.aiStats || []).map(x => [x.id, x.replies || 0]));
+  const row = w => { const l = rs.filter(r => r.week === w), bad = l.filter(r => r.v === -1).length, good = l.filter(r => r.v === 1).length;
+    return `<tr><td>Semana del ${new Date(w + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" })}</td><td class="num tabnum">${stats[w] ?? "—"}</td><td class="num tabnum">${l.length}</td>
+      <td class="num tabnum"><b>${l.length ? Math.round(bad / l.length * 100) + "%" : "—"}</b> <small class="muted">(${bad} 👎 · ${good} 👍)</small></td></tr>`; };
+  const last30 = rs.filter(r => r.v === -1 && r.at > Date.now() - 30 * DAY);
+  const why = Object.entries(RATE_REASONS).map(([k, t]) => ({ k: t, v: last30.filter(r => (r.reason || "otro") === k).length })).filter(x => x.v).sort((a, b) => b.v - a.v);
+  el.innerHTML = `<div class="page" style="max-width:1000px"><div class="page-head"><div><h1>Calificaciones de ${esc(aiName())}</h1><span class="sub">Lo que el equipo marcó con 👍 o 👎 en los chats. Califica cada respuesta de ${esc(aiName())} debajo del mensaje: con los 👎 y lo que debió responder, ${esc(aiName())} aprende y no repite el error.</span></div></div>
+    <section class="mcard"><h3>Por semana</h3><div class="table-wrap"><table class="t"><thead><tr><th>Semana</th><th class="num">Respuestas</th><th class="num">Calificadas</th><th class="num">👎 de las calificadas</th></tr></thead><tbody>${weeks.map(row).join("")}</tbody></table></div>
+      <p class="muted" style="font-size:12.5px">Una respuesta cuenta como mala si alguien del equipo le puso 👎. El número que tiene que bajar es el de la última columna.</p></section>
+    <div class="mgrid"><section class="mcard"><h3>Qué sale mal <small class="muted">30 días</small></h3>${why.length ? hbars(why, v => String(v)) : '<p class="muted">Aún no hay respuestas marcadas con 👎.</p>'}</section>
+      <section class="mcard"><h3>Últimas marcadas con 👎</h3>${last30.length ? last30.slice(0, 12).map(r => `<div class="rate-i" data-goc="${esc(r.cid)}"><small class="muted">${esc(RATE_REASONS[r.reason] || "Otro")} · ${ago(r.at)} · ${esc(r.byName || "")}</small><p>"${esc(String(r.text).slice(0, 200))}"</p>${r.note ? `<p class="ok">→ ${esc(r.note)}</p>` : ""}</div>`).join("") : '<p class="muted">Nada por ahora.</p>'}</section></div></div>`;
+  $$("[data-goc]", el).forEach(d => d.onclick = () => go("conv", d.dataset.goc));
+}
+
+// ======================= Línea base =======================
+// Cómo iba la operación antes de la asesora (se declara y se congela) contra cómo va ahora (últimos 30 días)
+const BASE_FIELDS = [["conv", "Conversaciones al mes", "Clientes distintos que escribieron en un mes típico.", v => Math.round(v).toLocaleString("es-CO")],
+  ["ventas", "Ventas cerradas por chat al mes", "Pedidos que salieron de esas conversaciones.", v => Math.round(v).toLocaleString("es-CO")],
+  ["ticket", "Ticket promedio", "Valor promedio de esos pedidos, en pesos.", v => money(v)],
+  ["resp", "Tiempo de primera respuesta (minutos)", "Cuánto tardaba el equipo en contestar el primer mensaje.", v => (Math.round(v * 10) / 10).toLocaleString("es-CO") + " min"],
+  ["conversion", "Conversión (%)", "Ventas ÷ conversaciones × 100.", v => (Math.round(v * 10) / 10).toLocaleString("es-CO") + "%"]];
+function currentMetrics(days = 30) {
+  const a = Date.now() - days * DAY, conv = S.contacts.filter(c => (c.lastInboundAt || 0) >= a).length;
+  const orders = S.orders.filter(o => o.status !== "Cancelado" && (o.createdAt || 0) >= a && o.contactId), ventas = orders.length;
+  const rs = S.contacts.filter(c => c.firstReplySecs != null && (c.firstReplyAt || 0) >= a).map(c => c.firstReplySecs).sort((x, y) => x - y);
+  return { conv, ventas, ticket: ventas ? orders.reduce((s, o) => s + (o.total || 0), 0) / ventas : 0, resp: rs.length ? rs[Math.floor(rs.length / 2)] / 60 : null, conversion: conv ? ventas / conv * 100 : 0 };
+}
+function viewLineaBase(el) {
+  const b = S.base || {}, v = b.values || {}, frozen = !!b.frozenAt, now = currentMetrics();
+  el.innerHTML = `<div class="page" style="max-width:1000px"><div class="page-head"><div><h1>Línea base</h1><span class="sub">Cómo iba tu operación <b>antes</b> de ${esc(aiName())}, para medir cuánto mejoró. Declárala con tus números de un mes típico y congélala: después solo se compara.</span></div></div>
+    <div class="banner ${frozen ? "" : "warn"}" style="${frozen ? "background:var(--green-soft)" : ""}">${frozen ? `Línea base congelada el ${fmtDT(b.frozenAt)}${b.period ? " · periodo " + esc(b.period) : ""}` : "Sin línea base congelada: no hay contra qué comparar. Escribe tus números y congélala."}</div>
+    <div class="grid2" style="margin:10px 0 14px"><div><label class="lb" for="lbp">Periodo que describe</label><input class="in" id="lbp" value="${esc(b.period || "")}" placeholder="Ej: agosto de 2026" ${frozen ? "disabled" : ""}></div></div>
+    <div style="display:grid;gap:10px">${BASE_FIELDS.map(([k, t, d, f]) => { const have = v[k] != null && v[k] !== "", cur = now[k]; const better = have && cur != null ? (k === "resp" ? cur <= v[k] : cur >= v[k]) : null;
+      return `<div class="card base-c"><div style="flex:1;min-width:220px"><b>${t}</b> ${have ? "" : '<span class="pill amber">falta</span>'}<small class="muted" style="display:block">${d}</small></div>
+        <div class="base-v"><label class="lb">Antes</label><input class="in tabnum" data-bv="${k}" type="number" step="any" min="0" value="${have ? v[k] : ""}" ${frozen ? "disabled" : ""}></div>
+        <div class="base-v"><label class="lb">Ahora (30 días)</label><b class="tabnum">${cur == null ? "—" : f(cur)}</b>${better === null ? "" : `<small class="${better ? "ok" : "err"}">${better ? "▲ mejor" : "▼ peor"}</small>`}</div></div>`; }).join("")}</div>
+    <div class="chrow" style="margin-top:14px">${frozen ? '<button class="btn" id="lbUn">Descongelar para corregir</button>' : '<button class="btn" id="lbSave">Guardar borrador</button><button class="btn primary" id="lbFreeze">Congelar línea base</button>'}</div>
+    <p class="muted" style="font-size:12.5px;margin-top:10px">"Ahora" sale de House Chat: clientes que escribieron, pedidos de esos clientes, ticket promedio, mediana del tiempo hasta la primera respuesta y conversión.</p></div>`;
+  const read = () => { const vals = {}; $$("[data-bv]", el).forEach(i => { if (i.value !== "") vals[i.dataset.bv] = Number(i.value); }); return { values: vals, period: $("#lbp").value.trim() }; };
+  if ($("#lbSave")) $("#lbSave").onclick = () => fb.set("settings/lineaBase", { ...read(), ...stamp() }).then(() => toast("Borrador guardado"));
+  if ($("#lbFreeze")) $("#lbFreeze").onclick = async () => { const r = read(); if (Object.keys(r.values).length < 3) return toast("Escribe al menos 3 números antes de congelar.");
+    if (!await ask("¿Congelar la línea base? Desde ahora se usa para comparar.", "Congelar")) return; await fb.set("settings/lineaBase", { ...r, frozenAt: Date.now(), frozenBy: S.me.name || "", ...stamp() }); toast("Línea base congelada"); };
+  if ($("#lbUn")) $("#lbUn").onclick = async () => { if (!await ask("¿Descongelar la línea base para corregirla?", "Descongelar")) return; await fb.set("settings/lineaBase", { frozenAt: null }); };
+}
+
+// ======================= Comprobantes de pago por revisar =======================
+function proofsBlock() {
+  const l = S.contacts.filter(c => c.paymentProof && c.paymentProof.status === "por revisar").sort((a, b) => b.paymentProof.at - a.paymentProof.at);
+  if (!l.length) return "";
+  return `<h2 class="sec-t">💳 Comprobantes de pago por revisar <span class="pill amber">${l.length}</span></h2><p class="sec-s">${esc(aiName())} los recibió en el chat. Verifica en tu banco si entró la plata y confírmalo.</p>
+    <div style="display:grid;gap:8px;margin-bottom:18px">${l.map(c => { const p = c.paymentProof; return `<div class="card opp" style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px"><b>${esc(contactName(c))}</b><div class="muted" style="font-size:13.5px">${[p.monto ? money(p.monto) : "", p.banco, p.referencia ? "ref. " + p.referencia : "", p.detalle].filter(Boolean).map(esc).join(" · ")} · ${ago(p.at)}</div></div>
+      <button class="btn sm" data-oc="${esc(c.id)}">Ver comprobante</button><button class="btn sm primary" data-proof="${esc(c.id)}" data-ok="1">Sí entró</button><button class="btn sm" data-proof="${esc(c.id)}" data-ok="0">No ha entrado</button></div>`; }).join("")}</div>`;
+}
+function bindProofs(el) {
+  $$("[data-proof]", el).forEach(b => b.onclick = async () => {
+    const c = byId(S.contacts, b.dataset.proof), ok = b.dataset.ok === "1", p = c.paymentProof;
+    await fb.update("contacts/" + c.id, { "paymentProof.status": ok ? "confirmado" : "no entró", "paymentProof.reviewedBy": S.me.name || "", "paymentProof.reviewedAt": Date.now(), ...stamp() });
+    await fb.add(`contacts/${c.id}/messages`, { dir: "note", ts: Date.now(), by: S.user.uid, byName: S.me.name || "", text: ok ? `✅ Pago confirmado${p.monto ? " por " + money(p.monto) : ""}${p.banco ? " (" + p.banco + ")" : ""}.` : "⚠️ El comprobante no aparece en el banco todavía." });
+    const o = ok && S.orders.find(x => x.contactId === c.id && owes(x));
+    if (o) { toast("Pago confirmado. Regístralo en el pedido " + o.number); openPayment(o.id); setTimeout(() => { if ($("#pya") && p.monto) $("#pya").value = p.monto; if ($("#pym") && /nequi/i.test(p.banco)) $("#pym").value = "Nequi"; if ($("#pyn")) $("#pyn").value = p.referencia ? "Ref. " + p.referencia : ""; }, 50); }
+    else toast(ok ? "Pago confirmado" : "Marcado: no ha entrado");
+  });
+}
+
+// Resumen del periodo: vendido contra el periodo anterior, ventas por día, conversaciones y tiempo de respuesta
+function metricsHero(rk) {
+  const [a, b0] = rangeOf(rk), b = Math.min(b0, Date.now()), len = b - a, pa = a - len;
+  const ok = o => o.status !== "Cancelado", inR = (t, x, y) => (t || 0) >= x && (t || 0) < y;
+  const os = S.orders.filter(o => ok(o) && inR(o.createdAt, a, b)), prev = S.orders.filter(o => ok(o) && inR(o.createdAt, pa, a));
+  const total = os.reduce((s2, o) => s2 + (o.total || 0), 0), ptotal = prev.reduce((s2, o) => s2 + (o.total || 0), 0);
+  const conv = S.contacts.filter(c => inR(c.lastInboundAt, a, b)).length, nuevos = S.contacts.filter(c => !c.sourceSheet && inR(c.createdAt, a, b)).length;
+  const rs = S.contacts.filter(c => c.firstReplySecs != null && inR(c.firstReplyAt, a, b)).map(c => c.firstReplySecs).sort((x, y) => x - y), med = rs.length ? rs[Math.floor(rs.length / 2)] : null;
+  const fmtS = x => x == null ? "—" : x < 90 ? x + " s" : x < 5400 ? Math.round(x / 60) + " min" : (Math.round(x / 360) / 10) + " h";
+  // Ventas por día (máximo 90 días)
+  const days = Math.min(90, Math.max(1, Math.ceil(len / DAY))), start = Math.max(a, b - days * DAY), pts = [];
+  for (let i = 0; i < days; i++) { const x = start + i * DAY; pts.push({ d: x, v: os.filter(o => inR(o.createdAt, x, x + DAY)).reduce((s2, o) => s2 + (o.total || 0), 0) }); }
+  const max = Math.max(1, ...pts.map(p2 => p2.v)), W = 600, Hh = 160, X = i => (days === 1 ? W / 2 : i / (days - 1) * W), Y = v => Hh - v / max * (Hh - 10);
+  const line = pts.map((p2, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(p2.v).toFixed(1)}`).join(" ");
+  const diff = ptotal ? Math.round((total - ptotal) / ptotal * 100) : null;
+  // Dónde poner atención: lo que pidieron y no había (lo detecta el copiloto al analizar cada chat)
+  const miss = S.contacts.filter(c => c.ai && c.ai.faltante && inR(c.ai.at, a, b));
+  const group = t => { const l = miss.filter(c => c.ai.faltante.tipo === t), top = {}; l.forEach(c => { const k = norm(c.ai.faltante.detalle || "").slice(0, 60); if (k) top[k] = { k: c.ai.faltante.detalle, n: ((top[k] || {}).n || 0) + 1 }; });
+    return { n: l.length, top: Object.values(top).sort((x, y) => y.n - x.n).slice(0, 5) }; };
+  const vnd = group("variante_no_disponible"), nom = group("no_manejamos");
+  return `<section class="mcard hero"><div class="hero-l"><p class="eyebrow">Vendido · ${esc(RANGES[rk])}</p><b class="hero-n tabnum">${money(total)}</b>
+      <p class="muted">${diff === null ? `Periodo anterior: ${money(ptotal)}` : `${diff >= 0 ? "▲" : "▼"} ${Math.abs(diff)}% contra el periodo anterior (${money(ptotal)})`}</p>
+      <div class="hero-k"><div><small>Ventas</small><b class="tabnum">${os.length}</b></div><div><small>Compra promedio</small><b class="tabnum">${os.length ? money(total / os.length) : "—"}</b></div><div><small>Conversión</small><b class="tabnum">${conv ? (Math.round(os.filter(o => o.contactId).length / conv * 1000) / 10).toLocaleString("es-CO") + "%" : "—"}</b></div></div></div>
+    <div class="hero-r"><small class="muted">Lo vendido cada día</small><svg viewBox="0 0 ${W} ${Hh + 4}" class="spark" role="img" aria-label="Ventas por día">${[0.25, 0.5, 0.75].map(f => `<line x1="0" x2="${W}" y1="${Y(max * f)}" y2="${Y(max * f)}" class="gl"/>`).join("")}
+      <path d="${line} L${X(days - 1)},${Hh} L${X(0)},${Hh} Z" class="ar"/><path d="${line}" class="ln"/></svg>
+      <div class="spark-x muted"><span>${new Date(start).toLocaleDateString("es-CO", { day: "numeric", month: "short" })}</span><span>${new Date(b - 1).toLocaleDateString("es-CO", { day: "numeric", month: "short" })}</span></div></div></section>
+    <div class="tiles"><div class="tile"><small>Conversaciones</small><b>${conv.toLocaleString("es-CO")}</b><span>clientes que escribieron</span></div>
+      <div class="tile"><small>Clientes nuevos</small><b>${nuevos.toLocaleString("es-CO")}</b><span>sin contar los importados</span></div>
+      <div class="tile"><small>Primera respuesta · mediana</small><b>${fmtS(med)}</b><span>${rs.length ? rs.length + (rs.length === 1 ? " chat nuevo medido" : " chats nuevos medidos") : "se mide desde hoy"}</span></div></div>
+    ${vnd.n || nom.n ? `<h2 class="sec-t">Dónde poner atención</h2><div class="mgrid">${[[vnd, "El producto existe, pero no en esa medida o color", "Revisa qué combinaciones piden antes de la próxima compra."], [nom, "Lo pidieron y la tienda no lo maneja", "Demanda sin surtido: si se repite entre clientes distintos, es una compra que evaluar."]].filter(x => x[0].n).map(([g, t, d]) => `<section class="mcard attn"><b class="attn-n">${g.n} <small>${g.n === 1 ? "conversación" : "conversaciones"}</small></b><h3>${t}</h3><p class="muted">${d}</p>${g.top.length ? `<ul>${g.top.map(x => `<li>${esc(x.k)}${x.n > 1 ? ` <span class="pill">${x.n}</span>` : ""}</li>`).join("")}</ul>` : ""}</section>`).join("")}</div>` : ""}`;
+}
 function viewMetricas(el) {
   const rk = S.mRange || "mes", [a, b] = rangeOf(rk), inR = t => (t || 0) >= a && (t || 0) < b;
   const orders = S.orders.filter(o => o.status !== "Cancelado" && inR(o.createdAt));
@@ -2875,6 +3022,8 @@ function viewMetricas(el) {
   const qStatus = Q_STATUS.map(st => ({ k: st, v: quotes.filter(q => q.status === st).length })).filter(r => r.v);
   el.innerHTML = `<div class="page" style="max-width:1200px"><div class="page-head"><h1>Métricas</h1><span class="spacer"></span>
       <div class="seg" role="group" aria-label="Periodo">${Object.entries(RANGES).map(([k, t]) => `<button class="${k === rk ? "on" : ""}" data-r="${k}">${t}</button>`).join("")}</div></div>
+    ${metricsHero(rk)}
+    <h2 class="sec-t">Detalle</h2>
     <div class="tiles">
       <div class="tile"><small>Ventas</small><b class="mono">${money(sales)}</b><span>${orders.length} ${orders.length === 1 ? "pedido" : "pedidos"}</span></div>
       <div class="tile"><small>Ticket promedio</small><b class="mono">${orders.length ? money(sales / orders.length) : "—"}</b><span>por pedido</span></div>

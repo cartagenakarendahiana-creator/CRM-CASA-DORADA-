@@ -28,7 +28,10 @@ service cloud.firestore {
         allow create: if member() && request.resource.data.dir in ['note', 'out']
           && request.resource.data.by == request.auth.uid && !('waId' in request.resource.data)
           && canSee(get(/databases/$(database)/documents/contacts/$(id)).data);
-        allow update, delete: if false;
+        // Solo se puede calificar (👍/👎) una respuesta de la asesora
+        allow update: if member() && canSee(get(/databases/$(database)/documents/contacts/$(id)).data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rating']);
+        allow delete: if false;
       }
     }
     match /quotes/{id} { allow read, create, update: if member(); allow delete: if isAdmin(); }
@@ -57,6 +60,9 @@ service cloud.firestore {
     match /knowledge/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /forms/{id} { allow read: if member(); allow write: if isAdmin(); }
     match /promos/{id} { allow read: if member(); allow write: if isAdmin(); }
+    // Calificaciones de las respuestas de la asesora y respuestas por semana
+    match /ratings/{id} { allow read: if member(); allow create, update: if member() && request.resource.data.by == request.auth.uid; allow delete: if isAdmin(); }
+    match /aiStats/{id} { allow read: if member(); allow write: if false; }
     match /adSpend/{id} { allow read: if isAdmin(); allow write: if false; }
     match /icsTokens/{id} { allow read, write: if false; }
     match /segments/{id} { allow read: if member(); allow write: if isAdmin(); }

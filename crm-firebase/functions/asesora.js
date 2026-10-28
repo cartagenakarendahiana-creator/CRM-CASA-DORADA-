@@ -56,6 +56,9 @@ const TOOLS = [
     input_schema: obj({ producto_id: { type: "string", description: "id del producto (de buscar_productos)" } }, ["producto_id"]) },
   { name: "catalogo_por_medida", description: "Reúne TODOS los productos del catálogo para una medida de cama (sábanas, cobijas, edredones, fundas, protectores… agrupando los colores) más lo que sirve para cualquier medida. El sistema le envía al cliente un catálogo en PDF con fotos y precios. Úsala cuando el cliente quiera ver todo o todas las opciones para su cama (ej. 'quiero de todo para mi cama doble', '¿qué tienen para queen?').",
     input_schema: obj({ medida: { type: "string", description: "Medida que dijo el cliente: sencilla (1.00), semidoble (1.20), doble (1.40), queen (1.60) o king (2.00)" } }, ["medida"]) },
+  { name: "registrar_comprobante", description: "Registra un comprobante de pago que el cliente envió (foto de transferencia, Nequi, Daviplata, consignación). El equipo lo verifica; tú NO confirmas que el pago entró.",
+    input_schema: obj({ monto: { type: "integer", description: "Valor en pesos que se ve en el comprobante; 0 si no se lee" }, banco: { type: "string", description: "Banco o app (Bancolombia, Nequi…); vacío si no se ve" },
+      referencia: { type: "string", description: "Número de referencia o aprobación; vacío si no se ve" }, detalle: { type: "string", description: "Fecha, destinatario u otro dato útil del comprobante" } }, ["monto", "banco", "referencia", "detalle"]) },
   { name: "buscar_conocimiento", description: "Busca en la base de conocimiento de la empresa (políticas, envíos, garantías, cuidados de productos, preguntas frecuentes). Úsala antes de responder algo que no esté en el catálogo.",
     input_schema: obj({ consulta: { type: "string", description: "Tema a buscar, ej. 'garantía' o 'envíos a Cali'" } }, ["consulta"]) },
 ].map(t => ({ ...t, strict: true }));
@@ -95,6 +98,7 @@ ${cfg.quoteAuto !== false ? "- COTIZACIÓN: si el cliente dice cotización, coti
   · Si negocia o pide descuento: ofrécele las promociones vigentes y el precio por mayor si aplica (con su mínimo de unidades). Si pide más, explícale con amabilidad que ese es el mejor precio disponible hoy y sigue ayudándole a elegir. Nunca inventes descuentos.
   · Si tiene una queja o reclamo: discúlpate con empatía, pide los detalles (qué pasó, número de pedido, una foto si sirve), guárdalos con actualizar_ficha (nota) y agenda la revisión con agendar_seguimiento; dile que el equipo ya lo tiene registrado.
   · Garantías, envíos, pagos y políticas: búscalas con buscar_conocimiento y respóndelas tú.
+- Si el cliente envía la foto de un comprobante de pago, léelo y regístralo con registrar_comprobante; dile que el equipo lo verifica y le confirma. Nunca confirmes tú que el pago entró.
 - Pasa a una persona (pasar_a_humano) SOLO para cerrar la venta: cuando el cliente ya decidió comprar y hay que confirmar el pedido, tomar los datos de envío o el pago. También si pide expresamente hablar con una persona. Antes de pasarlo, deja claro qué productos, medidas, colores y cantidades quiere (eso va en el resumen). Dile que una asesora le escribe en breve para finalizar la compra; no prometas tiempos exactos.
 - Puedes ver las fotos que te manda el cliente: úsalas para entender qué producto busca y compáralo con el catálogo (sin inventar). Las notas de voz te llegan transcritas: respóndelas como si el cliente hubiera escrito (si la transcripción parece incompleta o confusa, pídele que confirme). Si recibes un audio sin transcripción, un video o un documento que no puedes ver, pídele amablemente que te lo escriba en texto.
 - No des descuentos fuera de las promociones vigentes; no confirmes pedidos, pagos, envíos ni fechas de entrega.
@@ -177,7 +181,7 @@ function autoPhotos({ text, found, queued = [], sentAt = {}, now = Date.now(), m
   return (named.length ? named : withImg).filter(fresh).filter(p => !seen.has(p.image) && seen.add(p.image)).slice(0, Math.max(0, max - queued.length));
 }
 
-function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false, priceList = null, crossText = "" }) {
+function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos = [], quoteAuto = false, priceList = null, crossText = "", notify = null }) {
   // Solo lo que hay en stock (available=false: agotado en Shopify). Lo agotado solo sirve para decir que está agotado.
   const active = products.filter(p => p.active !== false && p.available !== false);
   const soldOut = products.filter(p => p.active !== false && p.available === false);
@@ -327,6 +331,13 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       done.push(`agendó seguimiento el ${fecha}: ${accion}`);
       return { ok: true };
     },
+    async registrar_comprobante({ monto, banco, referencia, detalle }) {
+      const at = Date.now(), proof = { at, monto: Math.max(0, Math.round(Number(monto) || 0)), banco: String(banco || "").slice(0, 60), referencia: String(referencia || "").slice(0, 60), detalle: String(detalle || "").slice(0, 300), status: "por revisar" };
+      await cref.set({ paymentProof: proof, updatedAt: at, updatedBy: aiName }, { merge: true });
+      done.push(`registró un comprobante de pago${proof.monto ? " por " + money(proof.monto) : ""}${proof.banco ? " (" + proof.banco + ")" : ""} para que el equipo lo verifique`);
+      if (notify) await notify(proof).catch(e => console.error("aviso comprobante", e.message));
+      return { ok: true, aviso: "Dile al cliente que recibiste el comprobante y que el equipo lo verifica y le confirma en breve. No digas que el pago ya entró." };
+    },
     async pasar_a_humano({ motivo, resumen }) {
       if (!HANDOFF_REASONS.includes(motivo)) return { error: "Esto lo resuelves tú: solo se pasa a una persona para cerrar la venta (pago, envío, confirmar el pedido) o si el cliente pide una persona. Ayúdale con las promociones, la información del catálogo y la base de conocimiento, y si hace falta anota y agenda un seguimiento." };
       const at = Date.now();
@@ -337,9 +348,18 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
         : "Listo. Dile que una asesora del equipo le escribe en breve. Ya no responderás más en este chat." };
     },
   };
-  return { run, done, photos, docs, catalog, found, kb, promos, saleText, crossText, priceList, quoteAuto, quoteTried, captionFor, cardText };
+  return { run, done, photos, docs, catalog, found, kb, promos, saleText, crossText, priceList, badText: "", quoteAuto, quoteTried, captionFor, cardText };
 }
 
+// Respuestas que el equipo calificó con 👎 (las más recientes), para que la asesora no repita esos errores
+// Semana que empieza el lunes, en hora de Colombia: "2026-10-26"
+function weekKey(ms) { const d = new Date(new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Bogota" }) + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); }
+const RATING_REASONS = { entendio: "No entendió", invento: "Inventó algo", venta: "No avanzó la venta", persona: "No suena a persona", otro: "Otro" };
+function ratingsText(list) {
+  const bad = (list || []).filter(r => r.v === -1 && r.text).slice(0, 12);
+  if (!bad.length) return "";
+  return "Errores que el equipo marcó en respuestas tuyas anteriores (aprende de ellos y no los repitas):\n" + bad.map(r => `- ${RATING_REASONS[r.reason] || "Mala respuesta"}: "${String(r.text).slice(0, 220).replace(/\s+/g, " ")}"${r.note ? ` → Lo correcto: ${String(r.note).slice(0, 220)}` : ""}`).join("\n");
+}
 // Valida a mano lo que la herramienta espera (además de strict:true)
 function validInput(name, input) {
   if (!input || typeof input !== "object") return false;
@@ -363,7 +383,7 @@ async function think({ apiKey, cfg, contact, history, tools }) {
   if (!messages.length || messages[messages.length - 1].role !== "user") return { text: "" };
   const system = [
     { type: "text", text: systemPrompt(cfg, tools.kb), cache_control: { type: "ephemeral" } },
-    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) + (tools.saleText ? "\n\n" + tools.saleText : "") + (tools.crossText ? "\n\n" + tools.crossText : "")
+    { type: "text", text: contactText(contact) + "\n\n" + PROMOS.promosText(tools.promos || []) + (tools.saleText ? "\n\n" + tools.saleText : "") + (tools.crossText ? "\n\n" + tools.crossText : "") + (tools.badText ? "\n\n" + tools.badText : "")
       + (tools.priceList ? `\n\nEste cliente tiene la lista de precios «${tools.priceList.name}»: al cotizar, crear_cotizacion ya aplica sus precios.${tools.priceList.minOrder ? ` Pedido mínimo de la lista: ${money(tools.priceList.minOrder)}.` : ""}` : "") },
   ];
   const wantsQuote = tools.quoteAuto && quoteAsked(history);
@@ -404,11 +424,14 @@ async function think({ apiKey, cfg, contact, history, tools }) {
 }
 
 // Decide si responde, arma el contexto, llama a Claude y envía la respuesta
-async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCard, catalogLink, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
+async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quoteLink, discountCard, catalogLink, notify, wait = ms => new Promise(r => setTimeout(r, ms)), debounce = DEBOUNCE_MS }) {
   const cref = db.doc("contacts/" + cid);
   const cfgSnap = await db.doc("settings/asesora").get();
   const cfg = cfgSnap.exists ? cfgSnap.data() : {};
   if (!cfg.enabled || !apiKey) return "apagada";
+  // Números de prueba: mientras haya alguno, la asesora solo responde a esos (para probarla antes de soltarla con clientes)
+  const tests = (cfg.testNumbers || []).map(n => String(n).replace(/\D/g, "").slice(-10)).filter(Boolean);
+  if (tests.length) { const ph = String(((await cref.get()).data() || {}).phone || "").replace(/\D/g, "").slice(-10); if (!tests.includes(ph)) return "solo-numeros-de-prueba"; }
   const msnap = await cref.collection("messages").doc(mid).get();
   if (!msnap.exists || msnap.get("dir") !== "in") return "no-entrante";
   if (msnap.get("type") === "reaction") return "reaccion"; // un 👍 no necesita respuesta
@@ -439,14 +462,17 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   if (claim !== "ok") return claim;
 
   const contact = (await cref.get()).data();
-  const [hs, ps, ks, prs, pls, xs] = await Promise.all([
+  const [hs, ps, ks, prs, pls, xs, rts] = await Promise.all([
     cref.collection("messages").orderBy("ts", "desc").limit(HISTORY).get(),
     db.collection("products").get(),
     db.collection("knowledge").get(),
     db.collection("promos").get(),
     db.collection("priceLists").get().catch(() => ({ docs: [] })),
     db.doc("settings/ventaCruzada").get().catch(() => null),
+    db.collection("ratings").orderBy("at", "desc").limit(60).get().catch(() => ({ docs: [] })),
   ]);
+  // Lo que el equipo marcó con 👎: la asesora lo lee para no repetir esos errores
+  const badText = ratingsText(rts.docs.map(d => d.data()));
   // Promociones que aplican a este cliente: sin las internas, las "bajo demanda" solo si escribió el código, las de clientes solo si ya compró
   const said = hs.docs.map(d => d.data()).filter(m => m.dir === "in").slice(0, 15).map(m => m.text || "");
   const promos = PROMOS.forContact(PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() }))), contact, said);
@@ -461,8 +487,9 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   }
   const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
   const aiName = (cfg.name || "Sofía") + " · IA";
-  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, priceList, crossText, quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
+  const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, priceList, crossText, notify: notify && (proof => notify(cid, contact, proof)), quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
 
+  tools.badText = badText;
   let res;
   try { res = await think({ apiKey, cfg, contact, history, tools }); }
   catch (e) {
@@ -538,7 +565,11 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     if ((fresh.stage || "Nuevo") === "Nuevo") await cref.set({ stage: "Contactado", stageAt: Date.now() }, { merge: true });
   }
   if (tools.done.length) await cref.collection("messages").add({ dir: "note", text: `${aiName}: ` + tools.done.join("; ") + ".", ts: Date.now(), by: "asesora", byName: aiName });
+  if (hasText) { // respuestas de la semana (para Calificaciones)
+    const wk = weekKey(Date.now());
+    await db.doc("aiStats/" + wk).set({ week: wk, replies: admin.firestore.FieldValue.increment(1) }, { merge: true }).catch(() => {});
+  }
   return hasText || tools.photos.length || tools.docs.length || cat ? "respondido" : "sin-texto";
 }
 
-module.exports = { handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked, colorsIn, saysNotAvailable };
+module.exports = { weekKey, ratingsText, handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked, colorsIn, saysNotAvailable };
