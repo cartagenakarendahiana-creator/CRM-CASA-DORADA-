@@ -292,7 +292,7 @@ function startData() {
   w("aiStats", "aiStats");
   S.unsubs.push(fb.watchDoc("settings/lineaBase", d => { S.base = d || {}; if (S.view === "lineabase") scheduleRender(); }, () => { S.base = {}; }));
   if (isAdmin()) {
-    S.unsubs.push(fb.watchDoc("settings/voz", d => { S.voz = d || {}; if (S.view === "asesora") scheduleRender(); }, () => { S.voz = {}; }));
+    S.unsubs.push(fb.watchDoc("settings/voz", d => { S.voz = d || {}; if (["asesora", "apps", "integraciones"].includes(S.view)) scheduleRender(); }, () => { S.voz = {}; }));
     S.unsubs.push(fb.watchDoc("settings/ads", d => { S.ads = d || {}; if (S.view === "anuncios") scheduleRender(); }, () => { S.ads = {}; }));
     S.unsubs.push(fb.watch("adSpend", l => { S.adSpend = Object.fromEntries(l.map(x => [x.id, x])); if (S.view === "anuncios") scheduleRender(); }, {}, () => { S.adSpend = {}; }));
   }
@@ -864,7 +864,8 @@ function viewIntegraciones(el) {
       { href: "#formularios", name: "Formularios", icon: "formularios", color: "#0ea5a4", desc: forms ? `${forms} ${forms === 1 ? "formulario activo" : "formularios activos"}` : "Para tu web, Instagram o un QR", state: forms ? "on" : "" },
       { href: "#automatizaciones", name: "Automatizaciones", icon: "automatizaciones", color: "#f59e0b", desc: autos ? `${autos} ${autos === 1 ? "regla activa" : "reglas activas"}` : "Cuando pasa algo, House Chat actúa", state: autos ? "on" : "" },
       { href: "#campanas", name: "Campañas", icon: "campanas", color: "#ef4444", desc: (S.campaigns || []).length ? `${(S.campaigns || []).length} ${(S.campaigns || []).length === 1 ? "campaña" : "campañas"} · mensajes por segmento` : "Mensajes a un grupo de clientes", state: (S.campaigns || []).length ? "on" : "" }]],
-    ["Aplicaciones", "Tu tienda en línea y tu facturación.", [
+    ["Aplicaciones", "Tu tienda en línea, tu facturación y la voz de tu agente.", [
+      { href: "#apps", id: "app-elevenlabs", name: "ElevenLabs", svg: APP_ICONS.elevenlabs, color: APP_COLORS.elevenlabs, desc: (S.voz || {}).on ? "Voz: " + (((S.voz.voices || []).find(x => x.id === S.voz.voiceId) || {}).name || "elegida") : "Voz natural para tu agente", state: (S.voz || {}).on ? "on" : "" },
       { href: "#apps", id: "app-shopify", name: "Shopify", svg: APP_ICONS.shopify, color: APP_COLORS.shopify, desc: (S.apps || {}).shopify && S.apps.shopify.on ? `${S.apps.shopify.shop} · ${S.apps.shopify.orders || 0} pedidos` : "Pedidos, clientes, carritos y productos", state: (S.apps || {}).shopify && S.apps.shopify.on ? "on" : "" },
       { href: "#apps", id: "app-mastershop", name: "Mastershop", svg: APP_ICONS.mastershop, color: APP_COLORS.mastershop, desc: "Pedidos de dropshipping a través de Shopify", state: (S.apps || {}).mastershop && S.apps.mastershop.on ? ((S.apps.shopify || {}).on ? "on" : "warn") : "" },
       { href: "#apps", id: "app-siigo", name: "Siigo", svg: APP_ICONS.siigo, color: APP_COLORS.siigo, desc: (S.apps || {}).siigo && S.apps.siigo.on ? "Facturación desde cada pedido" : "Facturación electrónica y clientes", state: (S.apps || {}).siigo && S.apps.siigo.on ? "on" : "" }]],
@@ -881,19 +882,44 @@ function viewIntegraciones(el) {
     ${adm ? "" : '<p class="muted" style="font-size:12.5px">Solo la administradora puede cambiar las integraciones.</p>'}</div>`;
   $$("[data-anchor]", el).forEach(a => a.onclick = () => { S.chAnchor = a.dataset.anchor; });
 }
+// ======================= Voz de la tienda (ElevenLabs) =======================
+// full: conectar y desconectar (en Integraciones); si no, solo elegir y escuchar la voz (en Configuración)
+function vozBlock(full) {
+  const v = S.voz || {}, a = S.ai || {}, adm = isAdmin(), dis = adm ? "" : "disabled";
+  if (!v.on) return full && adm ? `<p>Dale a tu agente una voz propia y natural, como una asesora real.</p>
+      <form id="vzF" class="chform"><label class="lb" for="vzk">Clave de API de ElevenLabs</label><input class="in" id="vzk" type="password" autocomplete="off" placeholder="sk_…"><div class="chrow"><button class="btn primary">Conectar</button></div></form>
+      <p class="muted" style="font-size:12.5px">La clave se guarda en el servidor y nadie del equipo la puede ver. La sacas en elevenlabs.io › tu perfil › API Keys.</p>`
+    : `<p class="muted">${adm ? "Sin conectar." : "Pídele a la administradora que la conecte."}</p>`;
+  return `<div class="grid2"><div><label class="lb" for="vzv">Voz</label><select class="in" id="vzv" ${dis}>${(v.voices || []).map(x => `<option value="${esc(x.id)}" ${x.id === v.voiceId ? "selected" : ""}>${esc(x.name)}${x.lang ? " · " + esc(x.lang) : ""}</option>`).join("")}</select></div>
+      <div class="full"><label class="lb" for="vzt">Texto de prueba</label><input class="in" id="vzt" value="¡Hola! Soy ${esc(a.name || "Sofía")}, de ${esc(EMPRESA)}. ¿En qué te puedo ayudar hoy?"></div></div>
+    <div class="chrow" style="margin-top:12px"><button class="btn" type="button" id="vzTry">▶ Escuchar</button>${adm ? '<button class="btn primary" type="button" id="vzSave">Guardar voz</button>' : ""}${full && adm ? '<span class="spacer"></span><button class="link" type="button" id="vzOff">Desconectar</button>' : ""}</div>
+    <audio id="vzAudio" controls hidden style="margin-top:10px;width:100%"></audio>
+    <p class="muted" style="margin-top:10px;font-size:12.5px">Las respuestas con nota de voz a los clientes se activan en el siguiente paso.</p>`;
+}
+function bindVoz(el) {
+  if ($("#vzF", el)) $("#vzF", el).onsubmit = async e => { e.preventDefault(); const b = $("#vzF button", el); b.disabled = true; b.textContent = "Conectando…";
+    try { const r = await fb.call("voz", { action: "conectar", apiKey: $("#vzk", el).value.trim() }); toast(`ElevenLabs conectado: ${r.voices} voces`); } catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Conectar"; } };
+  if ($("#vzTry", el)) $("#vzTry", el).onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Generando…";
+    try { const r = await fb.call("voz", { action: "probar", voiceId: $("#vzv", el).value, text: $("#vzt", el).value }); const au = $("#vzAudio", el); au.src = "data:audio/mpeg;base64," + r.audio; au.hidden = false; au.play().catch(() => {}); }
+    catch (er) { toast(errMsg(er)); } finally { b.disabled = false; b.textContent = "▶ Escuchar"; } };
+  if ($("#vzSave", el)) $("#vzSave", el).onclick = () => fb.set("settings/voz", { voiceId: $("#vzv", el).value }).then(() => toast("Voz guardada"));
+  if ($("#vzOff", el)) $("#vzOff", el).onclick = async () => { if (await ask("¿Desconectar ElevenLabs?", "Desconectar")) await fb.call("voz", { action: "desconectar" }); };
+}
+
 // ======================= Aplicaciones: Shopify, Mastershop y Siigo =======================
 const APP_ICONS = {
   shopify: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/></svg>',
   mastershop: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/></svg>',
+  elevenlabs: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg>',
   siigo: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>',
 };
-const APP_COLORS = { shopify: "#5e8e3e", mastershop: "#5b21b6", siigo: "#0077c8" };
+const APP_COLORS = { shopify: "#5e8e3e", mastershop: "#5b21b6", siigo: "#0077c8", elevenlabs: "#111111" };
 const appCall = (action, data = {}) => fb.call("apps", { action, ...data });
 function viewApps(el) {
   const A = S.apps || {}, adm = isAdmin(), sh = A.shopify || {}, sg = A.siigo || {}, ms = A.mastershop || {};
   const hookUrl = `${location.origin}/api/shopify`;
   const head = (k, name, sub, on) => `<div class="chcard-h"><span class="itile-ic sm" style="--ic:${APP_COLORS[k]}">${APP_ICONS[k]}</span><div><b>${name}</b><small>${sub}</small></div><span class="pill ${on ? "green" : ""}">${on ? "Conectado" : "Sin conectar"}</span></div>`;
-  el.innerHTML = `<div class="page">${crumb("Aplicaciones")}<div class="page-head"><div><h1>Aplicaciones</h1><span class="sub">Tu tienda en línea y tu facturación, unidas a House Chat.</span></div></div>
+  el.innerHTML = `<div class="page">${crumb("Aplicaciones")}<div class="page-head"><div><h1>Aplicaciones</h1><span class="sub">Tu tienda en línea, tu facturación y la voz de tu agente, unidas a House Chat.</span></div></div>
     <div class="chgrid apps">
     <section class="chcard" id="app-shopify">${head("shopify", "Shopify", "Pedidos, clientes, carritos abandonados y productos", sh.on)}
       ${sh.on ? `<div class="app-k"><div><b>${sh.orders || 0}</b>pedidos recibidos</div><div><b>${sh.products || 0}</b>productos importados</div><div><b>${sh.lastAt ? ago(sh.lastAt) : "—"}</b>último pedido</div></div>
@@ -944,7 +970,9 @@ function viewApps(el) {
       <ul class="app-what"><li>Conecta <b>Shopify</b> arriba y activa aquí Mastershop.</li><li>Los pedidos que Mastershop crea o actualiza en Shopify llegan a <b>Pedidos</b> con su cliente, y aparecen marcados como de Shopify.</li>
         <li>¿Vendes con Mastershop sin Shopify? Pide a Mastershop un webhook de pedidos y conéctalo a la <a href="#conectores">API de House Chat</a> (por ejemplo, con Zapier o Make).</li></ul>
       ${adm ? `<label class="switch sm"><input type="checkbox" id="msOn" ${ms.on ? "checked" : ""}> <span>Uso Mastershop con mi tienda Shopify</span></label>${ms.on && !sh.on ? '<p class="errc" style="font-size:12.5px;margin:6px 0 0">Falta conectar Shopify para recibir los pedidos.</p>' : ""}` : ""}
-    </section></div></div>`;
+    </section>
+    <section class="chcard" id="app-elevenlabs">${head("elevenlabs", "ElevenLabs", "Voz de la tienda: una voz natural para tu agente", !!(S.voz || {}).on)}${vozBlock(true)}</section></div></div>`;
+  bindVoz(el);
   $$("[data-copy]", el).forEach(b => b.onclick = () => copy(b.dataset.copy));
   const busy = (b, t) => { b.disabled = true; b.dataset.t = b.textContent; b.textContent = t; }, done = b => { b.disabled = false; b.textContent = b.dataset.t; };
   if ($("#shf")) $("#shf").onsubmit = async e => { e.preventDefault(); const b = $("#shf .btn.primary"); busy(b, "Guardando…");
@@ -1303,14 +1331,7 @@ function viewAsesora(el) {
       ${proofsBlock() || '<p class="muted">No hay comprobantes por revisar.</p>'}
       <h3 style="margin:16px 0 8px">Revisados</h3>${all.filter(c => c.paymentProof.status !== "por revisar").length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Cliente</th><th class="num">Valor</th><th>Banco</th><th>Estado</th><th>Revisó</th></tr></thead><tbody>${all.filter(c => c.paymentProof.status !== "por revisar").slice(0, 80).map(c => { const p = c.paymentProof; return `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td class="num tabnum">${p.monto ? money(p.monto) : "—"}</td><td>${esc(p.banco || "")}</td><td><span class="pill ${p.status === "confirmado" ? "green" : "red"}">${esc(p.status)}</span></td><td class="muted">${esc(p.reviewedBy || "")} ${p.reviewedAt ? ago(p.reviewedAt) : ""}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Todavía no hay comprobantes revisados.</p>'}</div>`;
   } else if (tab === "voz") {
-    const v = S.voz || {};
-    body = `<div class="card cfg-card"><h2>Voz de la tienda</h2><p class="muted cfg-sub">Conecta ElevenLabs para que el agente tenga una voz propia y natural, como una asesora real.</p>
-      ${v.on ? `<div class="grid2"><div><label class="lb" for="vzv">Voz</label><select class="in" id="vzv" ${dis}>${(v.voices || []).map(x => `<option value="${esc(x.id)}" ${x.id === v.voiceId ? "selected" : ""}>${esc(x.name)}${x.lang ? " · " + esc(x.lang) : ""}</option>`).join("")}</select></div>
-          <div class="full"><label class="lb" for="vzt">Texto de prueba</label><input class="in" id="vzt" value="¡Hola! Soy ${esc(a.name || "Sofía")}, de ${esc(EMPRESA)}. ¿En qué te puedo ayudar hoy?"></div></div>
-        <div class="chrow" style="margin-top:12px"><button class="btn" type="button" id="vzTry">▶ Escuchar</button>${adm ? '<button class="btn primary" type="button" id="vzSave">Guardar voz</button><span class="spacer"></span><button class="link" type="button" id="vzOff">Desconectar</button>' : ""}</div><audio id="vzAudio" controls hidden style="margin-top:10px;width:100%"></audio>
-        <p class="muted" style="margin-top:12px">Las respuestas con nota de voz a los clientes se activan en el siguiente paso.</p>`
-      : adm ? `<form id="vzF" class="grid2"><div class="full"><label class="lb" for="vzk">Clave de API de ElevenLabs</label><input class="in" id="vzk" type="password" autocomplete="off" placeholder="sk_…"></div>
-          <div class="full chrow"><button class="btn primary">Conectar</button></div></form><p class="muted" style="font-size:12.5px">La clave se guarda en el servidor y nadie del equipo la puede ver. La sacas en elevenlabs.io › tu perfil › API Keys.</p>` : '<p class="muted">Pídele a la administradora que la conecte.</p>'}</div>`;
+    body = `<div class="card cfg-card"><h2>Voz de la tienda</h2><p class="muted cfg-sub">La voz con la que habla tu agente.</p>${(S.voz || {}).on ? vozBlock(false) : `<p>ElevenLabs todavía no está conectado.</p><a class="btn primary" href="#apps" data-anchor="app-elevenlabs">Conectarlo en Integraciones</a>`}</div>`;
   }
   el.innerHTML = `<div class="page" style="max-width:1150px"><div class="page-head"><h1>Configuración</h1><span class="spacer"></span><span class="pill ${a.enabled ? "green" : ""}">${esc(a.name || "Sofía")}: ${a.enabled ? "activa" : "apagada"}</span></div>
     <div class="cfg-tabs" role="tablist">${TABS.map(([k, t]) => `<button role="tab" class="${k === tab ? "on" : ""}" data-tab="${k}">${t}</button>`).join("")}</div>
@@ -1325,13 +1346,8 @@ function viewAsesora(el) {
   if ($("#addSede")) $("#addSede").onclick = () => { const cur = $$(".sede", el).map(d => Object.fromEntries($$("[data-k]", d).map(i => [i.dataset.k, i.value]))); S.ai = { ...a, sedes: [...cur, {}] }; renderShell(); };
   $$("[data-rmsede]", el).forEach(b => b.onclick = () => { const i = +b.closest(".sede").dataset.i, cur = $$(".sede", el).map(d => Object.fromEntries($$("[data-k]", d).map(x => [x.dataset.k, x.value]))); cur.splice(i, 1); S.ai = { ...a, sedes: cur }; renderShell(); });
   bindProofs(el);
-  if ($("#vzF")) $("#vzF").onsubmit = async e => { e.preventDefault(); const b = $("#vzF button"); b.disabled = true; b.textContent = "Conectando…";
-    try { const r = await fb.call("voz", { action: "conectar", apiKey: $("#vzk").value.trim() }); toast(`ElevenLabs conectado: ${r.voices} voces`); } catch (er) { toast(errMsg(er)); b.disabled = false; b.textContent = "Conectar"; } };
-  if ($("#vzTry")) $("#vzTry").onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Generando…";
-    try { const r = await fb.call("voz", { action: "probar", voiceId: $("#vzv").value, text: $("#vzt").value }); const au = $("#vzAudio"); au.src = "data:audio/mpeg;base64," + r.audio; au.hidden = false; au.play().catch(() => {}); }
-    catch (er) { toast(errMsg(er)); } finally { b.disabled = false; b.textContent = "▶ Escuchar"; } };
-  if ($("#vzSave")) $("#vzSave").onclick = () => fb.set("settings/voz", { voiceId: $("#vzv").value }).then(() => toast("Voz guardada"));
-  if ($("#vzOff")) $("#vzOff").onclick = async () => { if (await ask("¿Desconectar ElevenLabs?", "Desconectar")) await fb.call("voz", { action: "desconectar" }); };
+  bindVoz(el);
+  $$("[data-anchor]", el).forEach(x => x.onclick = () => { S.chAnchor = x.dataset.anchor; });
 }
 
 // ======================= Plantillas de mensaje =======================
