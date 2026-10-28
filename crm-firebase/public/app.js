@@ -70,7 +70,7 @@ const ICONS = {
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
   reposicion: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   metricas: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-  anuncios: '<path d="M3 10v4h3l6 4V6L6 10z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
+  anuncios: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>',
   captacion: '<path d="M4 5h16v10H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
   carritos: '<path d="M3 4h2l2.4 11h10.2L20 8H6.2"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   cartera: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>',
@@ -332,9 +332,11 @@ const NAV_ALIAS = { canales: "integraciones", conectores: "integraciones", apps:
 const navOn = k => S.view === k || NAV_ALIAS[S.view] === k;
 const NAV = [
   [null, [["hoy", "Hoy"], ["conv", "Conversaciones"], ["embudo", "Embudo"], ["contactos", "Contactos"]]],
-  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["agenda", "Agenda"], ["reposicion", "Avisos de reposición"], ["campanas", "Campañas"], ["segmentos", "Segmentos"], ["formularios", "Formularios"], ["metricas", "Métricas"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"], ["calificaciones", "Calificaciones"], ["lineabase", "Línea base"]]],
+  ["Ventas", [["pedidos", "Pedidos"], ["cotizaciones", "Cotizaciones"], ["cartera", "Cartera"], ["carritos", "Carritos"], ["oportunidades", "Oportunidades"], ["reposicion", "Avisos de reposición"], ["agenda", "Agenda"]]],
   ["Catálogo", [["productos", "Productos"], ["promociones", "Promociones"], ["listas", "Precios mayoristas"], ["ventacruzada", "Venta cruzada"]]],
-  ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["plantillas", "Plantillas"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
+  ["Crecimiento", [["campanas", "Campañas"], ["segmentos", "Segmentos"], ["formularios", "Formularios"], ["anuncios", "Anuncios"], ["captacion", "Comentarios y web"], ["plantillas", "Plantillas"]]],
+  ["Análisis", [["metricas", "Métricas"], ["calificaciones", "Calificaciones"], ["lineabase", "Línea base"]]],
+  ["Configuración", [["integraciones", "Integraciones"], ["asesora", "Asesora virtual"], ["automatizaciones", "Automatizaciones"], ["equipo", "Equipo"], ["importar", "Importar Excel"], ["exportar", "Exportar Excel"]]],
 ];
 function renderShell() {
   if (!S.me) return;
