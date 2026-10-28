@@ -10,6 +10,7 @@ const isoDay = ms => new Date(ms).toLocaleDateString("en-CA", { timeZone: "Ameri
 const stripHtml = s => String(s || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 
 module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(...a) }) {
+  const CART = require("./carritos")({ db }); // carritos abandonados (el recordatorio lo envía index.js)
   let cache = null, cacheAt = 0;
   async function cfg(fresh) {
     if (!fresh && cache && Date.now() - cacheAt < 60000) return cache;
@@ -49,6 +50,13 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     await ref.set(patch, { merge: true });
     return { ref, existed: ex.exists };
   }
+  // Envío del pedido en Shopify: guía, transportadora y enlace de rastreo (lo llena la app de envíos o quien despacha)
+  function shipOf(body) {
+    const f = (body.fulfillments || []).filter(x => x.status !== "cancelled").pop();
+    if (!f && !body.fulfillment_status) return null;
+    return { status: (f && f.shipment_status) || body.fulfillment_status || "", company: (f && f.tracking_company) || "", number: (f && (f.tracking_number || (f.tracking_numbers || [])[0])) || "",
+      url: (f && (f.tracking_url || (f.tracking_urls || [])[0])) || "", at: Date.now() };
+  }
   const payOf = fs => ({ paid: "Pagado", partially_paid: "Abono", refunded: "Pendiente", partially_refunded: "Pagado" }[fs] || "Pendiente");
   async function shopifyEvent(topic, body) {
     const now = Date.now();
@@ -57,6 +65,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       if (ex.exists) { // ya existe: solo actualiza pago y estado
         const patch = { payment: payOf(body.financial_status), updatedAt: now, updatedBy: "Shopify" };
         if (body.cancelled_at) patch.status = "Cancelado"; else if (body.fulfillment_status === "fulfilled" && ex.get("status") === "Nuevo") patch.status = "Enviado";
+        const sh = shipOf(body); if (sh) patch.shipping = sh;
         await oref.set(patch, { merge: true });
         return "pedido actualizado";
       }
@@ -66,16 +75,18 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       const items = (body.line_items || []).map(i => ({ productId: i.product_id ? "shp_" + i.product_id : "", name: [i.title, i.variant_title].filter(Boolean).join(" · "), qty: Number(i.quantity) || 1, price: Number(i.price) || 0 }));
       const total = Math.round(Number(body.total_price) || items.reduce((s, i) => s + i.qty * i.price, 0));
       const cs = (await ref.get()).data() || {};
-      const addr = body.shipping_address || {};
+      const addr = body.shipping_address || {}, shop = ((await cfg()).shopify || {}).shop || "";
       const number = await db.runTransaction(async t => {
         const cr = db.doc("counters/orders"), s = await t.get(cr), n = (s.exists ? s.get("n") || 0 : 0) + 1, num = "PED-" + String(n).padStart(4, "0");
         t.set(cr, { n });
         t.set(oref, { number: num, source: "Shopify", shopifyName: body.name || "", shopifyId: String(body.id), contactId: ref.id, contactName: cs.name || cs.company || addr.name || "",
-          items, total, status: body.cancelled_at ? "Cancelado" : "Nuevo", payment: payOf(body.financial_status),
+          items, total, status: body.cancelled_at ? "Cancelado" : "Nuevo", payment: payOf(body.financial_status), ...(shipOf(body) ? { shipping: shipOf(body) } : {}),
+          checkoutToken: String(body.checkout_token || ""), shopifyUrl: shop ? `https://${shop}/admin/orders/${body.id}` : "",
           notes: [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ") + (body.note ? "\nNota: " + body.note : ""),
           createdAt: now, createdByName: "Shopify", updatedAt: now, updatedBy: "Shopify" });
         return num;
       });
+      await CART.recovered(body, ref.id, oref.id, now).catch(e => console.error("carrito recuperado", e.message));
       await ref.set({ type: "Cliente", lastPurchaseAt: now, stage: (cs.pipeline || "ventas") === "ventas" ? "Ganado" : cs.stage || "Nuevo", stageAt: now,
         tags: admin.firestore.FieldValue.arrayRemove("Carrito abandonado"), updatedAt: now, updatedBy: "Shopify" }, { merge: true });
       await ref.collection("messages").add({ dir: "note", ts: now, by: "shopify", byName: "Shopify",
@@ -98,6 +109,7 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
       const items = (body.line_items || []).map(i => `• ${i.quantity} × ${i.title}`).join("\n");
       const c = (await ref.get()).data() || {};
       if ((c.lastPurchaseAt || 0) > now - 3600e3) return "ya compró";
+      await CART.save(body, ref.id, now);
       if (c.lastCheckout === String(body.token || body.id)) return "carrito repetido";
       await ref.set({ lastCheckout: String(body.token || body.id), tags: admin.firestore.FieldValue.arrayUnion("Carrito abandonado"),
         nextDate: isoDay(now + DAY), nextAction: "Recuperar carrito de Shopify" + (body.abandoned_checkout_url ? ": " + body.abandoned_checkout_url : ""), updatedAt: now, updatedBy: "Shopify" }, { merge: true });
@@ -399,11 +411,41 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
     if (!c.shop) return "sin tienda";
     return shopifyImport();
   }
+  // Carritos abandonados por la API de Admin (permiso read_orders): trae los de los últimos 30 días, también los que
+  // llegaron antes de conectar el webhook. Sin ese permiso no hace nada.
+  async function syncCheckouts(now = Date.now()) {
+    const c0 = (await cfg(true)).shopify || {};
+    if (!c0.shop || !hasAdmin(c0)) return "sin acceso de Admin";
+    const token = await adminToken(c0);
+    const since = new Date(now - 30 * 24 * 3600e3).toISOString();
+    let url = `https://${c0.shop}/admin/api/${SHOPIFY_API}/checkouts.json?limit=250&created_at_min=${encodeURIComponent(since)}`, n = 0;
+    for (let page = 0; url && page < 8; page++) {
+      const r = await fetchFn(url, { headers: { "X-Shopify-Access-Token": token } });
+      if (r.status === 403 || r.status === 401) { await setPub({ shopify: { cartsError: "Para traer los carritos, agrega el permiso read_orders a tu app de Shopify." } }); return "sin permiso read_orders"; }
+      if (!r.ok) throw new Error("Shopify respondió " + r.status + " al leer los carritos.");
+      const j = await r.json();
+      for (const ck of j.checkouts || []) {
+        if (ck.completed_at) continue;
+        const phone = ck.phone || (ck.shipping_address || {}).phone || (ck.customer || {}).phone, email = ck.email || (ck.customer || {}).email;
+        if (!phone && !email) continue;
+        if ((await db.doc("carts/" + String(ck.token).replace(/[\/]/g, "_")).get()).exists) continue;
+        const { ref } = await upsertCustomer(ck.customer || {}, { phone, email, name: (ck.shipping_address || {}).name, address: ck.shipping_address }, "Shopify");
+        const created = Date.parse(ck.created_at) || now;
+        await CART.save(ck, ref.id, created);
+        n++;
+      }
+      const link = (r.headers && r.headers.get && r.headers.get("link")) || "";
+      const m = link.match(/<([^>]+)>;\s*rel="next"/);
+      url = m ? m[1] : null;
+    }
+    await setPub({ shopify: { cartsAt: now, cartsError: "" } });
+    return { carritos: n };
+  }
   async function syncDiscounts() {
     const c = (await cfg(true)).shopify || {};
     if (!c.shop || !hasAdmin(c)) return "sin acceso de Admin";
     try { return await shopifyDiscounts(); }
     catch (e) { await setPub({ shopify: { promosError: String(e.message || e).slice(0, 300), promosErrorAt: Date.now() } }); throw e; }
   }
-  return { shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, syncDiscounts, syncProducts, saveShopifyProduct, adminToken, mapDiscount, siigoInvoice, manage };
+  return { syncCheckouts, shopifyWebhook, shopifyEvent, shopifyValid, shopifyImport, shopifyImage, shopifyDiscounts, syncDiscounts, syncProducts, saveShopifyProduct, adminToken, mapDiscount, siigoInvoice, manage };
 };

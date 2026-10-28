@@ -1254,3 +1254,6 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}@media (max-width:560px){.grid3{grid-template-columns:1fr}}
 .wt-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:20px;align-items:start}.wt-side{position:sticky;top:0}
 @media (max-width:720px){.wt-grid{grid-template-columns:1fr}.wt-side{position:static}}
+/* Cartera y pedidos */
+.pay-line{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:10px 0}
+.ship{padding:8px 12px;background:var(--soft);border-radius:10px;font-size:14px;margin-bottom:6px}

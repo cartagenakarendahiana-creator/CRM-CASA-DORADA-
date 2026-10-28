@@ -1,7 +1,7 @@
 // Plantillas de WhatsApp creadas desde House Chat y enviadas a Meta para aprobación.
 // Se escriben con los mismos campos de las plantillas del CRM ({nombre}, {producto}…): aquí se convierten en {{1}}, {{2}}…
 // en el orden en que aparecen, y waParams guarda qué campo va en cada número para enviarlas después.
-const FIELDS = { nombre: "María", producto: "Juego de sábanas", precio: "$189.900", cotizacion: "COT-0012", total: "$350.000", hotel: "Hotel Central", asesor: "Luisa", empresa: "Casa Dorada" };
+const FIELDS = { enlace: "https://casadorada.co/carrito", nombre: "María", producto: "Juego de sábanas", precio: "$189.900", cotizacion: "COT-0012", total: "$350.000", hotel: "Hotel Central", asesor: "Luisa", empresa: "Casa Dorada" };
 const CATEGORIES = { MARKETING: "Marketing", UTILITY: "Utilidad" };
 const STATUS = { APPROVED: "Aprobada", PENDING: "En revisión", IN_APPEAL: "En apelación", REJECTED: "Rechazada", PAUSED: "Pausada", DISABLED: "Desactivada", PENDING_DELETION: "Eliminándose" };
 

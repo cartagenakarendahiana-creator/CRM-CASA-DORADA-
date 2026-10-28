@@ -719,6 +719,23 @@ exports.shopifyWebhook = onRequest({ region: REGION, invoker: "public" }, async 
 exports.sincronizarShopify = onSchedule({ schedule: "every 60 minutes", timeZone: "America/Bogota", region: REGION, timeoutSeconds: 540, memory: "512MiB" }, async () => {
   try { console.log("productos de Shopify", await APPS.syncProducts()); } catch (e) { console.error("productos de Shopify", e.message); }
   try { console.log("descuentos de Shopify", await APPS.syncDiscounts()); } catch (e) { console.error("descuentos de Shopify", e.message); }
+  try { console.log("carritos de Shopify", await APPS.syncCheckouts()); } catch (e) { console.error("carritos de Shopify", e.message); }
+});
+
+// ---------- Carritos abandonados: recordatorio por WhatsApp (ver carritos.js) ----------
+const CART = require("./carritos")({ db, send: autoSend });
+exports.recordarCarritos = onSchedule({ schedule: "every 15 minutes", timeZone: "America/Bogota", ...AUTO_OPTS, timeoutSeconds: 300 }, async () => {
+  console.log("carritos", await CART.sweep());
+});
+exports.carritos = onCall({ ...AUTO_OPTS, invoker: "public", timeoutSeconds: 300 }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora maneja los carritos.");
+  const d = req.data || {};
+  try {
+    if (d.action === "recordar") return { out: await CART.remind(String(d.id || ""), { manual: true, byName: me.name || "Equipo" }) };
+    if (d.action === "sincronizar") return { out: await APPS.syncCheckouts() };
+    throw new Error("Acción desconocida.");
+  } catch (e) { throw new HttpsError("failed-precondition", e.message); }
 });
 exports.apps = onCall({ region: REGION, invoker: "public", timeoutSeconds: 300 }, async req => {
   const me = await requireMember(req);
