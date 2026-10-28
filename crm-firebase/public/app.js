@@ -859,13 +859,13 @@ function viewIntegraciones(el) {
   const ai = S.ai || {}, autos = (S.automations || []).filter(a => a.on).length, forms = (S.forms || []).filter(f => f.on !== false).length;
   const groups = [
     ["Canales de mensajería", "Todos llegan a una sola bandeja de Conversaciones.", ["whatsapp", "instagram", "messenger", "telegram", "web"].map(chTile)],
-    ["Inteligencia artificial", "Atención automática las 24 horas.", [{ href: "#asesora", name: "Asesora virtual", icon: "asesora", color: "#7c4dff", desc: `${ai.name || "Sofía"} · ${({ haiku: "Haiku 5.5", sonnet: "Sonnet 5.5", opus: "Opus 5.5" })[ai.model || "haiku"]} · ${(S.knowledge || []).length} ${(S.knowledge || []).length === 1 ? "artículo" : "artículos"} de conocimiento`, state: ai.enabled ? "on" : "" }]],
+    ["Inteligencia artificial", "Atención automática las 24 horas.", [{ href: "#asesora", name: "Asesora virtual", icon: "asesora", color: "#7c4dff", desc: `${ai.name || "Sofía"} · ${({ haiku: "Haiku 5.5", sonnet: "Sonnet 5.5", opus: "Opus 5.5" })[ai.model || "haiku"]} · ${(S.knowledge || []).length} ${(S.knowledge || []).length === 1 ? "artículo" : "artículos"} de conocimiento`, state: ai.enabled ? "on" : "" },
+      { href: "#apps", id: "app-elevenlabs", name: "ElevenLabs", svg: APP_ICONS.elevenlabs, color: APP_COLORS.elevenlabs, desc: (S.voz || {}).on ? "Voz: " + (((S.voz.voices || []).find(x => x.id === S.voz.voiceId) || {}).name || "elegida") : "Voz natural para tu agente", state: (S.voz || {}).on ? "on" : "" }]],
     ["Captura y automatización", "Consigue clientes y ahorra trabajo repetitivo.", [
       { href: "#formularios", name: "Formularios", icon: "formularios", color: "#0ea5a4", desc: forms ? `${forms} ${forms === 1 ? "formulario activo" : "formularios activos"}` : "Para tu web, Instagram o un QR", state: forms ? "on" : "" },
       { href: "#automatizaciones", name: "Automatizaciones", icon: "automatizaciones", color: "#f59e0b", desc: autos ? `${autos} ${autos === 1 ? "regla activa" : "reglas activas"}` : "Cuando pasa algo, House Chat actúa", state: autos ? "on" : "" },
       { href: "#campanas", name: "Campañas", icon: "campanas", color: "#ef4444", desc: (S.campaigns || []).length ? `${(S.campaigns || []).length} ${(S.campaigns || []).length === 1 ? "campaña" : "campañas"} · mensajes por segmento` : "Mensajes a un grupo de clientes", state: (S.campaigns || []).length ? "on" : "" }]],
     ["Aplicaciones", "Tu tienda en línea, tu facturación y la voz de tu agente.", [
-      { href: "#apps", id: "app-elevenlabs", name: "ElevenLabs", svg: APP_ICONS.elevenlabs, color: APP_COLORS.elevenlabs, desc: (S.voz || {}).on ? "Voz: " + (((S.voz.voices || []).find(x => x.id === S.voz.voiceId) || {}).name || "elegida") : "Voz natural para tu agente", state: (S.voz || {}).on ? "on" : "" },
       { href: "#apps", id: "app-shopify", name: "Shopify", svg: APP_ICONS.shopify, color: APP_COLORS.shopify, desc: (S.apps || {}).shopify && S.apps.shopify.on ? `${S.apps.shopify.shop} · ${S.apps.shopify.orders || 0} pedidos` : "Pedidos, clientes, carritos y productos", state: (S.apps || {}).shopify && S.apps.shopify.on ? "on" : "" },
       { href: "#apps", id: "app-mastershop", name: "Mastershop", svg: APP_ICONS.mastershop, color: APP_COLORS.mastershop, desc: "Pedidos de dropshipping a través de Shopify", state: (S.apps || {}).mastershop && S.apps.mastershop.on ? ((S.apps.shopify || {}).on ? "on" : "warn") : "" },
       { href: "#apps", id: "app-siigo", name: "Siigo", svg: APP_ICONS.siigo, color: APP_COLORS.siigo, desc: (S.apps || {}).siigo && S.apps.siigo.on ? "Facturación desde cada pedido" : "Facturación electrónica y clientes", state: (S.apps || {}).siigo && S.apps.siigo.on ? "on" : "" }]],
@@ -882,6 +882,29 @@ function viewIntegraciones(el) {
     ${adm ? "" : '<p class="muted" style="font-size:12.5px">Solo la administradora puede cambiar las integraciones.</p>'}</div>`;
   $$("[data-anchor]", el).forEach(a => a.onclick = () => { S.chAnchor = a.dataset.anchor; });
 }
+// ======================= Medios de pago =======================
+// Cada tipo con sus datos: f = [campo, etiqueta, ejemplo]
+const PAY_TYPES = {
+  banco: { label: "Cuenta bancaria", icon: "🏦", f: [["bank", "Banco", "Bancolombia"], ["accountType", "Tipo de cuenta", "Ahorros"], ["number", "Número de cuenta", "123-456789-00"], ["holder", "Titular", "Casa Dorada S.A.S."], ["doc", "NIT o cédula", "901.234.567-8"]] },
+  nequi: { label: "Nequi", icon: "📱", f: [["number", "Número", "300 111 2233"], ["holder", "A nombre de", ""]] },
+  daviplata: { label: "Daviplata", icon: "📱", f: [["number", "Número", "300 111 2233"], ["holder", "A nombre de", ""]] },
+  llave: { label: "Llave Bre-B", icon: "🔑", f: [["key", "Llave", "@casadorada o 3001112233"], ["holder", "A nombre de", ""]] },
+  addi: { label: "ADDI", icon: "🟣", f: [["detail", "Cómo se usa", "Compra ahora y paga a cuotas: elige ADDI al pagar en la tienda"], ["url", "Enlace (opcional)", "https://casadorada.co"]] },
+  sistecredito: { label: "Sistecrédito", icon: "💳", f: [["detail", "Cómo se usa", "Paga a cuotas con tu cupo Sistecrédito en la tienda o con el link"], ["url", "Enlace (opcional)", ""]] },
+  link: { label: "Link de pago", icon: "🔗", f: [["name", "Pasarela", "Wompi, Bold, Mercado Pago, PSE…"], ["url", "Enlace", "https://checkout.wompi.co/l/…"], ["detail", "Detalle (opcional)", "Tarjeta, PSE o Nequi"]] },
+  contraentrega: { label: "Contra entrega", icon: "📦", f: [["detail", "Dónde y condiciones", "Medellín y área metropolitana, pedidos hasta $500.000"]] },
+  efectivo: { label: "Efectivo", icon: "💵", f: [["detail", "Dónde", "En nuestras sedes"]] },
+  tarjeta: { label: "Tarjeta (datáfono)", icon: "💳", f: [["detail", "Dónde y condiciones", "Crédito y débito en la tienda"]] },
+  otro: { label: "Otro", icon: "➕", f: [["name", "Nombre", ""], ["detail", "Datos", ""]] },
+};
+function payCard(m, i, dis) {
+  const t = PAY_TYPES[m.type] || PAY_TYPES.otro;
+  return `<div class="card soft pay-c" data-pi="${i}" data-type="${esc(m.type)}"><div class="pay-h"><b>${t.icon} ${esc(t.label)}</b><span class="spacer"></span>
+      <label class="switch sm"><input type="checkbox" data-pk="on" ${m.on !== false ? "checked" : ""} ${dis}> <span>${m.on !== false ? "Se ofrece" : "Apagado"}</span></label>${dis ? "" : `<button class="link danger" type="button" data-rmpay="${i}">Quitar</button>`}</div>
+    <div class="grid2">${t.f.map(([k, l, ph]) => `<div class="${k === "detail" || k === "url" ? "full" : ""}"><label class="lb">${l}</label>${k === "accountType" ? `<select class="in" data-pk="${k}" ${dis}>${["Ahorros", "Corriente"].map(x => `<option ${m[k] === x ? "selected" : ""}>${x}</option>`).join("")}</select>` : `<input class="in" data-pk="${k}" value="${esc(m[k] || "")}" placeholder="${esc(ph)}" ${dis}>`}</div>`).join("")}</div></div>`;
+}
+const readPays = el => $$(".pay-c", el).map(d => { const m = { type: d.dataset.type }; $$("[data-pk]", d).forEach(i => { m[i.dataset.pk] = i.type === "checkbox" ? i.checked : i.value.trim().slice(0, 300); }); return m; });
+
 // ======================= Voz de la tienda (ElevenLabs) =======================
 // full: conectar y desconectar (en Integraciones); si no, solo elegir y escuchar la voz (en Configuración)
 function vozBlock(full) {
@@ -1242,8 +1265,8 @@ function openKb(id) {
 }
 function viewAsesora(el) {
   const a = S.ai || {}, adm = isAdmin(), dis = adm ? "" : "disabled";
-  const TABS = [["agente", "Agente"], ["politicas", "Políticas de la tienda"], ["sedes", "Sedes"], ["empresa", "Datos de la empresa"], ["comprobantes", "Comprobantes de pago"], ["voz", "Voz de la tienda"]];
-  const SECS = [["agente", "Tu agente"], ["atencion", "Atención y seguimiento"], ["pagos", "Pagos"], ["entrega", "Entrega"], ["descuentos", "Descuentos y margen"], ["permisos", "Permisos de contacto"], ["prueba", "Números de prueba"]];
+  const TABS = [["agente", "Agente"], ["pagos", "Medios de pago"], ["politicas", "Políticas de la tienda"], ["sedes", "Sedes"], ["empresa", "Datos de la empresa"], ["comprobantes", "Comprobantes de pago"], ["voz", "Voz de la tienda"]];
+  const SECS = [["agente", "Tu agente"], ["atencion", "Atención y seguimiento"], ["entrega", "Entrega"], ["descuentos", "Descuentos y margen"], ["permisos", "Permisos de contacto"], ["prueba", "Números de prueba"]];
   const tab = S.cfgTab || "agente", sec = S.cfgSec || "agente";
   const save = (patch, msg = "Guardado") => fb.set("settings/asesora", { ...patch, empresa: EMPRESA, ...stamp() }).then(() => toast(msg)).catch(er => toast("No se pudo guardar: " + errMsg(er)));
   const card = (t, sub, body, btn = true) => `<form class="card cfg-card" id="cfgf"><h2>${t}</h2><p class="muted cfg-sub">${sub}</p>${body}${adm && btn ? '<div class="chrow" style="margin-top:16px"><button class="btn primary">Guardar</button></div>' : ""}${adm ? "" : '<p class="muted">Solo la administradora puede cambiar esta configuración.</p>'}</form>`;
@@ -1270,10 +1293,6 @@ function viewAsesora(el) {
         <h3 style="margin:18px 0 8px">Esperando a una persona <span class="pill">${waiting.length}</span></h3>
         ${waiting.length ? `<div class="table-wrap"><table class="t"><tbody>${waiting.map(c => `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.aiHandoff.reason || "")}</td><td class="muted">${esc(c.aiHandoff.summary || "")}</td><td>${ago(c.aiHandoff.at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nadie esperando.</p>'}`);
       onSave = () => save({ pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), quoteAuto: $("#aqa").checked, autoAnalisis: $("#aan").checked });
-    } else if (sec === "pagos") {
-      panel = card("Pagos", "Cómo te pagan los clientes. El agente lo dice tal cual cuando preguntan cómo pagar, y cuando le mandan un comprobante te avisa para que lo verifiques.",
-        field("apay", "Formas de pago", "Cuentas, Nequi, Daviplata, contra entrega, anticipo para pedidos por mayor…", `<textarea class="in cfg-big" id="apay" rows="8" ${dis} placeholder="Transferencia Bancolombia cuenta de ahorros 000-000000-00 a nombre de Casa Dorada S.A.S.&#10;Nequi 300 000 0000&#10;Contra entrega en Medellín y área metropolitana&#10;Pedidos por mayor: 50% de anticipo y 50% antes del despacho">${esc(a.payments || "")}</textarea>`));
-      onSave = () => save({ payments: $("#apay").value.trim() });
     } else if (sec === "entrega") {
       panel = card("Entrega", "Envíos, cobertura, tiempos y costos. El agente lo usa para responder, sin prometer fechas exactas.",
         field("adel", "Entrega y envíos", "", `<textarea class="in cfg-big" id="adel" rows="8" ${dis} placeholder="Envíos a todo Colombia con Servientrega e Interrapidísimo.&#10;Medellín: 1 a 2 días hábiles. Otras ciudades: 2 a 5 días hábiles.&#10;Envío gratis desde $200.000.">${esc(a.delivery || "")}</textarea>`));
@@ -1299,6 +1318,14 @@ function viewAsesora(el) {
       onSave = () => save({ testNumbers: $("#atn").value.split(/[,;\n]/).map(x => x.replace(/\D/g, "")).filter(x => x.length >= 7) });
     }
     body = `<div class="cfg-layout"><nav class="cfg-side">${SECS.map(([k, t]) => `<button type="button" class="${k === sec ? "on" : ""}" data-sec="${k}">${t}</button>`).join("")}</nav><div>${panel}</div></div>`;
+  } else if (tab === "pagos") {
+    const list = S.payEdit || (S.payEdit = JSON.parse(JSON.stringify(a.payMethods || [])));
+    body = `<form class="card cfg-card" id="cfgf"><h2>Medios de pago</h2><p class="muted cfg-sub">Todos los medios con los que te pueden pagar. ${esc(a.name || "Sofía")} da estos datos exactos cuando un cliente pregunta cómo pagar, y nunca inventa cuentas ni números. Apaga uno para dejar de ofrecerlo sin borrarlo.</p>
+      <div style="display:grid;gap:10px">${list.map((m, i) => payCard(m, i, dis)).join("") || '<p class="muted">Aún no hay medios de pago. Agrégalos abajo.</p>'}</div>
+      ${adm ? `<div class="pay-add"><span class="muted">Agregar:</span>${Object.entries(PAY_TYPES).map(([k, t]) => `<button class="btn sm" type="button" data-addpay="${k}">${t.icon} ${t.label}</button>`).join("")}</div>` : ""}
+      ${field("apay", "Condiciones de pago (opcional)", "Anticipos, pedidos por mayor, desde qué valor hay contra entrega, a quién enviar el comprobante…", `<textarea class="in" id="apay" rows="4" ${dis} placeholder="Pedidos por mayor: 50% de anticipo y 50% antes del despacho.&#10;Envía el comprobante por este chat y te confirmamos.">${esc(a.payments || "")}</textarea>`)}
+      ${adm ? '<div class="chrow" style="margin-top:12px"><button class="btn primary">Guardar medios de pago</button></div>' : ""}</form>`;
+    onSave = async () => { const l = readPays(el); await save({ payMethods: l, payments: $("#apay").value.trim() }, "Medios de pago guardados"); S.payEdit = null; };
   } else if (tab === "politicas") {
     body = `<div class="card cfg-card"><h2>Políticas de la tienda</h2><p class="muted cfg-sub">Garantías, cambios y devoluciones, cuidados de los productos, preguntas frecuentes… El agente las busca cuando un cliente pregunta. También puedes subir un archivo .txt.</p>
       <div class="kb">${(S.knowledge || []).slice().sort((x, y) => String(x.title).localeCompare(String(y.title))).map(k => `<button class="kb-item ${k.on === false ? "off" : ""}" data-kb="${k.id}"><b>${esc(k.title)}</b><span>${esc(String(k.content || "").slice(0, 140))}${String(k.content || "").length > 140 ? "…" : ""}</span><small class="muted">${String(k.content || "").length.toLocaleString("es-CO")} caracteres${k.on === false ? " · apagado" : ""}</small></button>`).join("")}
@@ -1336,7 +1363,7 @@ function viewAsesora(el) {
   el.innerHTML = `<div class="page" style="max-width:1150px"><div class="page-head"><h1>Configuración</h1><span class="spacer"></span><span class="pill ${a.enabled ? "green" : ""}">${esc(a.name || "Sofía")}: ${a.enabled ? "activa" : "apagada"}</span></div>
     <div class="cfg-tabs" role="tablist">${TABS.map(([k, t]) => `<button role="tab" class="${k === tab ? "on" : ""}" data-tab="${k}">${t}</button>`).join("")}</div>
     <p class="muted" style="margin:12px 0 16px">Gestiona tus conexiones en <a href="#integraciones">Integraciones</a>.</p>${body}</div>`;
-  $$("[data-tab]", el).forEach(b => b.onclick = () => { S.cfgTab = b.dataset.tab; renderShell(); });
+  $$("[data-tab]", el).forEach(b => b.onclick = () => { S.cfgTab = b.dataset.tab; S.payEdit = null; renderShell(); });
   $$("[data-sec]", el).forEach(b => b.onclick = () => { S.cfgSec = b.dataset.sec; renderShell(); });
   $$("[data-c]", el).forEach(tr => tr.onclick = () => go("conv", tr.dataset.c));
   $$("[data-kb]", el).forEach(b => b.onclick = () => openKb(b.dataset.kb));
@@ -1347,6 +1374,10 @@ function viewAsesora(el) {
   $$("[data-rmsede]", el).forEach(b => b.onclick = () => { const i = +b.closest(".sede").dataset.i, cur = $$(".sede", el).map(d => Object.fromEntries($$("[data-k]", d).map(x => [x.dataset.k, x.value]))); cur.splice(i, 1); S.ai = { ...a, sedes: cur }; renderShell(); });
   bindProofs(el);
   bindVoz(el);
+  $$("[data-addpay]", el).forEach(b => b.onclick = () => { const t = b.dataset.addpay, ex = (PAY_TYPES[t].f.find(f => f[0] === "detail") || [])[2];
+    S.payEdit = [...readPays(el), { type: t, on: true, ...(ex && !["otro", "link"].includes(t) ? { detail: ex } : {}) }]; renderShell(); });
+  $$(".pay-c [data-pk=on]", el).forEach(i => i.onchange = () => { i.nextElementSibling.textContent = i.checked ? "Se ofrece" : "Apagado"; });
+  $$("[data-rmpay]", el).forEach(b => b.onclick = () => { const l = readPays(el); l.splice(+b.dataset.rmpay, 1); S.payEdit = l; renderShell(); });
   $$("[data-anchor]", el).forEach(x => x.onclick = () => { S.chAnchor = x.dataset.anchor; });
 }
 
@@ -2623,7 +2654,7 @@ function viewCarritos(el) {
 
 // ---- Cartera: lo que falta por cobrar de cada pedido y sus abonos ----
 const TERMS = ["Todo antes", "Anticipo y saldo", "Contra entrega", "Crédito"];
-const PAY_METHODS = ["Transferencia", "Nequi", "Daviplata", "Efectivo", "Tarjeta", "Contra entrega", "Otro"];
+const PAY_METHODS = ["Transferencia", "Nequi", "Daviplata", "Llave Bre-B", "ADDI", "Sistecrédito", "Link de pago", "Efectivo", "Tarjeta", "Contra entrega", "Otro"];
 const paidOf = o => (o.payments || []).length ? o.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : o.payment === "Pagado" ? o.total || 0 : 0;
 const balanceOf = o => Math.max(0, (o.total || 0) - paidOf(o));
 const owes = o => o.status !== "Cancelado" && o.payment !== "Pagado" && balanceOf(o) > 0;

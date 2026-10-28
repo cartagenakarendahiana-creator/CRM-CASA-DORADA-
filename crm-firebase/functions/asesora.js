@@ -71,10 +71,20 @@ function kbText(kb = []) {
   if (full.length <= KB_INLINE) return `\n\nBase de conocimiento de la empresa (úsala para responder; no inventes nada que no esté aquí o en el catálogo):\n${full}`;
   return `\n\nBase de conocimiento: hay ${kb.length} artículos (${kb.map(k => k.title).join("; ")}). Consúltalos con buscar_conocimiento antes de responder sobre esos temas.`;
 }
+// Medios de pago de Configuración › Medios de pago: [{ type, on, ...datos }]
+const PAY_LABEL = { banco: "Transferencia bancaria", nequi: "Nequi", daviplata: "Daviplata", llave: "Llave Bre-B", addi: "ADDI (compra ahora, paga a cuotas)", sistecredito: "Sistecrédito (crédito a cuotas)", link: "Link de pago", contraentrega: "Contra entrega", efectivo: "Efectivo", tarjeta: "Tarjeta débito o crédito", otro: "Otro" };
+function payMethodsText(list) {
+  return (list || []).filter(m => m && m.on !== false && m.type).slice(0, 20).map(m => {
+    const d = [m.name && m.type === "otro" ? m.name : "", m.bank, m.accountType, m.number && (m.type === "banco" ? "cuenta " : "") + m.number, m.holder && "a nombre de " + m.holder, m.doc && "NIT/CC " + m.doc,
+      m.key && "llave " + m.key, m.url, m.detail].filter(Boolean).join(" · ");
+    return `- ${m.type === "link" && m.name ? "Link de pago " + m.name : PAY_LABEL[m.type] || m.type}${d ? ": " + d : ""}`;
+  }).join("\n");
+}
 // Pagos, entrega y sedes que la administradora llena en Configuración
 function businessText(cfg) {
   const out = [];
-  if (cfg.payments) out.push("Formas de pago (dilas tal cual cuando pregunten cómo pagar):\n" + String(cfg.payments).trim().slice(0, 2000));
+  const pm = payMethodsText(cfg.payMethods);
+  if (pm || cfg.payments) out.push("Medios de pago (cuando pregunten cómo pagar, da los datos exactos de aquí; nunca inventes cuentas ni números):\n" + [pm, cfg.payments ? "Condiciones: " + String(cfg.payments).trim().slice(0, 1500) : ""].filter(Boolean).join("\n"));
   if (cfg.delivery) out.push("Entrega y envíos:\n" + String(cfg.delivery).trim().slice(0, 2000));
   const sedes = (cfg.sedes || []).filter(x => x && x.name);
   if (sedes.length) out.push("Sedes y puntos de venta:\n" + sedes.slice(0, 12).map(x => `- ${x.name}${x.address ? ": " + x.address : ""}${x.city ? ", " + x.city : ""}${x.hours ? " · horario " + x.hours : ""}${x.phone ? " · tel " + x.phone : ""}${x.map ? " · mapa " + x.map : ""}`).join("\n"));
@@ -596,4 +606,4 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
   return hasText || tools.photos.length || tools.docs.length || cat ? "respondido" : "sin-texto";
 }
 
-module.exports = { weekKey, ratingsText, handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked, colorsIn, saysNotAvailable };
+module.exports = { payMethodsText, weekKey, ratingsText, handleInbound, toMessages, TOOLS, systemPrompt, MODELS, autoPhotos, photoCaption, quoteAsked, colorsIn, saysNotAvailable };
