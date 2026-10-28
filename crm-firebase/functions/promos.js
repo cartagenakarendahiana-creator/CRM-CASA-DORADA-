@@ -45,10 +45,25 @@ function conditionText(p) {
   const on = p.scope === "categoria" ? ` en ${(p.categories || []).join(", ")}` : p.scope === "productos" ? " en productos seleccionados" : " en todo el catálogo";
   return what + on + (p.minQty ? `, comprando desde ${p.minQty} unidades` : "") + (p.code ? `, con el código ${p.code}` : "") + (p.end ? `, hasta el ${p.end}` : "");
 }
+// Reglas de cada promoción para un cliente:
+//   visibility: publica (la asesora la ofrece) · demanda (solo si el cliente escribe el código) · interna (la asesora no la acepta)
+//   onlyBuyers: solo para quien ya compró · priority: la de mayor prioridad se menciona primero
+function forContact(list, contact = {}, texts = []) {
+  const said = " " + norm(texts.join(" ")).replace(/[^a-z0-9]+/g, " ") + " ";
+  const buyer = !!(contact.lastPurchaseAt || contact.type === "Cliente");
+  return (list || []).filter(p => {
+    const v = p.visibility || "publica";
+    if (v === "interna") return false;
+    if (v === "demanda" && !(p.code && said.includes(" " + norm(p.code).replace(/[^a-z0-9]+/g, " ") + " "))) return false;
+    if (p.onlyBuyers && !buyer) return false;
+    return true;
+  }).sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0));
+}
 // Lista para las instrucciones de la asesora
 function promosText(list) {
   if (!list.length) return "No hay promociones vigentes: no ofrezcas descuentos.";
-  return "Promociones vigentes (son las ÚNICAS que puedes ofrecer, tal cual):\n" + list.slice(0, 30).map(p => `- ${p.name}: ${conditionText(p)}.${p.desc ? " " + String(p.desc).slice(0, 300) : ""}`).join("\n");
+  return "Promociones vigentes (son las ÚNICAS que puedes ofrecer, tal cual):\n" + list.slice(0, 30).map(p => `- ${p.name}: ${conditionText(p)}.${p.desc ? " " + String(p.desc).slice(0, 300) : ""}`
+    + (p.when ? ` Cuándo ofrecerla: ${String(p.when).slice(0, 200)}.` : "") + (p.visibility === "demanda" ? " (El cliente dio este código: aplícalo.)" : "")).join("\n");
 }
 
-module.exports = { TYPES, isActive, activePromos, appliesTo, promoUnitPrice, bestPrice, promosFor, conditionText, promosText, today };
+module.exports = { forContact, TYPES, isActive, activePromos, appliesTo, promoUnitPrice, bestPrice, promosFor, conditionText, promosText, today };

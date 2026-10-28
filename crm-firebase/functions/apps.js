@@ -284,7 +284,10 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
         const promo = await mapDiscount(c, node);
         if (!promo) continue;
         const id = "shp_disc_" + gid(node.id); keep.add(id); n++;
-        await db.doc("promos/" + id).set({ ...promo, updatedAt: Date.now(), updatedBy: "Shopify" });
+        // Lo que la administradora decide en House Chat (quién la inicia, cuándo ofrecerla…) no se pierde al releer Shopify
+        const prev = (await db.doc("promos/" + id).get()).data() || {};
+        const mine = Object.fromEntries(["visibility", "when", "priority", "onlyBuyers"].filter(k => k in prev).map(k => [k, prev[k]]));
+        await db.doc("promos/" + id).set({ ...promo, ...mine, updatedAt: Date.now(), updatedBy: "Shopify" });
       }
       after = d.discountNodes.pageInfo.hasNextPage ? d.discountNodes.pageInfo.endCursor : null;
     } while (after && ++pages < 10);
