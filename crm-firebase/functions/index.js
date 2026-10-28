@@ -754,6 +754,35 @@ exports.agendaEnlace = onCall({ region: REGION, invoker: "public" }, async req =
   return { url: `${PUBLIC_URL}/api/agenda/${tok}.ics`, scope };
 });
 
+// ---------- Voz de la tienda (ElevenLabs): la clave queda en private/voz, nunca en la app ----------
+exports.voz = onCall({ region: REGION, invoker: "public", timeoutSeconds: 60 }, async req => {
+  const me = await requireMember(req);
+  if (me.role !== "admin") throw new HttpsError("permission-denied", "Solo la administradora configura la voz.");
+  const d = req.data || {}, XI = "https://api.elevenlabs.io/v1";
+  try {
+    if (d.action === "conectar") {
+      const key = String(d.apiKey || "").trim();
+      if (key.length < 20) throw new Error("Pega la clave de API de ElevenLabs completa.");
+      const r = await fetch(XI + "/voices", { headers: { "xi-api-key": key } });
+      if (!r.ok) throw new Error(r.status === 401 ? "ElevenLabs no aceptó esa clave." : "ElevenLabs respondió " + r.status);
+      const voices = ((await r.json()).voices || []).slice(0, 60).map(v => ({ id: v.voice_id, name: v.name, lang: (v.labels && (v.labels.accent || v.labels.language)) || "" }));
+      await db.doc("private/voz").set({ apiKey: key });
+      await db.doc("settings/voz").set({ on: true, voices, voiceId: (voices[0] || {}).id || "", at: Date.now() }, { merge: true });
+      return { voices: voices.length };
+    }
+    if (d.action === "desconectar") { await db.doc("private/voz").delete(); await db.doc("settings/voz").set({ on: false }, { merge: true }); return { ok: true }; }
+    if (d.action === "probar") {
+      const key = ((await db.doc("private/voz").get()).data() || {}).apiKey, voice = String(d.voiceId || ((await db.doc("settings/voz").get()).data() || {}).voiceId || "");
+      if (!key || !voice) throw new Error("Primero conecta ElevenLabs y elige una voz.");
+      const r = await fetch(`${XI}/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_64`, { method: "POST", headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "audio/mpeg" },
+        body: JSON.stringify({ text: String(d.text || "Hola, te habla la asesora de Casa Dorada. ¿En qué te puedo ayudar?").slice(0, 300), model_id: "eleven_multilingual_v2" }) });
+      if (!r.ok) throw new Error("ElevenLabs no pudo generar el audio (" + r.status + ").");
+      return { audio: Buffer.from(await r.arrayBuffer()).toString("base64") };
+    }
+    throw new Error("Acción desconocida.");
+  } catch (e) { throw new HttpsError("failed-precondition", e.message); }
+});
+
 // ---------- Integraciones ----------
 exports.intCotizacion = onDocumentCreated({ document: "quotes/{id}", region: REGION }, async event => {
   const q = event.data && event.data.data();

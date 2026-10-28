@@ -1282,3 +1282,14 @@ h2.sec-t+.chgrid,.wapanel+h2.sec-t{margin-top:26px}
 .subnav button{display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:inherit;font:inherit;font-size:14px;padding:7px 10px;border-radius:10px;cursor:pointer;opacity:.75}
 .subnav button:hover{background:rgba(0,0,0,.04);opacity:1}.subnav button.on{background:var(--bg,#fff);color:var(--green,#0f7a4c);font-weight:600;opacity:1}
 .subnav .count.soft{margin-left:auto;background:transparent;color:var(--muted);font-weight:500;font-size:12px}
+/* Configuración con pestañas */
+.cfg-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}.cfg-tabs::-webkit-scrollbar{display:none}
+.cfg-tabs button{border:0;background:transparent;font:inherit;color:var(--muted);padding:12px 14px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.cfg-tabs button.on{color:var(--ink);font-weight:600;border-bottom-color:var(--green,#0f7a4c)}.cfg-tabs button:hover{color:var(--ink)}
+.cfg-layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:24px;align-items:start}
+.cfg-side{display:grid;gap:2px;position:sticky;top:12px}.cfg-side button{border:0;background:transparent;font:inherit;text-align:left;padding:11px 14px;border-radius:10px;cursor:pointer;color:var(--muted)}
+.cfg-side button:hover{background:rgba(0,0,0,.04);color:var(--ink)}.cfg-side button.on{background:var(--bg,#fff);color:var(--ink);font-weight:600;box-shadow:var(--shadow-1,0 1px 2px rgba(0,0,0,.06))}
+.cfg-card{padding:22px 24px}.cfg-card h2{margin:0;font-size:20px}.cfg-sub{margin:4px 0 18px}.cfg-f{display:grid;gap:6px;margin-bottom:16px}.cfg-f .lb{font-size:13.5px;font-weight:600;color:var(--ink)}
+.cfg-big{font-size:15.5px;line-height:1.6;min-height:220px}.cfg-list{margin:0;padding-left:18px;display:grid;gap:6px}
+.cfg-card .switch{margin:8px 0}
+@media (max-width:820px){.cfg-layout{grid-template-columns:1fr}.cfg-side{position:static;display:flex;overflow-x:auto;gap:4px}.cfg-side button{white-space:nowrap}}
