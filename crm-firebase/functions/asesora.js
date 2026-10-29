@@ -5,6 +5,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const PROMOS = require("./promos");
 const LISTAS = require("./listas");
 const EMB = require("./embudos");
+const STOCK = require("./stock");
 const FICHA = require("./ficha");
 const MEDIDAS = require("./medidas");
 
@@ -519,7 +520,7 @@ async function handleInbound({ db, admin, cid, mid, apiKey, send, loadMedia, quo
     try { const f = await loadMedia(m.mediaPath); if (f.buf.length <= 4.5 * 1024 * 1024) m.imageData = f.buf.toString("base64"); }
     catch (e) { console.error("foto del cliente", e.message); }
   }
-  const products = ps.docs.map(d => ({ id: d.id, ...d.data() }));
+  const products = STOCK.applyStock(ps.docs.map(d => ({ id: d.id, ...d.data() })), cfg); // todo lo activo, disponible (salvo que se apague)
   const aiName = (cfg.name || "Sofía") + " · IA";
   const tools = makeTools({ db, admin, cref, contact, products, aiName, kb, promos, priceList, crossText, notify: notify && (proof => notify(cid, contact, proof)), pipesList, quoteAuto: cfg.quoteAuto !== false && !!quoteLink });
 
