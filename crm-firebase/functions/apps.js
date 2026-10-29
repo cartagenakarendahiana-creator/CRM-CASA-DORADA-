@@ -192,7 +192,10 @@ module.exports = function apps({ db, admin, phoneId, fetchFn = (...a) => fetch(.
   async function saveShopifyProduct(p, active, pub) {
     const vs = (p.variants || []).length ? p.variants : [{}];
     const multi = vs.length > 1;
-    const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), active, source: "Shopify", shopifyProductId: String(p.id), updatedAt: Date.now(), updatedBy: "Shopify" };
+    const tags = (Array.isArray(p.tags) ? p.tags : String(p.tags || "").split(",")).map(t => String(t).trim()).filter(Boolean);
+    // search: etiquetas, descripción completa y opciones (Diseño, Estilo…) para que la asesora encuentre "cuadros", "escocesa"…
+    const search = [tags.join(" "), stripHtml(p.body_html).slice(0, 1500), (p.options || []).map(o => [o.name, ...(o.values || [])].join(" ")).join(" ")].join(" ").slice(0, 2500);
+    const base = { category: p.product_type || "", desc: stripHtml(p.body_html).slice(0, 200), tags: tags.slice(0, 30), search, active, source: "Shopify", shopifyProductId: String(p.id), updatedAt: Date.now(), updatedBy: "Shopify" };
     const keep = new Set();
     for (const v of vs) {
       const id = "shp_" + p.id + (multi ? "_" + v.id : "");
