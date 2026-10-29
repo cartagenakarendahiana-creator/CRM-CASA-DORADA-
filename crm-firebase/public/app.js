@@ -1288,11 +1288,13 @@ function viewAsesora(el) {
       panel = card("Atención y seguimiento", "Cuándo responde el agente, cuándo se aparta y qué hace solo.",
         `${field("aph", "Se pausa en un chat cuando una persona del equipo escribe, durante (horas)", "", `<input class="in tabnum" id="aph" type="number" min="1" max="168" value="${a.pauseHours || 12}" ${dis} style="max-width:140px">`)}
         <label class="switch"><input type="checkbox" id="aqa" ${a.quoteAuto !== false ? "checked" : ""} ${dis}> <span>Cuando el cliente pida cotización, enviársela de una vez en PDF por el chat</span></label>
+        <label class="switch"><input type="checkbox" id="aist" ${a.ignoreStock !== false ? "checked" : ""} ${dis}> <span>Ofrecer todo lo activo como disponible (no mirar el stock de Shopify)</span></label>
+        <small class="muted" style="display:block;margin:-4px 0 6px 30px">Encendido: el agente ofrece, muestra y cotiza todo producto activo. Apágalo para que no ofrezca lo que Shopify marca agotado.</small>
         <label class="switch"><input type="checkbox" id="aan" ${a.autoAnalisis !== false ? "checked" : ""} ${dis}> <span>Copiloto: analizar solas las conversaciones (probabilidad de compra, siguiente paso, lo que piden y no hay)</span></label>
         <div class="card soft" style="margin-top:12px"><b>Qué pasa a una persona</b><p class="muted" style="margin:4px 0 0">Solo el cierre de la venta (confirmar el pedido, datos de envío y pago) o si el cliente pide hablar con una persona. Todo lo demás lo resuelve el agente.</p></div>
         <h3 style="margin:18px 0 8px">Esperando a una persona <span class="pill">${waiting.length}</span></h3>
         ${waiting.length ? `<div class="table-wrap"><table class="t"><tbody>${waiting.map(c => `<tr data-c="${c.id}"><td><b>${esc(contactName(c))}</b></td><td>${esc(c.aiHandoff.reason || "")}</td><td class="muted">${esc(c.aiHandoff.summary || "")}</td><td>${ago(c.aiHandoff.at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nadie esperando.</p>'}`);
-      onSave = () => save({ pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), quoteAuto: $("#aqa").checked, autoAnalisis: $("#aan").checked });
+      onSave = () => save({ pauseHours: Math.min(168, Math.max(1, Number($("#aph").value) || 12)), quoteAuto: $("#aqa").checked, autoAnalisis: $("#aan").checked, ignoreStock: $("#aist").checked });
     } else if (sec === "entrega") {
       panel = card("Entrega", "Envíos, cobertura, tiempos y costos. El agente lo usa para responder, sin prometer fechas exactas.",
         field("adel", "Entrega y envíos", "", `<textarea class="in cfg-big" id="adel" rows="8" ${dis} placeholder="Envíos a todo Colombia con Servientrega e Interrapidísimo.&#10;Medellín: 1 a 2 días hábiles. Otras ciudades: 2 a 5 días hábiles.&#10;Envío gratis desde $200.000.">${esc(a.delivery || "")}</textarea>`));

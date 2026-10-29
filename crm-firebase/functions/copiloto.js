@@ -70,7 +70,7 @@ module.exports = function copiloto({ db, apiKey, client: injected }) {
     const promos = PROMOS.activePromos(promoS.docs.map(d => ({ id: d.id, ...d.data() })));
     const msgs = ms.docs.map(d => d.data()).reverse();
     return { cref, contact, cfg, msgs, promos, stages: (pipe && pipe.stages) || STAGES, aiName: cfg.name || "Sofía",
-      products: prodS.docs.map(d => ({ id: d.id, ...d.data() })) };
+      products: require("./stock").applyStock(prodS.docs.map(d => ({ id: d.id, ...d.data() })), cfg) };
   }
   const business = ctx => `Negocio: ${ctx.cfg.empresa || "Casa Dorada"} (textiles para el hogar y hoteles, Colombia). Moneda: pesos colombianos.
 ${ctx.cfg.instructions ? "Políticas del negocio:\n" + String(ctx.cfg.instructions).slice(0, 2500) : ""}`;

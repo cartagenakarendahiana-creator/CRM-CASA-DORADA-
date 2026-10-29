@@ -392,8 +392,8 @@ exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory
   const [, id] = String(req.path || "").match(/tarjeta\/([\w-]{1,120})\.png$/) || [];
   if (!id) return res.sendStatus(404);
   try {
-    const [ps, prs] = await Promise.all([db.doc("products/" + id).get(), db.collection("promos").get()]);
-    if (!ps.exists || ps.get("active") === false || ps.get("available") === false) return res.sendStatus(404);
+    const [ps, prs, as] = await Promise.all([db.doc("products/" + id).get(), db.collection("promos").get(), db.doc("settings/asesora").get()]);
+    if (!ps.exists || ps.get("active") === false || (ps.get("available") === false && !STOCK.ignoreStock(as.data()))) return res.sendStatus(404);
     const p = { id, ...ps.data() }, promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
     const d = FICHA.discountOf(p, promos);
     if (!d) return res.sendStatus(404);
@@ -409,11 +409,12 @@ exports.tarjetaDescuento = onRequest({ region: REGION, invoker: "public", memory
 // Catálogo por medida en PDF (con fotos): se genera una vez por versión del catálogo y se guarda en el bucket
 // privado (catalogos/{medida}-{huella}.pdf); /api/catalogo/{medida}-{huella}.pdf lo entrega (público: es el catálogo).
 const MEDIDAS = require("./medidas");
+const STOCK = require("./stock");
 const CATPDF = require("./catalogo-pdf");
 async function catalogData(key) {
-  const [ps, prs, co] = await Promise.all([db.collection("products").get(), db.collection("promos").get(), db.doc("settings/cotizacion").get()]);
+  const [ps, prs, co, as] = await Promise.all([db.collection("products").get(), db.collection("promos").get(), db.doc("settings/cotizacion").get(), db.doc("settings/asesora").get()]);
   const promos = PROMOS.activePromos(prs.docs.map(d => ({ id: d.id, ...d.data() })));
-  const cat = MEDIDAS.catalog(ps.docs.map(d => ({ id: d.id, ...d.data() })), key, promos);
+  const cat = MEDIDAS.catalog(STOCK.applyStock(ps.docs.map(d => ({ id: d.id, ...d.data() })), as.data()), key, promos);
   if (!cat) return null;
   const company = co.exists ? co.data() : {};
   const hash = crypto.createHash("sha1").update(JSON.stringify(["v2", cat.items.map(g => [g.title, g.min, g.max, g.image, g.colors, g.disc && g.disc.before]), company.nombre, company.telefono, company.web])).digest("hex").slice(0, 12);
