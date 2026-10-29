@@ -6,6 +6,7 @@ const PROMOS = require("./promos");
 const LISTAS = require("./listas");
 const EMB = require("./embudos");
 const STOCK = require("./stock");
+const BUSQ = require("./busqueda");
 const FICHA = require("./ficha");
 const MEDIDAS = require("./medidas");
 
@@ -283,16 +284,14 @@ function makeTools({ db, admin, cref, contact, products, aiName, kb = [], promos
       return { ok: true, aviso: "La foto se enviará justo después de tu mensaje. No pegues enlaces en el texto." };
     },
     async buscar_productos({ consulta }) {
-      const words = norm(consulta).split(/\s+/).filter(w => w.length > 1);
-      if (!words.length) return { productos: active.slice(0, 60).map(pub), total: active.length };
-      const scored = active.map(p => { const hay = norm(`${p.name} ${p.category} ${p.desc}`); return [p, words.filter(w => hay.includes(w)).length]; })
-        .filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).slice(0, 12);
+      // Búsqueda con sinónimos y singular/plural (cuadros = escocesa = plaid; cobija = manta…), ver busqueda.js
+      if (!BUSQ.terms(consulta).length) return { productos: active.slice(0, 60).map(pub), total: active.length };
+      const scored = BUSQ.search(active, consulta, 12).map(p => [p]);
       found.splice(0, found.length, ...scored.map(([p]) => p));
       // Agotados que coinciden con la búsqueda: solo para avisarle al cliente (sin precio ni foto)
-      const out = soldOut.map(p => [p, words.filter(w => norm(`${p.name} ${p.category} ${p.desc}`).includes(w)).length]).filter(([, s]) => s >= Math.max(1, Math.ceil(words.length / 2)))
-        .sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p]) => { const n = FICHA.splitName(p.name); return [FICHA.shortTitle(n.title), n.variant].filter(Boolean).join(" · "); });
+      const out = BUSQ.search(soldOut, consulta, 8).map(p => { const n = FICHA.splitName(p.name); return [FICHA.shortTitle(n.title), n.variant].filter(Boolean).join(" · "); });
       const agotados = out.length ? { agotados: [...new Set(out)], aviso_agotados: "Estos están AGOTADOS: no los ofrezcas, no envíes su foto ni los cotices. Si el cliente pregunta por uno, dile que está agotado y ofrécele una alternativa disponible de la lista de productos." } : {};
-      return scored.length ? { productos: scored.map(([p]) => pub(p)), ...agotados } : { productos: [], ...agotados, aviso: "No hay coincidencias disponibles. Prueba con otras palabras o con consulta vacía para ver todo el catálogo." };
+      return scored.length ? { productos: scored.map(([p]) => pub(p)), ...agotados } : { productos: [], ...agotados, aviso: "No hubo coincidencias con esas palabras. ANTES de decirle al cliente que no hay, busca de nuevo con una palabra más general (por ejemplo solo el tipo de producto: 'cobija', 'sábana', 'plumón') y muéstrale las opciones más parecidas; nunca digas que no hay sin haber buscado así." };
     },
     async actualizar_ficha(a) {
       const patch = {};
